@@ -1,0 +1,165 @@
+package cli
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/spf13/cobra"
+
+	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/modules/discover"
+	"mimecrypt/internal/modules/process"
+)
+
+func newRunCmd() *cobra.Command {
+	cfg, err := appconfig.LoadFromEnv()
+	if err != nil {
+		return newErrorCommand("run", "发现邮件并进行路由处理", err)
+	}
+
+	clientID := cfg.Auth.ClientID
+	tenant := cfg.Auth.Tenant
+	var once bool
+	var includeExisting bool
+	var debugSaveFirst bool
+	var writeBack bool
+	var verifyWriteBack bool
+	stateDir := cfg.Auth.StateDir
+	authorityBaseURL := cfg.Auth.AuthorityBaseURL
+	graphBaseURL := cfg.Mail.GraphBaseURL
+	outputDir := cfg.Mail.OutputDir
+	folder := cfg.Mail.Folder
+	pollInterval := cfg.Mail.PollInterval
+	cycleTimeout := cfg.Mail.CycleTimeout
+
+	cmd := &cobra.Command{
+		Use:   "run",
+		Short: "发现邮件并进行路由处理",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg = syncConfig(cfg, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL)
+			cfg.Mail.OutputDir = outputDir
+			cfg.Mail.Folder = folder
+			cfg.Mail.PollInterval = pollInterval
+			cfg.Mail.CycleTimeout = cycleTimeout
+
+			if err := validateWriteBackFlags(writeBack, verifyWriteBack); err != nil {
+				return fmt.Errorf("run 失败: %w", err)
+			}
+			if err := cfg.Mail.ValidateSync(); err != nil {
+				return fmt.Errorf("run 失败: %w", err)
+			}
+
+			service, err := buildDiscoverService(cfg)
+			if err != nil {
+				return fmt.Errorf("run 失败: %w", err)
+			}
+
+			if debugSaveFirst {
+				return runDebugSaveFirst(cmd.Context(), cfg, service, writeBack, verifyWriteBack)
+			}
+
+			runOnce := func() error {
+				err := runDiscoverCycle(cmd.Context(), cfg, service, includeExisting, writeBack, verifyWriteBack)
+				includeExisting = false
+				return err
+			}
+
+			if err := runOnce(); err != nil {
+				return fmt.Errorf("run 失败: %w", err)
+			}
+			if once {
+				return nil
+			}
+
+			ticker := time.NewTicker(cfg.Mail.PollInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-cmd.Context().Done():
+					return cmd.Context().Err()
+				case <-ticker.C:
+					if err := runOnce(); err != nil {
+						fmt.Printf("本轮同步失败，下个周期继续重试: %v\n", err)
+					}
+				}
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&clientID, "client-id", clientID, "Microsoft Entra 应用的 Client ID")
+	cmd.Flags().StringVar(&tenant, "tenant", tenant, "租户标识，默认使用 organizations")
+	cmd.Flags().StringVar(&stateDir, "state-dir", stateDir, "本地状态目录")
+	cmd.Flags().StringVar(&outputDir, "output-dir", outputDir, "处理结果输出目录")
+	cmd.Flags().StringVar(&folder, "folder", folder, "要监听的 Graph 邮件文件夹标识，例如 inbox")
+	cmd.Flags().StringVar(&authorityBaseURL, "authority-base-url", authorityBaseURL, "Microsoft Entra 认证基础地址")
+	cmd.Flags().StringVar(&graphBaseURL, "graph-base-url", graphBaseURL, "Microsoft Graph 基础地址")
+	cmd.Flags().DurationVar(&pollInterval, "poll-interval", pollInterval, "轮询增量同步的时间间隔")
+	cmd.Flags().DurationVar(&cycleTimeout, "cycle-timeout", cycleTimeout, "单次发现与处理周期的超时时间")
+	cmd.Flags().BoolVar(&once, "once", false, "只执行一次同步后退出")
+	cmd.Flags().BoolVar(&includeExisting, "include-existing", false, "首次启动时也下载现有历史邮件")
+	cmd.Flags().BoolVar(&debugSaveFirst, "debug-save-first", false, "调试模式：直接处理当前文件夹中最新的一封邮件并退出")
+	cmd.Flags().BoolVar(&writeBack, "write-back", false, "处理后把邮件回写到邮箱")
+	cmd.Flags().BoolVar(&verifyWriteBack, "verify-write-back", false, "回写后校验邮件是否成功写入")
+
+	return cmd
+}
+
+func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, service *discover.Service, writeBack, verifyWriteBack bool) error {
+	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.CycleTimeout)
+	defer cancel()
+
+	result, err := service.DebugFirst(cycleCtx, discover.Request{
+		Folder: cfg.Mail.Folder,
+		Process: process.Request{
+			OutputDir:       cfg.Mail.OutputDir,
+			WriteBack:       writeBack,
+			VerifyWriteBack: verifyWriteBack,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if !result.Found {
+		fmt.Printf("调试模式未找到可处理的邮件，folder=%s\n", cfg.Mail.Folder)
+		return nil
+	}
+
+	fmt.Printf(
+		"调试模式已处理第一封邮件，message_id=%s format=%s encrypted=%t path=%s bytes=%d\n",
+		result.Process.MessageID,
+		result.Process.Format,
+		result.Process.Encrypted,
+		result.Process.Path,
+		result.Process.Bytes,
+	)
+	return nil
+}
+
+func runDiscoverCycle(ctx context.Context, cfg appconfig.Config, service *discover.Service, includeExisting, writeBack, verifyWriteBack bool) error {
+	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.CycleTimeout)
+	defer cancel()
+
+	result, err := service.RunCycle(cycleCtx, discover.Request{
+		Folder:          cfg.Mail.Folder,
+		StatePath:       cfg.Mail.SyncStatePath(),
+		IncludeExisting: includeExisting,
+		Process: process.Request{
+			OutputDir:       cfg.Mail.OutputDir,
+			WriteBack:       writeBack,
+			VerifyWriteBack: verifyWriteBack,
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	if result.Bootstrapped && !includeExisting {
+		fmt.Printf("首次同步已建立基线，跳过了 %d 封现有邮件\n", result.Skipped)
+	} else {
+		fmt.Printf("同步完成，本轮处理 %d 封邮件\n", result.Processed)
+	}
+
+	return nil
+}
