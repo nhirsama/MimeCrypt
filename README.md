@@ -92,12 +92,11 @@ MimeCrypt 的定位是一个自动化邮件加密中间层。
 - 按邮件 ID 下载邮件
 - 调试模式处理第一封邮件
 - 增量同步发现邮件的基础框架
-- 已加密邮件识别
+- 已加密邮件识别与拒绝重复加密（PGP/S-MIME）
+- 基于 `gpg` 的 PGP/MIME（RFC 3156）加密封装
 
 当前还没有完成的部分：
 
-- 真实的 GPG 加密执行
-- RFC 3156 `multipart/encrypted` 生成
 - 邮件回写与校验
 - Google Gmail API provider
 - webhook 接收入口
@@ -154,7 +153,7 @@ go run ./cmd/mimecrypt run --poll-interval 1m --output-dir ./output
 go run ./cmd/mimecrypt run --debug-save-first --output-dir ./output
 ```
 
-需要注意的是，`process` 和 `run` 当前虽然已经包含“加密/回写”模块边界，但真实加密和回写逻辑还没有接完。
+需要注意的是，`process` 和 `run` 已经接入真实加密；但回写与回写校验逻辑仍在后续开发中。
 
 ## 配置
 
@@ -175,11 +174,20 @@ export MIMECRYPT_FOLDER="inbox"
 export MIMECRYPT_GRAPH_SCOPES="https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read offline_access openid profile"
 ```
 
+加密相关配置：
+
+```bash
+export MIMECRYPT_PGP_RECIPIENTS="alice@example.com,bob@example.com"
+export MIMECRYPT_GPG_BINARY="gpg"
+```
+
 说明：
 
 - `MIMECRYPT_PROVIDER` 当前只支持 `graph`
 - `MIMECRYPT_STATE_DIR` 用来保存 token 和同步状态
 - `MIMECRYPT_OUTPUT_DIR` 当前主要用于调试和开发阶段保存 `.eml`
+- `MIMECRYPT_PGP_RECIPIENTS` 用于补充/覆盖收件人；如果邮件头缺少 `To/Cc/Bcc`，该变量是必需的
+- 未加密邮件会调用本地 `gpg` 生成 `PGP/MIME (RFC 3156)`；请确保对应收件人的公钥已导入 keyring
 
 ## 文件说明
 
@@ -193,12 +201,11 @@ export MIMECRYPT_GRAPH_SCOPES="https://graph.microsoft.com/Mail.Read https://gra
 
 接下来更符合项目定位的开发顺序是：
 
-1. 在 `encrypt` 模块中接入真实 GPG 加密
-2. 生成可被 Thunderbird 正常打开的 RFC 3156 `multipart/encrypted`
-3. 在 `writeback` 模块中接入邮件回写和校验
-4. 增加 `google` provider
-5. 增加 webhook 接收与事件路由
-6. 减少默认明文落盘，让“拉取后尽快加密并回写”成为主路径
+1. 在 `writeback` 模块中接入邮件回写和校验
+2. 增加 `google` provider
+3. 增加 webhook 接收与事件路由
+4. 减少默认明文落盘，让“拉取后尽快加密并回写”成为主路径
+5. 增加密钥管理与收件人路由策略（按域名、文件夹或规则选择 key）
 
 ## 当前结论
 
