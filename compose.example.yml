@@ -1,0 +1,49 @@
+services:
+  mimecrypt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mimecrypt:local
+    restart: unless-stopped
+    environment:
+      MIMECRYPT_PROVIDER: imap
+      MIMECRYPT_WRITEBACK_PROVIDER: imap
+      MIMECRYPT_TENANT: organizations
+      MIMECRYPT_STATE_DIR: /state
+      MIMECRYPT_BACKUP_DIR: /backup
+      MIMECRYPT_AUDIT_LOG_PATH: ""
+      MIMECRYPT_AUDIT_STDOUT: "true"
+      MIMECRYPT_TOKEN_STORE: file
+      MIMECRYPT_FOLDER: INBOX
+      MIMECRYPT_IMAP_ADDR: outlook.office365.com:993
+      MIMECRYPT_IMAP_USERNAME: your-mailbox@example.com
+      GNUPGHOME: /gnupg
+    volumes:
+      - ./state:/state
+      - ./backup:/backup
+      - ./gnupg:/gnupg
+    tmpfs:
+      - /tmp:size=128m
+    stop_grace_period: 30s
+
+  mimecrypt-token-import:
+    profiles: ["init"]
+    image: mimecrypt:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["/usr/local/bin/mimecrypt"]
+    command: ["token", "import", "/run/secrets/token.json"]
+    environment:
+      MIMECRYPT_STATE_DIR: /state
+      MIMECRYPT_TOKEN_STORE: file
+      GNUPGHOME: /gnupg
+    volumes:
+      - ./state:/state
+      - ./gnupg:/gnupg
+    secrets:
+      - token_json
+
+secrets:
+  token_json:
+    file: ./secrets/token.json

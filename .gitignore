@@ -3,6 +3,7 @@
 output/
 backup/
 state/
+secrets/
 main
 token.json
 graph-token.json

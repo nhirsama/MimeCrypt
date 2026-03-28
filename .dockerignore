@@ -5,6 +5,7 @@
 backup/
 output/
 state/
+secrets/
 
 token.json
 graph-token.json

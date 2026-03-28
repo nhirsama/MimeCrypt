@@ -133,6 +133,21 @@ go run ./cmd/mimecrypt login your-mailbox@example.com
 go run ./cmd/mimecrypt logout
 ```
 
+查看运行环境健康状态：
+
+```bash
+go run ./cmd/mimecrypt health
+go run ./cmd/mimecrypt health --timeout 20s
+```
+
+查看或导入本地 token 状态：
+
+```bash
+go run ./cmd/mimecrypt token status
+go run ./cmd/mimecrypt token import ./token.json
+cat ./token.json | go run ./cmd/mimecrypt token import -
+```
+
 按邮件 ID 下载原始 MIME：
 
 ```bash
@@ -214,6 +229,7 @@ export MIMECRYPT_PROTECT_SUBJECT="false"
 export MIMECRYPT_BACKUP_DIR="./backup"
 export MIMECRYPT_BACKUP_KEY_ID=""
 export MIMECRYPT_AUDIT_LOG_PATH="$HOME/.config/mimecrypt/audit.jsonl"
+export MIMECRYPT_AUDIT_STDOUT="false"
 export MIMECRYPT_FOLDER="INBOX"
 export MIMECRYPT_WRITEBACK_PROVIDER="imap"
 export MIMECRYPT_WRITEBACK_FOLDER=""
@@ -244,6 +260,7 @@ export MIMECRYPT_GPG_TRUST_MODEL="always"
 - `MIMECRYPT_BACKUP_DIR` 保存对原始 MIME 源字节直接执行 `gpg --armor --encrypt` 后得到的密文备份
 - `MIMECRYPT_BACKUP_KEY_ID` 为备份指定 catch-all GPG key id；设置后所有备份都使用这把 key，而不是邮件收件人 key
 - `MIMECRYPT_AUDIT_LOG_PATH` 保存关键流程的追加式 JSONL 审计日志
+- `MIMECRYPT_AUDIT_STDOUT` 控制是否同时将审计日志输出到 stdout；容器环境建议开启
 - `MIMECRYPT_WRITEBACK_PROVIDER` 控制回写后端；当前支持 `imap`、`graph` 和 `ews`，默认 `imap`
 - `MIMECRYPT_WRITEBACK_FOLDER` 为空时默认回写到原文件夹；Graph 使用 folder id，IMAP 使用 mailbox 名称
 - `MIMECRYPT_IMAP_SCOPES` 为 IMAP OAuth 申请 scope；默认 `https://outlook.office.com/IMAP.AccessAsUser.All offline_access`
@@ -268,6 +285,9 @@ export MIMECRYPT_GPG_TRUST_MODEL="always"
 - 如果你之前是在旧版本上登录过，需要重新执行 `logout` 和 `login`，以获取包含 IMAP scope 的新 token
 - `graph` 写回后端仍保留作为可选项，但 Outlook Web 会把导入结果显示为 draft；如果要求“真实收件邮件”语义，应优先使用默认的 `imap`
 - `run` 现在会对 `provider + folder` 维度加单实例锁；同一状态目录下重复启动相同同步任务会直接失败，避免重复加密和重复回写
+- `health` 会检查 `state dir`、`gpg`、缓存 token、token 刷新和 provider 探活；适合挂到 Docker `HEALTHCHECK`
+- `token status` 用于查看当前 token 是否存在；`token import` 可从 JSON 文件或 stdin 预置 token，适合容器初始化
+- `logout` 现在会同时清理文件 token 和 keyring token，而不只是删除本地 `token.json`
 
 ## 回写行为
 
@@ -331,6 +351,83 @@ MimeCrypt 当前保留两类回写/上传行为：
 - `MIMECRYPT_KEYRING_SERVICE=<service-name>`：只在 `keyring` 模式下使用，默认 `mimecrypt`
 
 从长期目标看，磁盘落盘应尽量只在调试、审计或故障恢复场景下使用，而不是默认主路径。
+
+## Docker 部署
+
+Docker 部署前提需要明确：
+
+- 当前只支持单实例部署，不支持多副本
+- 必须挂持久卷保存 `/state` 和 `/gnupg`
+- 生产默认建议 `imap` 读信 + `imap` 回写
+- 容器内建议 `MIMECRYPT_TOKEN_STORE=file`，不要依赖系统 keyring
+
+不建议把当前版本直接部署为多副本服务。原因很直接：
+
+- 增量同步状态保存在本地 `sync-*.json`
+- 运行锁依赖本地文件系统 `flock`
+- 多实例会导致重复发现、重复处理和状态分叉
+
+构建镜像：
+
+```bash
+docker build -t mimecrypt:local .
+```
+
+首次注入 token 的推荐方式有两种：
+
+1. 在宿主机本地先完成 `login`，然后把生成的 `token.json` 放入挂载的 `./state`
+2. 使用 `token import` 导入已有 token JSON
+
+如果使用 `compose.example.yml`，可以先执行一次性导入：
+
+```bash
+docker compose -f compose.example.yml build
+docker compose -f compose.example.yml run --rm mimecrypt-token-import
+```
+
+随后再启动主服务：
+
+```bash
+docker compose -f compose.example.yml up -d mimecrypt
+```
+
+推荐的卷布局：
+
+- `./state -> /state`：token、同步状态、可选审计文件
+- `./backup -> /backup`：原始 MIME 的加密备份
+- `./gnupg -> /gnupg`：GPG keyring
+- `/tmp`：临时工件，建议 `tmpfs`
+
+推荐的容器内环境变量：
+
+```bash
+MIMECRYPT_PROVIDER=imap
+MIMECRYPT_WRITEBACK_PROVIDER=imap
+MIMECRYPT_STATE_DIR=/state
+MIMECRYPT_BACKUP_DIR=/backup
+MIMECRYPT_AUDIT_LOG_PATH=
+MIMECRYPT_AUDIT_STDOUT=true
+MIMECRYPT_TOKEN_STORE=file
+GNUPGHOME=/gnupg
+```
+
+在容器里做运行前检查：
+
+```bash
+docker run --rm \
+  -e MIMECRYPT_STATE_DIR=/state \
+  -e MIMECRYPT_TOKEN_STORE=file \
+  -e MIMECRYPT_IMAP_USERNAME=your-mailbox@example.com \
+  -v "$(pwd)/state:/state" \
+  -v "$(pwd)/gnupg:/gnupg" \
+  mimecrypt:local health
+```
+
+需要特别说明的边界：
+
+- 现在的 Docker 形态是“单实例、有状态、持久卷”的守护进程，不是可横向扩展的无状态服务
+- Graph/EWS 回写仍然保留，但大附件内存成本高于 IMAP，且 Graph 仍有 draft 语义副作用
+- `compose.example.yml` 只是单机示例，不应直接等价理解为 Swarm/Kubernetes 多副本方案
 
 ## 路线图
 
