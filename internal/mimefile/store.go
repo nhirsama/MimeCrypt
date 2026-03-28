@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"mimecrypt/internal/fileutil"
 	"mimecrypt/internal/provider"
 )
 
@@ -21,19 +22,9 @@ func SaveToOutputDir(outputDir string, message provider.Message, src io.Reader) 
 	fileName := buildMessageFileName(message)
 	path := filepath.Join(outputDir, fileName)
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	written, err := fileutil.WriteFileAtomic(path, 0o600, src)
 	if err != nil {
-		return "", 0, fmt.Errorf("创建输出文件失败: %w", err)
-	}
-
-	written, copyErr := io.Copy(file, src)
-	closeErr := file.Close()
-
-	if copyErr != nil {
-		return "", written, fmt.Errorf("写入 MIME 流到文件失败: %w", copyErr)
-	}
-	if closeErr != nil {
-		return "", written, fmt.Errorf("关闭输出文件失败: %w", closeErr)
+		return "", written, fmt.Errorf("写入 MIME 流到文件失败: %w", err)
 	}
 
 	return path, written, nil

@@ -71,6 +71,41 @@ func TestSaveToOutputDirReturnsCopyError(t *testing.T) {
 	}
 }
 
+func TestSaveToOutputDirKeepsExistingFileOnCopyError(t *testing.T) {
+	t.Parallel()
+
+	outputDir := t.TempDir()
+	message := provider.Message{
+		ID:               "msg-1",
+		ReceivedDateTime: time.Date(2026, 3, 28, 12, 34, 56, 0, time.UTC),
+	}
+
+	path, written, err := SaveBytesToOutputDir(outputDir, message, []byte("old payload"))
+	if err != nil {
+		t.Fatalf("SaveBytesToOutputDir() error = %v", err)
+	}
+	if written != int64(len("old payload")) {
+		t.Fatalf("written = %d, want %d", written, len("old payload"))
+	}
+
+	reader := &failAfterFirstReadReader{err: errors.New("boom")}
+	_, written, err = SaveToOutputDir(outputDir, message, reader)
+	if err == nil {
+		t.Fatalf("expected write error")
+	}
+	if written != int64(len(reader.chunk)) {
+		t.Fatalf("written = %d, want %d", written, len(reader.chunk))
+	}
+
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatalf("ReadFile() error = %v", readErr)
+	}
+	if string(got) != "old payload" {
+		t.Fatalf("content = %q, want %q", string(got), "old payload")
+	}
+}
+
 func TestBuildMessageFileStemUsesFallbacks(t *testing.T) {
 	t.Parallel()
 

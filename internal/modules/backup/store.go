@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"mimecrypt/internal/fileutil"
 	"mimecrypt/internal/mimefile"
 	"mimecrypt/internal/provider"
 )
@@ -27,18 +28,9 @@ func saveToDir(dir string, message provider.Message, ext string, src io.Reader) 
 	fileName := buildBackupFileName(message, ext)
 	path := filepath.Join(dir, fileName)
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	written, err := fileutil.WriteFileAtomic(path, 0o600, src)
 	if err != nil {
-		return "", 0, fmt.Errorf("创建备份文件失败: %w", err)
-	}
-
-	written, copyErr := io.Copy(file, src)
-	closeErr := file.Close()
-	if copyErr != nil {
-		return "", written, fmt.Errorf("写入备份文件失败: %w", copyErr)
-	}
-	if closeErr != nil {
-		return "", written, fmt.Errorf("关闭备份文件失败: %w", closeErr)
+		return "", written, fmt.Errorf("写入备份文件失败: %w", err)
 	}
 
 	return path, written, nil
