@@ -159,6 +159,11 @@ type Reconciler interface {
 	ReconcileMessage(ctx context.Context, req WriteRequest) (WriteResult, bool, error)
 }
 
+// HealthProber 抽象 provider 侧的最小活体探测，供显式深度健康检查使用。
+type HealthProber interface {
+	HealthCheck(ctx context.Context) (string, error)
+}
+
 // Clients 表示某个 provider 暴露的一组能力实现。
 type Clients struct {
 	Session Session

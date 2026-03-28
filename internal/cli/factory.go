@@ -86,11 +86,13 @@ func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
 	}
 
 	return &health.Service{
-		StateDir: cfg.Auth.StateDir,
-		Folder:   cfg.Mail.Sync.Folder,
-		Provider: cfg.Provider,
-		Session:  clients.Session,
-		Reader:   clients.Reader,
+		StateDir:          cfg.Auth.StateDir,
+		Folder:            cfg.Mail.Sync.Folder,
+		Provider:          cfg.Provider,
+		WriteBackProvider: cfg.Mail.Pipeline.WriteBackProvider,
+		Session:           clients.Session,
+		Reader:            clients.Reader,
+		Writer:            clients.Writer,
 	}, nil
 }
 

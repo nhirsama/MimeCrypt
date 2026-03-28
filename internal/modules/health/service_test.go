@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -67,18 +68,40 @@ func (f *fakeReader) LatestMessagesInFolder(context.Context, string, int, int) (
 	return nil, f.listErr
 }
 
-func TestServiceRunGraphChecksAllHealthy(t *testing.T) {
+type fakeWriter struct {
+	healthDetail string
+	healthErr    error
+	healthCalls  int
+}
+
+func (f *fakeWriter) WriteMessage(context.Context, provider.WriteRequest) (provider.WriteResult, error) {
+	return provider.WriteResult{}, nil
+}
+
+func (f *fakeWriter) HealthCheck(context.Context) (string, error) {
+	f.healthCalls++
+	return f.healthDetail, f.healthErr
+}
+
+type writeOnlyWriter struct{}
+
+func (writeOnlyWriter) WriteMessage(context.Context, provider.WriteRequest) (provider.WriteResult, error) {
+	return provider.WriteResult{}, nil
+}
+
+func TestServiceRunDefaultChecksReadonlyOnly(t *testing.T) {
 	t.Parallel()
 
 	reader := &fakeReader{meUser: provider.User{Mail: "user@example.com"}}
+	writer := &fakeWriter{healthDetail: "graph"}
 	service := Service{
 		StateDir: t.TempDir(),
 		Provider: "graph",
 		Session: fakeSession{
-			loadToken:   provider.Token{ExpiresAt: time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC)},
-			accessToken: "access-token",
+			loadToken: provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
 		},
 		Reader: reader,
+		Writer: writer,
 		LookPath: func(string) (string, error) {
 			return "/usr/bin/gpg", nil
 		},
@@ -91,24 +114,36 @@ func TestServiceRunGraphChecksAllHealthy(t *testing.T) {
 	if !result.OK() {
 		t.Fatalf("Run() = %+v, want all checks OK", result)
 	}
-	if reader.meCalls != 1 {
-		t.Fatalf("Me() calls = %d, want 1", reader.meCalls)
+	if len(result.Checks) != 3 {
+		t.Fatalf("checks = %d, want 3", len(result.Checks))
+	}
+	if reader.meCalls != 0 {
+		t.Fatalf("Me() calls = %d, want 0 in readonly mode", reader.meCalls)
+	}
+	if reader.listCalls != 0 {
+		t.Fatalf("LatestMessagesInFolder() calls = %d, want 0 in readonly mode", reader.listCalls)
+	}
+	if writer.healthCalls != 0 {
+		t.Fatalf("HealthCheck() calls = %d, want 0 in readonly mode", writer.healthCalls)
 	}
 }
 
-func TestServiceRunIMAPUsesFolderProbe(t *testing.T) {
+func TestServiceRunDeepUsesReaderAndWriterProbes(t *testing.T) {
 	t.Parallel()
 
 	reader := &fakeReader{}
+	writer := &fakeWriter{healthDetail: "imap addr=imap.example.com:993"}
 	service := Service{
-		StateDir: t.TempDir(),
-		Provider: "imap",
-		Folder:   "INBOX",
+		StateDir:          t.TempDir(),
+		Provider:          "imap",
+		WriteBackProvider: "imap",
+		Folder:            "INBOX",
+		Deep:              true,
 		Session: fakeSession{
-			loadToken:   provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
-			accessToken: "access-token",
+			loadToken: provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
 		},
 		Reader: reader,
+		Writer: writer,
 		LookPath: func(string) (string, error) {
 			return "/usr/bin/gpg", nil
 		},
@@ -124,22 +159,74 @@ func TestServiceRunIMAPUsesFolderProbe(t *testing.T) {
 	if reader.listCalls != 1 {
 		t.Fatalf("LatestMessagesInFolder() calls = %d, want 1", reader.listCalls)
 	}
-	if reader.meCalls != 0 {
-		t.Fatalf("Me() calls = %d, want 0", reader.meCalls)
+	if writer.healthCalls != 1 {
+		t.Fatalf("HealthCheck() calls = %d, want 1", writer.healthCalls)
 	}
 }
 
-func TestServiceRunReportsFailedChecks(t *testing.T) {
+func TestServiceRunDeepFailsWhenWriterProbeUnsupported(t *testing.T) {
 	t.Parallel()
 
 	service := Service{
 		StateDir: t.TempDir(),
 		Provider: "graph",
+		Deep:     true,
 		Session: fakeSession{
-			loadErr:   errors.New("missing token"),
-			accessErr: errors.New("refresh failed"),
+			loadToken: provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
+		},
+		Reader: &fakeReader{meUser: provider.User{Mail: "user@example.com"}},
+		Writer: writeOnlyWriter{},
+		LookPath: func(string) (string, error) {
+			return "/usr/bin/gpg", nil
+		},
+	}
+
+	result, err := service.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.OK() {
+		t.Fatalf("Run() = %+v, want failed checks", result)
+	}
+	if got := FormatText(result); !strings.Contains(got, "writeback_probe") {
+		t.Fatalf("FormatText() = %q, want writeback probe failure", got)
+	}
+}
+
+func TestServiceRunFailsCachedTokenWhenExpiredWithoutRefreshToken(t *testing.T) {
+	t.Parallel()
+
+	service := Service{
+		StateDir: t.TempDir(),
+		Session: fakeSession{
+			loadToken: provider.Token{ExpiresAt: time.Now().Add(-time.Minute)},
+		},
+		LookPath: func(string) (string, error) {
+			return "/usr/bin/gpg", nil
+		},
+	}
+
+	result, err := service.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.OK() {
+		t.Fatalf("Run() = %+v, want failed cached token check", result)
+	}
+}
+
+func TestServiceRunReportsMultipleFailedChecks(t *testing.T) {
+	t.Parallel()
+
+	service := Service{
+		StateDir: t.TempDir(),
+		Provider: "graph",
+		Deep:     true,
+		Session: fakeSession{
+			loadErr: errors.New("missing token"),
 		},
 		Reader: &fakeReader{meErr: errors.New("provider unavailable")},
+		Writer: &fakeWriter{healthErr: errors.New("writer unavailable")},
 		LookPath: func(string) (string, error) {
 			return "", errors.New("gpg not found")
 		},

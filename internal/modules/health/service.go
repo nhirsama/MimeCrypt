@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"mimecrypt/internal/provider"
 )
@@ -32,13 +33,16 @@ func (r Result) OK() bool {
 }
 
 type Service struct {
-	StateDir string
-	Folder   string
-	Provider string
-	Session  provider.Session
-	Reader   provider.Reader
-	LookPath func(string) (string, error)
-	Getenv   func(string) string
+	StateDir          string
+	Folder            string
+	Provider          string
+	WriteBackProvider string
+	Deep              bool
+	Session           provider.Session
+	Reader            provider.Reader
+	Writer            provider.Writer
+	LookPath          func(string) (string, error)
+	Getenv            func(string) string
 }
 
 func (s *Service) Run(ctx context.Context) (Result, error) {
@@ -48,36 +52,56 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	if s.Session == nil {
 		return Result{}, fmt.Errorf("health session 不能为空")
 	}
-	if s.Reader == nil {
-		return Result{}, fmt.Errorf("health reader 不能为空")
-	}
 	if strings.TrimSpace(s.StateDir) == "" {
 		return Result{}, fmt.Errorf("health state dir 不能为空")
+	}
+	if s.Deep && s.Reader == nil {
+		return Result{}, fmt.Errorf("deep health reader 不能为空")
+	}
+	if s.Deep && s.Writer == nil {
+		return Result{}, fmt.Errorf("deep health writer 不能为空")
 	}
 
 	checks := []Check{
 		s.checkStateDir(),
 		s.checkGPG(),
 		s.checkCachedToken(),
-		s.checkAccessToken(ctx),
-		s.checkProvider(ctx),
+	}
+	if s.Deep {
+		checks = append(checks,
+			s.checkStateDirWritable(),
+			s.checkProvider(ctx),
+			s.checkWriteBack(ctx),
+		)
 	}
 	return Result{Checks: checks}, nil
 }
 
 func (s *Service) checkStateDir() Check {
 	stateDir := strings.TrimSpace(s.StateDir)
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return Check{Name: "state_dir", Detail: fmt.Sprintf("不可创建: %v", err)}
+	info, err := os.Stat(stateDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Check{Name: "state_dir", Detail: "不存在"}
+		}
+		return Check{Name: "state_dir", Detail: fmt.Sprintf("不可访问: %v", err)}
 	}
+	if !info.IsDir() {
+		return Check{Name: "state_dir", Detail: "不是目录"}
+	}
+	return Check{Name: "state_dir", OK: true, Detail: stateDir}
+}
+
+func (s *Service) checkStateDirWritable() Check {
+	stateDir := strings.TrimSpace(s.StateDir)
 	file, err := os.CreateTemp(stateDir, "health-*.tmp")
 	if err != nil {
-		return Check{Name: "state_dir", Detail: fmt.Sprintf("不可写: %v", err)}
+		return Check{Name: "state_dir_write", Detail: fmt.Sprintf("不可写: %v", err)}
 	}
 	path := file.Name()
 	_ = file.Close()
 	_ = os.Remove(path)
-	return Check{Name: "state_dir", OK: true, Detail: stateDir}
+	return Check{Name: "state_dir_write", OK: true, Detail: stateDir}
 }
 
 func (s *Service) checkGPG() Check {
@@ -100,16 +124,14 @@ func (s *Service) checkCachedToken() Check {
 	detail := "已加载"
 	if !token.ExpiresAt.IsZero() {
 		detail = "expires_at=" + token.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z")
+		if time.Until(token.ExpiresAt) <= 0 {
+			if strings.TrimSpace(token.RefreshToken) == "" {
+				return Check{Name: "cached_token", Detail: detail + "，且无 refresh token"}
+			}
+			detail += "，需要刷新"
+		}
 	}
 	return Check{Name: "cached_token", OK: true, Detail: detail}
-}
-
-func (s *Service) checkAccessToken(ctx context.Context) Check {
-	token, err := s.Session.AccessToken(ctx)
-	if err != nil {
-		return Check{Name: "access_token", Detail: err.Error()}
-	}
-	return Check{Name: "access_token", OK: true, Detail: fmt.Sprintf("长度=%d", len(token))}
 }
 
 func (s *Service) checkProvider(ctx context.Context) Check {
@@ -131,6 +153,31 @@ func (s *Service) checkProvider(ctx context.Context) Check {
 		}
 		return Check{Name: "provider_probe", OK: true, Detail: user.Account()}
 	}
+}
+
+func (s *Service) checkWriteBack(ctx context.Context) Check {
+	probe, ok := s.Writer.(provider.HealthProber)
+	if !ok {
+		return Check{Name: "writeback_probe", Detail: "当前回写实现不支持健康探测"}
+	}
+	detail, err := probe.HealthCheck(ctx)
+	if err != nil {
+		return Check{Name: "writeback_probe", Detail: err.Error()}
+	}
+	if strings.TrimSpace(detail) == "" {
+		detail = normalizedWriteBackProvider(s.Provider, s.WriteBackProvider)
+	}
+	return Check{Name: "writeback_probe", OK: true, Detail: detail}
+}
+
+func normalizedWriteBackProvider(providerName, writeBackProvider string) string {
+	if value := strings.ToLower(strings.TrimSpace(writeBackProvider)); value != "" {
+		return value
+	}
+	if value := strings.ToLower(strings.TrimSpace(providerName)); value != "" {
+		return value
+	}
+	return "unknown"
 }
 
 func (s *Service) lookPath(file string) (string, error) {
