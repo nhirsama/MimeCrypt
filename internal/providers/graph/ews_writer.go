@@ -74,6 +74,67 @@ type ewsItemID struct {
 	ID string `xml:"Id,attr"`
 }
 
+type ewsCreateItemEnvelope struct {
+	XMLName   xml.Name                 `xml:"soap:Envelope"`
+	XMLNSXSI  string                   `xml:"xmlns:xsi,attr"`
+	XMLNSM    string                   `xml:"xmlns:m,attr"`
+	XMLNST    string                   `xml:"xmlns:t,attr"`
+	XMLNSSoap string                   `xml:"xmlns:soap,attr"`
+	Header    ewsCreateItemHeader      `xml:"soap:Header"`
+	Body      ewsCreateItemRequestBody `xml:"soap:Body"`
+}
+
+type ewsCreateItemHeader struct {
+	RequestServerVersion ewsRequestServerVersion `xml:"t:RequestServerVersion"`
+}
+
+type ewsRequestServerVersion struct {
+	Version string `xml:"Version,attr"`
+}
+
+type ewsCreateItemRequestBody struct {
+	CreateItem ewsCreateItemRequest `xml:"m:CreateItem"`
+}
+
+type ewsCreateItemRequest struct {
+	MessageDisposition string                 `xml:"MessageDisposition,attr"`
+	SavedItemFolderID  ewsSavedItemFolderID   `xml:"m:SavedItemFolderId"`
+	Items              ewsCreateItemRequestIO `xml:"m:Items"`
+}
+
+type ewsSavedItemFolderID struct {
+	FolderID ewsFolderID `xml:"t:FolderId"`
+}
+
+type ewsFolderID struct {
+	ID string `xml:"Id,attr"`
+}
+
+type ewsCreateItemRequestIO struct {
+	Message ewsCreateMessage `xml:"t:Message"`
+}
+
+type ewsCreateMessage struct {
+	MimeContent      ewsMimeContent      `xml:"t:MimeContent"`
+	IsRead           bool                `xml:"t:IsRead"`
+	ExtendedProperty ewsExtendedProperty `xml:"t:ExtendedProperty"`
+}
+
+type ewsMimeContent struct {
+	CharacterSet string `xml:"CharacterSet,attr"`
+	Value        string `xml:",chardata"`
+}
+
+type ewsExtendedProperty struct {
+	ExtendedFieldURI ewsExtendedFieldURI `xml:"t:ExtendedFieldURI"`
+	Value            string              `xml:"t:Value"`
+}
+
+type ewsExtendedFieldURI struct {
+	PropertyTag  string `xml:"PropertyTag,attr"`
+	PropertyType string `xml:"PropertyType,attr"`
+}
+
 func newEWSWriter(cfg appconfig.Config, tokenSource scopedAccessTokenSource, httpClient *http.Client) (*ewsWriter, error) {
 	if tokenSource == nil {
 		return nil, fmt.Errorf("token source 不能为空")
@@ -208,7 +269,12 @@ func (w *ewsWriter) resolveCreatedGraphID(ctx context.Context, req provider.Writ
 }
 
 func (c *ewsClient) createMessage(ctx context.Context, folderID string, mimeBytes []byte) (string, error) {
-	req, err := c.newRequest(ctx, buildCreateItemEnvelope(folderID, mimeBytes))
+	envelope, err := buildCreateItemEnvelope(folderID, mimeBytes)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := c.newRequest(ctx, envelope)
 	if err != nil {
 		return "", err
 	}
@@ -238,13 +304,13 @@ func (c *ewsClient) createMessage(ctx context.Context, folderID string, mimeByte
 	return itemID, nil
 }
 
-func (c *ewsClient) newRequest(ctx context.Context, envelope string) (*http.Request, error) {
+func (c *ewsClient) newRequest(ctx context.Context, envelope []byte) (*http.Request, error) {
 	token, err := c.tokenSource.AccessTokenForScopes(ctx, c.scopes)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, strings.NewReader(envelope))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(envelope))
 	if err != nil {
 		return nil, fmt.Errorf("构造 EWS 请求失败: %w", err)
 	}
@@ -304,33 +370,47 @@ func (w *writer) translateExchangeID(ctx context.Context, id, sourceIDType, targ
 	return result.TargetID, nil
 }
 
-func buildCreateItemEnvelope(folderID string, mimeBytes []byte) string {
-	return fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-               xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"
-               xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"
-               xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Header>
-    <t:RequestServerVersion Version="Exchange2016" />
-  </soap:Header>
-  <soap:Body>
-    <m:CreateItem MessageDisposition="SaveOnly">
-      <m:SavedItemFolderId>
-        <t:FolderId Id="%s" />
-      </m:SavedItemFolderId>
-      <m:Items>
-        <t:Message>
-          <t:MimeContent CharacterSet="UTF-8">%s</t:MimeContent>
-          <t:IsRead>false</t:IsRead>
-          <t:ExtendedProperty>
-            <t:ExtendedFieldURI PropertyTag="0x0E07" PropertyType="Integer" />
-            <t:Value>1</t:Value>
-          </t:ExtendedProperty>
-        </t:Message>
-      </m:Items>
-    </m:CreateItem>
-  </soap:Body>
-</soap:Envelope>`, xmlEscape(folderID), base64.StdEncoding.EncodeToString(mimeBytes))
+func buildCreateItemEnvelope(folderID string, mimeBytes []byte) ([]byte, error) {
+	payload := ewsCreateItemEnvelope{
+		XMLNSXSI:  "http://www.w3.org/2001/XMLSchema-instance",
+		XMLNSM:    "http://schemas.microsoft.com/exchange/services/2006/messages",
+		XMLNST:    "http://schemas.microsoft.com/exchange/services/2006/types",
+		XMLNSSoap: "http://schemas.xmlsoap.org/soap/envelope/",
+		Header: ewsCreateItemHeader{
+			RequestServerVersion: ewsRequestServerVersion{Version: "Exchange2016"},
+		},
+		Body: ewsCreateItemRequestBody{
+			CreateItem: ewsCreateItemRequest{
+				MessageDisposition: "SaveOnly",
+				SavedItemFolderID: ewsSavedItemFolderID{
+					FolderID: ewsFolderID{ID: folderID},
+				},
+				Items: ewsCreateItemRequestIO{
+					Message: ewsCreateMessage{
+						MimeContent: ewsMimeContent{
+							CharacterSet: "UTF-8",
+							Value:        base64.StdEncoding.EncodeToString(mimeBytes),
+						},
+						IsRead: false,
+						ExtendedProperty: ewsExtendedProperty{
+							ExtendedFieldURI: ewsExtendedFieldURI{
+								PropertyTag:  "0x0E07",
+								PropertyType: "Integer",
+							},
+							Value: "1",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	body, err := xml.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("序列化 EWS CreateItem 请求失败: %w", err)
+	}
+
+	return append([]byte(xml.Header), body...), nil
 }
 
 func parseCreateItemResponse(body []byte) (string, error) {
@@ -371,10 +451,4 @@ func parseCreateItemResponse(body []byte) (string, error) {
 	}
 
 	return strings.TrimSpace(message.Items.Message.ItemID.ID), nil
-}
-
-func xmlEscape(value string) string {
-	var buf bytes.Buffer
-	xml.EscapeText(&buf, []byte(value))
-	return buf.String()
 }

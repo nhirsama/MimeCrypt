@@ -141,7 +141,7 @@ func TestEWSWriterWriteMessageCreatesNonDraftMessage(t *testing.T) {
 	if !strings.Contains(soapBody, "<t:IsRead>false</t:IsRead>") {
 		t.Fatalf("soap body missing unread flag: %s", soapBody)
 	}
-	if !strings.Contains(soapBody, `<t:ExtendedFieldURI PropertyTag="0x0E07" PropertyType="Integer" />`) {
+	if !strings.Contains(soapBody, `PropertyTag="0x0E07" PropertyType="Integer"`) {
 		t.Fatalf("soap body missing message flags property: %s", soapBody)
 	}
 	if !strings.Contains(soapBody, base64.StdEncoding.EncodeToString(mimeBytes)) {
