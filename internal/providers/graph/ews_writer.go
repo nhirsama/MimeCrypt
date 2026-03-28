@@ -3,7 +3,6 @@ package graph
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -202,12 +201,7 @@ func (w *ewsWriter) WriteMessage(ctx context.Context, req provider.WriteRequest)
 		return provider.WriteResult{}, fmt.Errorf("转换目标文件夹 ID 失败: %w", err)
 	}
 
-	mimeBytes, err := req.ReadMIME()
-	if err != nil {
-		return provider.WriteResult{}, err
-	}
-
-	createdEWSID, err := w.ewsClient.createMessage(ctx, targetFolderEWSID, mimeBytes)
+	createdEWSID, err := w.ewsClient.createMessage(ctx, targetFolderEWSID, req.OpenMIME)
 	if err != nil {
 		return provider.WriteResult{}, err
 	}
@@ -270,11 +264,12 @@ func (w *ewsWriter) resolveCreatedGraphID(ctx context.Context, req provider.Writ
 	return createdGraphID, nil
 }
 
-func (c *ewsClient) createMessage(ctx context.Context, folderID string, mimeBytes []byte) (string, error) {
-	envelope, err := buildCreateItemEnvelope(folderID, mimeBytes)
+func (c *ewsClient) createMessage(ctx context.Context, folderID string, open provider.MIMEOpener) (string, error) {
+	envelope, err := buildCreateItemEnvelopeReader(folderID, open)
 	if err != nil {
 		return "", err
 	}
+	defer envelope.Close()
 
 	req, err := c.newRequest(ctx, envelope)
 	if err != nil {
@@ -306,13 +301,13 @@ func (c *ewsClient) createMessage(ctx context.Context, folderID string, mimeByte
 	return itemID, nil
 }
 
-func (c *ewsClient) newRequest(ctx context.Context, envelope []byte) (*http.Request, error) {
+func (c *ewsClient) newRequest(ctx context.Context, body io.Reader) (*http.Request, error) {
 	token, err := c.tokenSource.AccessTokenForScopes(ctx, c.scopes)
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, bytes.NewReader(envelope))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("构造 EWS 请求失败: %w", err)
 	}
@@ -370,49 +365,6 @@ func (w *writer) translateExchangeID(ctx context.Context, id, sourceIDType, targ
 	}
 
 	return result.TargetID, nil
-}
-
-func buildCreateItemEnvelope(folderID string, mimeBytes []byte) ([]byte, error) {
-	payload := ewsCreateItemEnvelope{
-		XMLNSXSI:  "http://www.w3.org/2001/XMLSchema-instance",
-		XMLNSM:    "http://schemas.microsoft.com/exchange/services/2006/messages",
-		XMLNST:    "http://schemas.microsoft.com/exchange/services/2006/types",
-		XMLNSSoap: "http://schemas.xmlsoap.org/soap/envelope/",
-		Header: ewsCreateItemHeader{
-			RequestServerVersion: ewsRequestServerVersion{Version: "Exchange2016"},
-		},
-		Body: ewsCreateItemRequestBody{
-			CreateItem: ewsCreateItemRequest{
-				MessageDisposition: "SaveOnly",
-				SavedItemFolderID: ewsSavedItemFolderID{
-					FolderID: ewsFolderID{ID: folderID},
-				},
-				Items: ewsCreateItemRequestIO{
-					Message: ewsCreateMessage{
-						MimeContent: ewsMimeContent{
-							CharacterSet: "UTF-8",
-							Value:        base64.StdEncoding.EncodeToString(mimeBytes),
-						},
-						IsRead: false,
-						ExtendedProperty: ewsExtendedProperty{
-							ExtendedFieldURI: ewsExtendedFieldURI{
-								PropertyTag:  "0x0E07",
-								PropertyType: "Integer",
-							},
-							Value: "1",
-						},
-					},
-				},
-			},
-		},
-	}
-
-	body, err := xml.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("序列化 EWS CreateItem 请求失败: %w", err)
-	}
-
-	return append([]byte(xml.Header), body...), nil
 }
 
 func parseCreateItemResponse(body []byte) (string, error) {

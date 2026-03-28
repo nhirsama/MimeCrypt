@@ -3,7 +3,6 @@ package graph
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -44,12 +43,7 @@ func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (p
 		return result, nil
 	}
 
-	mimeBytes, err := req.ReadMIME()
-	if err != nil {
-		return provider.WriteResult{}, err
-	}
-
-	createdDraft, err := w.createDraftMessage(ctx, mimeBytes)
+	createdDraft, err := w.createDraftMessage(ctx, req.OpenMIME)
 	if err != nil {
 		return provider.WriteResult{}, err
 	}
@@ -121,10 +115,16 @@ func (w *writer) resolveFolderID(ctx context.Context, folder string) (string, er
 	return payload.ID, nil
 }
 
-func (w *writer) createDraftMessage(ctx context.Context, mimeBytes []byte) (provider.Message, error) {
+func (w *writer) createDraftMessage(ctx context.Context, open provider.MIMEOpener) (provider.Message, error) {
 	endpoint := fmt.Sprintf("%s/me/messages", w.baseURL)
 
-	req, err := w.newRequest(ctx, http.MethodPost, endpoint, bytes.NewReader([]byte(base64.StdEncoding.EncodeToString(mimeBytes))))
+	body, err := newBase64MIMEReader(open)
+	if err != nil {
+		return provider.Message{}, err
+	}
+	defer body.Close()
+
+	req, err := w.newRequest(ctx, http.MethodPost, endpoint, body)
 	if err != nil {
 		return provider.Message{}, err
 	}
