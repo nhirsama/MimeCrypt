@@ -3,6 +3,8 @@ package process
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"testing"
 	"time"
 
@@ -27,12 +29,47 @@ func (f *fakeDownloader) Fetch(context.Context, string) (download.Payload, error
 	return f.payload, nil
 }
 
+func (f *fakeDownloader) FetchToTemp(_ context.Context, _ string, tempDir string) (download.TempPayload, error) {
+	if f.err != nil {
+		return download.TempPayload{}, f.err
+	}
+	file, err := os.CreateTemp(tempDir, "payload-*.eml")
+	if err != nil {
+		return download.TempPayload{}, err
+	}
+	if _, err := file.Write(f.payload.MIME); err != nil {
+		_ = file.Close()
+		return download.TempPayload{}, err
+	}
+	if err := file.Close(); err != nil {
+		return download.TempPayload{}, err
+	}
+	return download.TempPayload{
+		Message: f.payload.Message,
+		Path:    file.Name(),
+		Bytes:   int64(len(f.payload.MIME)),
+	}, nil
+}
+
 func (f *fakeDownloader) SavePayload(payload download.Payload, outputDir string) (download.Result, error) {
 	f.saved = true
 	return download.Result{
 		Message: payload.Message,
 		Path:    outputDir + "/encrypted.eml",
 		Bytes:   int64(len(payload.MIME)),
+	}, nil
+}
+
+func (f *fakeDownloader) SaveStream(message provider.Message, src io.Reader, outputDir string) (download.Result, error) {
+	f.saved = true
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return download.Result{}, err
+	}
+	return download.Result{
+		Message: message,
+		Path:    outputDir + "/encrypted.eml",
+		Bytes:   int64(len(data)),
 	}, nil
 }
 
@@ -44,10 +81,63 @@ func (f fakeEncryptor) RunContext(context.Context, []byte) (encrypt.Result, erro
 	return f.result, nil
 }
 
+func (f fakeEncryptor) RunFromOpenerContext(_ context.Context, open encrypt.MIMEOpenFunc, armoredOut, mimeOut io.Writer) (encrypt.Result, error) {
+	reader, err := open()
+	if err != nil {
+		return encrypt.Result{}, err
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return encrypt.Result{}, err
+	}
+	if armoredOut != nil {
+		if _, err := armoredOut.Write(f.result.Armored); err != nil {
+			return encrypt.Result{}, err
+		}
+	}
+	if mimeOut != nil {
+		if _, err := mimeOut.Write(f.result.MIME); err != nil {
+			return encrypt.Result{}, err
+		}
+	}
+	if len(data) == 0 {
+		return encrypt.Result{}, errors.New("empty MIME")
+	}
+	return f.result, nil
+}
+
 type fakeEncryptorFunc func(context.Context, []byte) (encrypt.Result, error)
 
 func (f fakeEncryptorFunc) RunContext(ctx context.Context, mimeBytes []byte) (encrypt.Result, error) {
 	return f(ctx, mimeBytes)
+}
+
+func (f fakeEncryptorFunc) RunFromOpenerContext(ctx context.Context, open encrypt.MIMEOpenFunc, armoredOut, mimeOut io.Writer) (encrypt.Result, error) {
+	reader, err := open()
+	if err != nil {
+		return encrypt.Result{}, err
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return encrypt.Result{}, err
+	}
+	result, err := f(ctx, data)
+	if err != nil {
+		return encrypt.Result{}, err
+	}
+	if armoredOut != nil {
+		if _, err := armoredOut.Write(result.Armored); err != nil {
+			return encrypt.Result{}, err
+		}
+	}
+	if mimeOut != nil {
+		if _, err := mimeOut.Write(result.MIME); err != nil {
+			return encrypt.Result{}, err
+		}
+	}
+	return result, nil
 }
 
 type fakeWriter struct {
@@ -69,14 +159,28 @@ func (f *fakeWriter) Reconcile(_ context.Context, req writeback.Request) (writeb
 }
 
 type fakeBackupper struct {
-	req backup.Request
+	req        backup.Request
+	ciphertext []byte
 }
 
 func (f *fakeBackupper) Run(req backup.Request) (backup.Result, error) {
 	f.req = req
+	if req.CiphertextOpener != nil {
+		reader, err := req.CiphertextOpener()
+		if err != nil {
+			return backup.Result{}, err
+		}
+		defer reader.Close()
+		f.ciphertext, err = io.ReadAll(reader)
+		if err != nil {
+			return backup.Result{}, err
+		}
+	} else {
+		f.ciphertext = append([]byte(nil), req.Ciphertext...)
+	}
 	return backup.Result{
 		Path:  req.Dir + "/backup.pgp",
-		Bytes: int64(len(req.Ciphertext)),
+		Bytes: int64(len(f.ciphertext)),
 	}, nil
 }
 
@@ -151,8 +255,8 @@ func TestRunPassesWriteBackFolders(t *testing.T) {
 	if backupper.req.Dir != "backup" {
 		t.Fatalf("backup dir = %q, want backup", backupper.req.Dir)
 	}
-	if string(backupper.req.Ciphertext) != "armored-ciphertext" {
-		t.Fatalf("backup ciphertext = %q, want armored-ciphertext", string(backupper.req.Ciphertext))
+	if string(backupper.ciphertext) != "armored-ciphertext" {
+		t.Fatalf("backup ciphertext = %q, want armored-ciphertext", string(backupper.ciphertext))
 	}
 	if !writer.req.Verify {
 		t.Fatalf("Verify = false, want true")
@@ -251,8 +355,8 @@ func TestRunUsesCatchAllBackupEncryptorWhenConfigured(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if string(backupper.req.Ciphertext) != "catch-all-backup-ciphertext" {
-		t.Fatalf("backup ciphertext = %q, want catch-all-backup-ciphertext", string(backupper.req.Ciphertext))
+	if string(backupper.ciphertext) != "catch-all-backup-ciphertext" {
+		t.Fatalf("backup ciphertext = %q, want catch-all-backup-ciphertext", string(backupper.ciphertext))
 	}
 }
 

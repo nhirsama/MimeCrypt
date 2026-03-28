@@ -40,10 +40,7 @@ func TestClientLatestMessagesInFolder(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 4] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains("UID SEARCH")
+			rw.expectContainsAfterOptionalCapability("UID SEARCH", "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeLine("* SEARCH 1 2 3")
 			rw.writeTaggedOK("A0005", "SEARCH completed")
 			rw.expectContains("UID FETCH 1:3 (UID INTERNALDATE BODY.PEEK[HEADER])")
@@ -85,10 +82,7 @@ func TestClientLatestMessagesInFolderUsesServerSortWhenAvailable(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 10] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SORT SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains(`UID SORT (REVERSE ARRIVAL) US-ASCII ALL`)
+			rw.expectContainsAfterOptionalCapability(`UID SORT (REVERSE ARRIVAL) US-ASCII ALL`, "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SORT SASL-IR")
 			rw.writeLine("* SORT 9 8 7 6")
 			rw.writeTaggedOK("A0005", "SORT completed")
 			rw.expectContains("UID FETCH 7:8 (UID INTERNALDATE BODY.PEEK[HEADER])")
@@ -129,10 +123,7 @@ func TestClientLatestMessagesInFolderSortsAcrossAllUIDs(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 4] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains("UID SEARCH")
+			rw.expectContainsAfterOptionalCapability("UID SEARCH", "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeLine("* SEARCH 1 2 3")
 			rw.writeTaggedOK("A0005", "SEARCH completed")
 			rw.expectContains("UID FETCH 1:3 (UID INTERNALDATE BODY.PEEK[HEADER])")
@@ -174,10 +165,7 @@ func TestClientLatestMessagesInFolderDecodesEncodedSubject(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 2] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains("UID SEARCH")
+			rw.expectContainsAfterOptionalCapability("UID SEARCH", "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeLine("* SEARCH 1")
 			rw.writeTaggedOK("A0005", "SEARCH completed")
 			rw.expectContains("UID FETCH 1 (UID INTERNALDATE BODY.PEEK[HEADER])")
@@ -214,10 +202,7 @@ func TestClientLatestMessagesInFolderEncodesMailboxName(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 1] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains("UID SEARCH")
+			rw.expectContainsAfterOptionalCapability("UID SEARCH", "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeLine("* SEARCH")
 			rw.writeTaggedOK("A0005", "SEARCH completed")
 		},
@@ -369,8 +354,6 @@ func TestClientDeltaCreatedMessagesResetsUIDValidity(t *testing.T) {
 }
 
 func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
-	t.Parallel()
-
 	mimeBytes := []byte("Message-ID: <m1@example.com>\r\nDate: Sat, 28 Mar 2026 10:00:00 +0000\r\nX-MimeCrypt-Processed: yes\r\nContent-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"\r\n\r\nbody")
 	sourceReceivedAt := time.Date(2026, 3, 27, 8, 30, 0, 0, time.UTC)
 	client := newTestClient(t, newScriptedDialer(t,
@@ -402,10 +385,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 12] Predicted next UID")
 			rw.writeTaggedOK("A0003", "SELECT completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains(`APPEND INBOX "27-Mar-2026 08:30:00 +0000"`)
+			rw.expectContainsAfterOptionalCapability(`APPEND INBOX "27-Mar-2026 08:30:00 +0000"`, "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeLine("+ Ready for literal data")
 			literal := rw.readLiteral(t, len(mimeBytes))
 			if !bytes.Equal(literal, mimeBytes) {
@@ -425,10 +405,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 201] Predicted next UID")
 			rw.writeTaggedOK("A0003", "SELECT completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains("UID 1")
+			rw.expectContainsAfterOptionalCapability("UID 1", "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeLine("* SEARCH 1")
 			rw.writeTaggedOK("A0005", "SEARCH completed")
 			rw.expectContains("UID STORE 1 +FLAGS.SILENT (\\Deleted)")
@@ -451,8 +428,6 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 }
 
 func TestClientWriteMessageFallsBackWithoutAppendUID(t *testing.T) {
-	t.Parallel()
-
 	mimeBytes := []byte("Message-ID: <m2@example.com>\r\nDate: Sat, 28 Mar 2026 10:00:00 +0000\r\nX-MimeCrypt-Processed: yes\r\nContent-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"\r\n\r\nbody")
 	client := newTestClient(t, newScriptedDialer(t,
 		func(t *testing.T, conn net.Conn) {
@@ -483,10 +458,7 @@ func TestClientWriteMessageFallsBackWithoutAppendUID(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 12] Predicted next UID")
 			rw.writeTaggedOK("A0003", "SELECT completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains(`APPEND INBOX "28-Mar-2026 10:00:00 +0000"`)
+			rw.expectContainsAfterOptionalCapability(`APPEND INBOX "28-Mar-2026 10:00:00 +0000"`, "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeLine("+ Ready for literal data")
 			literal := rw.readLiteral(t, len(mimeBytes))
 			if !bytes.Equal(literal, mimeBytes) {
@@ -525,10 +497,7 @@ func TestClientWriteMessageFallsBackWithoutAppendUID(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 201] Predicted next UID")
 			rw.writeTaggedOK("A0003", "SELECT completed")
-			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
-			rw.writeTaggedOK("A0004", "CAPABILITY completed")
-			rw.expectContains("UID 1")
+			rw.expectContainsAfterOptionalCapability("UID 1", "* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeLine("* SEARCH 1")
 			rw.writeTaggedOK("A0005", "SEARCH completed")
 			rw.expectContains("UID STORE 1 +FLAGS.SILENT (\\Deleted)")
@@ -580,9 +549,31 @@ func newScriptedDialer(t *testing.T, scripts ...scriptFunc) dialTLSFunc {
 		go func() {
 			defer serverConn.Close()
 			script(t, serverConn)
+			handleOptionalLogout(serverConn)
 		}()
 		return clientConn, nil
 	}
+}
+
+func handleOptionalLogout(conn net.Conn) {
+	if conn == nil {
+		return
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond))
+	rw := newScriptRW(conn)
+	line, err := rw.reader.ReadString('\n')
+	if err != nil {
+		return
+	}
+	line = strings.TrimRight(line, "\r\n")
+	if fields := strings.Fields(line); len(fields) > 0 {
+		rw.lastTag = fields[0]
+	}
+	if !strings.Contains(line, "LOGOUT") {
+		return
+	}
+	rw.writeLine("* BYE Logging out")
+	rw.writeTaggedOK("A0000", "LOGOUT completed")
 }
 
 type scriptRW struct {
@@ -596,14 +587,32 @@ func newScriptRW(conn net.Conn) *scriptRW {
 }
 
 func (rw *scriptRW) expectContains(want string) string {
+	line := rw.readCommandLine()
+	if !strings.Contains(line, want) {
+		panic(fmt.Sprintf("unexpected command %q, want contains %q", line, want))
+	}
+	return line
+}
+
+func (rw *scriptRW) expectContainsAfterOptionalCapability(want, capabilityLine string) string {
+	line := rw.readCommandLine()
+	if strings.Contains(line, "CAPABILITY") {
+		rw.writeLine(capabilityLine)
+		rw.writeTaggedOK("A0000", "CAPABILITY completed")
+		line = rw.readCommandLine()
+	}
+	if !strings.Contains(line, want) {
+		panic(fmt.Sprintf("unexpected command %q, want contains %q", line, want))
+	}
+	return line
+}
+
+func (rw *scriptRW) readCommandLine() string {
 	line, err := rw.reader.ReadString('\n')
 	if err != nil {
 		panic(err)
 	}
 	line = strings.TrimRight(line, "\r\n")
-	if !strings.Contains(line, want) {
-		panic(fmt.Sprintf("unexpected command %q, want contains %q", line, want))
-	}
 	if fields := strings.Fields(line); len(fields) > 0 {
 		rw.lastTag = fields[0]
 	}

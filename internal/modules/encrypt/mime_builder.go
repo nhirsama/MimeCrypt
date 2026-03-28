@@ -58,14 +58,17 @@ func newPGPMIMEMessageWriter(originalMIME []byte, out io.Writer, protectSubject 
 	if err != nil {
 		return nil, fmt.Errorf("解析原始 MIME 失败: %w", err)
 	}
+	return newPGPMIMEMessageWriterFromHeader(message.Header, out, protectSubject)
+}
 
+func newPGPMIMEMessageWriterFromHeader(header mail.Header, out io.Writer, protectSubject bool) (*pgpMIMEMessageWriter, error) {
 	boundary, err := newBoundary()
 	if err != nil {
 		return nil, err
 	}
 
 	buffered := bufio.NewWriter(out)
-	if err := writePGPMIMEPreamble(buffered, message.Header, boundary, protectSubject); err != nil {
+	if err := writePGPMIMEPreamble(buffered, header, boundary, protectSubject); err != nil {
 		return nil, err
 	}
 

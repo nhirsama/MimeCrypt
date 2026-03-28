@@ -31,7 +31,7 @@ func defaultGPGTrustModel() string {
 
 func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients []string) ([]byte, error) {
 	var out bytes.Buffer
-	if err := g.EncryptTo(ctx, mimeBytes, recipients, &out); err != nil {
+	if err := g.EncryptReaderTo(ctx, bytes.NewReader(mimeBytes), recipients, &out); err != nil {
 		return nil, err
 	}
 	if out.Len() == 0 {
@@ -41,11 +41,18 @@ func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients 
 }
 
 func (g gpgEncryptor) EncryptTo(ctx context.Context, mimeBytes []byte, recipients []string, out io.Writer) error {
+	return g.EncryptReaderTo(ctx, bytes.NewReader(mimeBytes), recipients, out)
+}
+
+func (g gpgEncryptor) EncryptReaderTo(ctx context.Context, src io.Reader, recipients []string, out io.Writer) error {
 	if len(recipients) == 0 {
 		return ErrNoRecipients
 	}
 	if out == nil {
 		return fmt.Errorf("gpg 输出目标不能为空")
+	}
+	if src == nil {
+		return fmt.Errorf("gpg 输入源不能为空")
 	}
 
 	binary := strings.TrimSpace(g.binary)
@@ -82,7 +89,7 @@ func (g gpgEncryptor) EncryptTo(ctx context.Context, mimeBytes []byte, recipient
 	}
 
 	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Stdin = bytes.NewReader(mimeBytes)
+	cmd.Stdin = src
 	cmd.Stdout = out
 
 	var stderr bytes.Buffer

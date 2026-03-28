@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 
 	"mimecrypt/internal/modules/audit"
@@ -16,11 +18,14 @@ import (
 
 type Downloader interface {
 	Fetch(ctx context.Context, messageID string) (download.Payload, error)
+	FetchToTemp(ctx context.Context, messageID, tempDir string) (download.TempPayload, error)
 	SavePayload(payload download.Payload, outputDir string) (download.Result, error)
+	SaveStream(message provider.Message, src io.Reader, outputDir string) (download.Result, error)
 }
 
 type Encryptor interface {
 	RunContext(ctx context.Context, mimeBytes []byte) (encrypt.Result, error)
+	RunFromOpenerContext(ctx context.Context, open encrypt.MIMEOpenFunc, armoredOut, mimeOut io.Writer) (encrypt.Result, error)
 }
 
 type Backupper interface {
@@ -80,9 +85,13 @@ type runState struct {
 	request       Request
 	source        provider.MessageRef
 	payload       download.Payload
+	payloadTemp   download.TempPayload
 	encryptResult encrypt.Result
 	backupResult  backup.Result
 	result        Result
+	workDir       string
+	armoredPath   string
+	encryptedPath string
 }
 
 // Run 根据邮件 ID 和配置处理邮件。
@@ -111,6 +120,11 @@ func (r Request) validate() error {
 }
 
 func (r *runState) execute(ctx context.Context) (Result, error) {
+	if err := r.prepareWorkDir(); err != nil {
+		return Result{}, err
+	}
+	defer r.cleanupWorkDir()
+
 	if err := r.record("process_started"); err != nil {
 		return Result{}, err
 	}
@@ -143,7 +157,7 @@ func (r *runState) execute(ctx context.Context) (Result, error) {
 }
 
 func (r *runState) loadPayload(ctx context.Context) (bool, error) {
-	payload, err := r.service.Downloader.Fetch(ctx, r.source.ID)
+	payload, err := r.service.Downloader.FetchToTemp(ctx, r.source.ID, r.workDir)
 	if err != nil {
 		reconciled, reconcileErr := r.reconcileFetchFailure(ctx)
 		if reconcileErr != nil {
@@ -155,7 +169,8 @@ func (r *runState) loadPayload(ctx context.Context) (bool, error) {
 		return false, r.fail("fetch_failed", err)
 	}
 
-	r.payload = payload
+	r.payloadTemp = payload
+	r.payload = download.Payload{Message: payload.Message}
 	r.source = payload.Message.Ref()
 	r.result.MessageID = r.source.ID
 
@@ -163,7 +178,19 @@ func (r *runState) loadPayload(ctx context.Context) (bool, error) {
 }
 
 func (r *runState) encrypt(ctx context.Context) error {
-	encryptResult, err := r.service.Encryptor.RunContext(ctx, r.payload.MIME)
+	armoredFile, err := r.createWorkFile("armored-*.asc")
+	if err != nil {
+		return r.fail("encrypt_failed", err)
+	}
+	defer armoredFile.Close()
+
+	encryptedFile, err := r.createWorkFile("encrypted-*.eml")
+	if err != nil {
+		return r.fail("encrypt_failed", err)
+	}
+	defer encryptedFile.Close()
+
+	encryptResult, err := r.service.Encryptor.RunFromOpenerContext(ctx, r.openSourceMIME, armoredFile, encryptedFile)
 	if err != nil {
 		if errors.Is(err, encrypt.ErrAlreadyEncrypted) {
 			event := r.event("already_encrypted")
@@ -178,18 +205,30 @@ func (r *runState) encrypt(ctx context.Context) error {
 	r.result.Encrypted = encryptResult.Encrypted
 	r.result.AlreadyEncrypted = encryptResult.AlreadyEncrypted
 	r.result.Format = encryptResult.Format
+	r.armoredPath = armoredFile.Name()
+	r.encryptedPath = encryptedFile.Name()
 
 	return r.record("encrypted")
 }
 
 func (r *runState) backup(ctx context.Context) error {
-	backupCiphertext := r.encryptResult.Armored
+	backupOpener := r.openArmored
 	if r.service.BackupEncryptor != nil {
-		backupEncryptResult, err := r.service.BackupEncryptor.RunContext(ctx, r.payload.MIME)
+		backupFile, err := r.createWorkFile("backup-*.pgp")
 		if err != nil {
 			return r.fail("backup_encrypt_failed", err)
 		}
-		backupCiphertext = backupEncryptResult.Armored
+		if _, err := r.service.BackupEncryptor.RunFromOpenerContext(ctx, r.openSourceMIME, backupFile, nil); err != nil {
+			_ = backupFile.Close()
+			return r.fail("backup_encrypt_failed", err)
+		}
+		if err := backupFile.Close(); err != nil {
+			return r.fail("backup_encrypt_failed", err)
+		}
+		backupPath := backupFile.Name()
+		backupOpener = func() (io.ReadCloser, error) {
+			return os.Open(backupPath)
+		}
 	}
 
 	backupDir := r.request.BackupDir
@@ -198,9 +237,9 @@ func (r *runState) backup(ctx context.Context) error {
 	}
 
 	backupResult, err := r.service.backupper().Run(backup.Request{
-		Message:    r.payload.Message,
-		Ciphertext: backupCiphertext,
-		Dir:        backupDir,
+		Message:          r.payload.Message,
+		CiphertextOpener: backupOpener,
+		Dir:              backupDir,
 	})
 	if err != nil {
 		return r.fail("backup_failed", err)
@@ -217,10 +256,13 @@ func (r *runState) saveOutput() error {
 		return nil
 	}
 
-	payload := r.payload
-	payload.MIME = r.encryptResult.MIME
+	src, err := r.openEncryptedMIME()
+	if err != nil {
+		return r.fail("mime_save_failed", err)
+	}
+	defer src.Close()
 
-	saveResult, err := r.service.Downloader.SavePayload(payload, r.request.OutputDir)
+	saveResult, err := r.service.Downloader.SaveStream(r.payload.Message, src, r.request.OutputDir)
 	if err != nil {
 		return r.fail("mime_save_failed", err)
 	}
@@ -237,9 +279,14 @@ func (r *runState) writeBack(ctx context.Context) error {
 		return nil
 	}
 
+	mimeBytes, err := os.ReadFile(r.encryptedPath)
+	if err != nil {
+		return r.fail("writeback_failed", fmt.Errorf("读取加密 MIME 失败: %w", err))
+	}
+
 	writeBackResult, err := r.service.WriteBack.Run(ctx, writeback.Request{
 		Source:              r.source,
-		MIME:                r.encryptResult.MIME,
+		MIME:                mimeBytes,
 		DestinationFolderID: r.request.WriteBack.DestinationFolderID,
 		Verify:              r.request.WriteBack.Verify,
 	})
@@ -340,4 +387,54 @@ func (s *Service) fail(event audit.Event, err error) error {
 		return fmt.Errorf("%w; 记录审计日志失败: %w", err, logErr)
 	}
 	return err
+}
+
+func (r *runState) prepareWorkDir() error {
+	dir, err := os.MkdirTemp("", "mimecrypt-process-*")
+	if err != nil {
+		return fmt.Errorf("创建处理临时目录失败: %w", err)
+	}
+	r.workDir = dir
+	return nil
+}
+
+func (r *runState) cleanupWorkDir() {
+	if strings.TrimSpace(r.workDir) == "" {
+		return
+	}
+	_ = os.RemoveAll(r.workDir)
+}
+
+func (r *runState) createWorkFile(pattern string) (*os.File, error) {
+	file, err := os.CreateTemp(r.workDir, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("创建临时文件失败: %w", err)
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+		return nil, fmt.Errorf("设置临时文件权限失败: %w", err)
+	}
+	return file, nil
+}
+
+func (r *runState) openSourceMIME() (io.ReadCloser, error) {
+	if strings.TrimSpace(r.payloadTemp.Path) == "" {
+		return nil, fmt.Errorf("缺少原始 MIME 临时文件")
+	}
+	return os.Open(r.payloadTemp.Path)
+}
+
+func (r *runState) openArmored() (io.ReadCloser, error) {
+	if strings.TrimSpace(r.armoredPath) == "" {
+		return nil, fmt.Errorf("缺少加密备份临时文件")
+	}
+	return os.Open(r.armoredPath)
+}
+
+func (r *runState) openEncryptedMIME() (io.ReadCloser, error) {
+	if strings.TrimSpace(r.encryptedPath) == "" {
+		return nil, fmt.Errorf("缺少加密 MIME 临时文件")
+	}
+	return os.Open(r.encryptedPath)
 }

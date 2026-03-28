@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/mail"
 	"os"
 	"strings"
 )
@@ -56,6 +57,12 @@ type MIMEEncryptor interface {
 type streamingMIMEEncryptor interface {
 	EncryptTo(ctx context.Context, mimeBytes []byte, recipients []string, out io.Writer) error
 }
+
+type readerMIMEEncryptor interface {
+	EncryptReaderTo(ctx context.Context, src io.Reader, recipients []string, out io.Writer) error
+}
+
+type MIMEOpenFunc func() (io.ReadCloser, error)
 
 // Run 对邮件内容进行加密；已加密邮件会直接返回错误，防止重复加密。
 func (s *Service) Run(mimeBytes []byte) (Result, error) {
@@ -122,11 +129,118 @@ func (s *Service) RunContext(ctx context.Context, mimeBytes []byte) (Result, err
 	}, nil
 }
 
+// RunFromOpenerContext 从可重复打开的 MIME 源执行加密，优先使用流式实现。
+func (s *Service) RunFromOpenerContext(ctx context.Context, open MIMEOpenFunc, armoredOut, mimeOut io.Writer) (Result, error) {
+	if open == nil {
+		return Result{}, fmt.Errorf("MIME 打开器不能为空")
+	}
+
+	format, encrypted, err := detectFormatFromOpener(mimeOpenFunc(open))
+	if err != nil {
+		return Result{}, fmt.Errorf("检测 MIME 加密格式失败: %w", err)
+	}
+	if encrypted {
+		return Result{}, AlreadyEncryptedError{Format: format}
+	}
+
+	header, err := readHeaderFromOpener(open)
+	if err != nil {
+		return Result{}, err
+	}
+	recipients, err := s.resolveRecipientsFromHeader(header)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(recipients) == 0 {
+		return Result{}, ErrNoRecipients
+	}
+
+	encryptor := s.encryptor()
+	readerEncryptor, ok := encryptor.(readerMIMEEncryptor)
+	if !ok {
+		mimeBytes, readErr := readAllFromOpener(open)
+		if readErr != nil {
+			return Result{}, readErr
+		}
+		result, runErr := s.RunContext(ctx, mimeBytes)
+		if runErr != nil {
+			return Result{}, runErr
+		}
+		if armoredOut != nil {
+			if _, err := armoredOut.Write(result.Armored); err != nil {
+				return Result{}, err
+			}
+		}
+		if mimeOut != nil {
+			if _, err := mimeOut.Write(result.MIME); err != nil {
+				return Result{}, err
+			}
+		}
+		result.Armored = nil
+		result.MIME = nil
+		return result, nil
+	}
+
+	src, err := open()
+	if err != nil {
+		return Result{}, fmt.Errorf("打开 MIME 源失败: %w", err)
+	}
+	defer src.Close()
+
+	combinedOut := io.Writer(io.Discard)
+	if armoredOut != nil {
+		combinedOut = armoredOut
+	}
+
+	var mimeWriter *pgpMIMEMessageWriter
+	if mimeOut != nil {
+		mimeWriter, err = newPGPMIMEMessageWriterFromHeader(header, mimeOut, s != nil && s.ProtectSubject)
+		if err != nil {
+			return Result{}, err
+		}
+		combinedOut = io.MultiWriter(combinedOut, mimeWriter)
+	}
+
+	if err := readerEncryptor.EncryptReaderTo(ctx, src, recipients, combinedOut); err != nil {
+		return Result{}, err
+	}
+	if mimeWriter != nil {
+		if err := mimeWriter.Close(); err != nil {
+			return Result{}, err
+		}
+	}
+
+	return Result{
+		Encrypted:        true,
+		AlreadyEncrypted: false,
+		Format:           "pgp-mime",
+	}, nil
+}
+
 func (s *Service) recipients(mimeBytes []byte) ([]string, error) {
 	if s != nil && s.RecipientResolver != nil {
 		return s.RecipientResolver(mimeBytes)
 	}
 	return s.resolveRecipients(mimeBytes)
+}
+
+func (s *Service) resolveRecipientsFromHeader(header mail.Header) ([]string, error) {
+	if header == nil {
+		return nil, ErrNoRecipients
+	}
+	if s != nil && s.RecipientResolver != nil {
+		return s.RecipientResolver(headerToBytes(header))
+	}
+
+	recipients := collectRecipientsFromEnv(s.getenv(envPGPRecipients))
+	recipients = append(recipients, parseAddressList(header.Get("To"))...)
+	recipients = append(recipients, parseAddressList(header.Get("Cc"))...)
+	recipients = append(recipients, parseAddressList(header.Get("Bcc"))...)
+	recipients = dedupeRecipients(recipients)
+	if len(recipients) == 0 {
+		return nil, ErrNoRecipients
+	}
+	return recipients, nil
 }
 
 func (s *Service) encryptor() MIMEEncryptor {
@@ -155,4 +269,32 @@ func (s *Service) gpgTrustModel() string {
 		return value
 	}
 	return defaultGPGTrustModel()
+}
+
+func readHeaderFromOpener(open MIMEOpenFunc) (mail.Header, error) {
+	reader, err := open()
+	if err != nil {
+		return nil, fmt.Errorf("打开 MIME 源失败: %w", err)
+	}
+	defer reader.Close()
+
+	message, err := mail.ReadMessage(reader)
+	if err != nil {
+		return nil, fmt.Errorf("解析原始 MIME 失败: %w", err)
+	}
+	return message.Header, nil
+}
+
+func readAllFromOpener(open MIMEOpenFunc) ([]byte, error) {
+	reader, err := open()
+	if err != nil {
+		return nil, fmt.Errorf("打开 MIME 源失败: %w", err)
+	}
+	defer reader.Close()
+
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("读取 MIME 源失败: %w", err)
+	}
+	return data, nil
 }

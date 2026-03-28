@@ -27,6 +27,20 @@ func (f *fakeEncryptor) Encrypt(_ context.Context, mimeBytes []byte, recipients 
 	return append([]byte(nil), f.output...), nil
 }
 
+func (f *fakeEncryptor) EncryptReaderTo(ctx context.Context, src io.Reader, recipients []string, out io.Writer) error {
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return err
+	}
+	f.gotRecipients = append([]string(nil), recipients...)
+	f.gotMIME = append([]byte(nil), data...)
+	if f.err != nil {
+		return f.err
+	}
+	_, err = out.Write(f.output)
+	return err
+}
+
 type fakeStreamingEncryptor struct {
 	gotRecipients []string
 	gotMIME       []byte
@@ -45,6 +59,20 @@ func (f *fakeStreamingEncryptor) EncryptTo(_ context.Context, mimeBytes []byte, 
 		return f.err
 	}
 	_, err := out.Write(f.output)
+	return err
+}
+
+func (f *fakeStreamingEncryptor) EncryptReaderTo(_ context.Context, src io.Reader, recipients []string, out io.Writer) error {
+	data, err := io.ReadAll(src)
+	if err != nil {
+		return err
+	}
+	f.gotRecipients = append([]string(nil), recipients...)
+	f.gotMIME = append([]byte(nil), data...)
+	if f.err != nil {
+		return f.err
+	}
+	_, err = out.Write(f.output)
 	return err
 }
 
@@ -190,6 +218,57 @@ func TestRunUsesStreamingEncryptorWhenAvailable(t *testing.T) {
 	}
 	if !bytes.Equal(result.Armored, encryptor.output) {
 		t.Fatalf("unexpected armored result: %q", result.Armored)
+	}
+}
+
+func TestRunFromOpenerContextStreamsWithoutBufferingWholeResult(t *testing.T) {
+	t.Parallel()
+
+	encryptor := &fakeStreamingEncryptor{
+		output: []byte("-----BEGIN PGP MESSAGE-----\nabc\n-----END PGP MESSAGE-----\n"),
+	}
+	service := Service{
+		Encryptor: encryptor,
+		EnvLookup: func(key string) string {
+			if key == envPGPRecipients {
+				return "ops@example.com"
+			}
+			return ""
+		},
+	}
+
+	input := []byte(
+		"From: sender@example.com\r\n" +
+			"To: alice@example.com\r\n" +
+			"Subject: hello\r\n" +
+			"Date: Thu, 02 Jan 2026 10:00:00 +0000\r\n" +
+			"Message-ID: <m1@example.com>\r\n" +
+			"\r\n" +
+			"hello world\r\n",
+	)
+
+	var armored bytes.Buffer
+	var mimeOut bytes.Buffer
+	result, err := service.RunFromOpenerContext(context.Background(), func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(input)), nil
+	}, &armored, &mimeOut)
+	if err != nil {
+		t.Fatalf("RunFromOpenerContext() error = %v", err)
+	}
+	if result.Encrypted != true || result.Format != "pgp-mime" {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.Armored != nil || result.MIME != nil {
+		t.Fatalf("stream result should not retain in-memory payloads: %+v", result)
+	}
+	if !bytes.Equal(encryptor.gotMIME, input) {
+		t.Fatalf("streaming encryptor input was changed unexpectedly")
+	}
+	if !bytes.Contains(mimeOut.Bytes(), []byte("Content-Type: multipart/encrypted")) {
+		t.Fatalf("missing pgp-mime wrapper")
+	}
+	if !bytes.Equal(armored.Bytes(), encryptor.output) {
+		t.Fatalf("unexpected armored output: %q", armored.Bytes())
 	}
 }
 
