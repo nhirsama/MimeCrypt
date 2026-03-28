@@ -540,7 +540,7 @@ func (s *imapSession) selectMailbox(mailbox string, readOnly bool) (mailboxStatu
 		cmd = "EXAMINE"
 	}
 	tag := s.nextTag()
-	if err := s.writeLine(fmt.Sprintf("%s %s %s", tag, cmd, quoteIMAPString(mailbox))); err != nil {
+	if err := s.writeLine(fmt.Sprintf("%s %s %s", tag, cmd, quoteIMAPString(encodeMailboxName(mailbox)))); err != nil {
 		return mailboxStatus{}, err
 	}
 	status := mailboxStatus{}
@@ -699,7 +699,7 @@ func (s *imapSession) append(mailbox string, flags []string, internalDate time.T
 	if !internalDate.IsZero() {
 		datePart = " \"" + internalDate.UTC().Format("2-Jan-2006 15:04:05 -0700") + "\""
 	}
-	command := fmt.Sprintf("%s APPEND %s%s%s {%d}", tag, quoteIMAPString(normalizeMailbox(mailbox)), flagList, datePart, len(mime))
+	command := fmt.Sprintf("%s APPEND %s%s%s {%d}", tag, quoteIMAPString(encodeMailboxName(mailbox)), flagList, datePart, len(mime))
 	if err := s.writeLine(command); err != nil {
 		return appendResult{}, err
 	}
@@ -872,28 +872,12 @@ func uidSequenceSet(uids []uint64) string {
 	return strings.Join(parts, ",")
 }
 
-func quoteIMAPString(value string) string {
-	replacer := strings.NewReplacer(`\\`, `\\\\`, `"`, `\\"`)
-	return `"` + replacer.Replace(value) + `"`
-}
-
 func quoteAtom(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return `""`
 	}
 	return value
-}
-
-func normalizeMailbox(mailbox string) string {
-	mailbox = strings.TrimSpace(mailbox)
-	if mailbox == "" {
-		return "INBOX"
-	}
-	if strings.EqualFold(mailbox, "inbox") {
-		return "INBOX"
-	}
-	return mailbox
 }
 
 type deltaState struct {

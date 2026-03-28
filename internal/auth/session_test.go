@@ -2,10 +2,13 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -179,5 +182,87 @@ func TestSessionAccessTokenForScopesRefreshesWhenCachedScopesDoNotCoverRequest(t
 	}
 	if refreshScope != "scope-ews" {
 		t.Fatalf("refresh scope = %q, want scope-ews", refreshScope)
+	}
+}
+
+func TestSessionLoadFallsBackToLegacyTokenPath(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	cfg := appconfig.AuthConfig{
+		ClientID:         "client-id",
+		Tenant:           "organizations",
+		AuthorityBaseURL: "https://login.microsoftonline.com",
+		IMAPScopes:       []string{"scope-imap"},
+		StateDir:         stateDir,
+	}
+
+	session, err := NewSession(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewSession() error = %v", err)
+	}
+
+	legacyPath := filepath.Join(stateDir, "graph-token.json")
+	token := Token{
+		AccessToken:  "legacy-access",
+		RefreshToken: "legacy-refresh",
+		TokenType:    "Bearer",
+		Scope:        "scope-imap",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}
+	content, err := json.Marshal(token)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(legacyPath, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	loaded, err := session.LoadCachedToken()
+	if err != nil {
+		t.Fatalf("LoadCachedToken() error = %v", err)
+	}
+	if loaded.AccessToken != "legacy-access" {
+		t.Fatalf("AccessToken = %q, want legacy-access", loaded.AccessToken)
+	}
+}
+
+func TestSessionSaveRemovesLegacyTokenPath(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	cfg := appconfig.AuthConfig{
+		ClientID:         "client-id",
+		Tenant:           "organizations",
+		AuthorityBaseURL: "https://login.microsoftonline.com",
+		IMAPScopes:       []string{"scope-imap"},
+		StateDir:         stateDir,
+	}
+
+	session, err := NewSession(cfg, nil)
+	if err != nil {
+		t.Fatalf("NewSession() error = %v", err)
+	}
+
+	legacyPath := filepath.Join(stateDir, "graph-token.json")
+	if err := os.WriteFile(legacyPath, []byte(`{"access_token":"legacy"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if err := session.store.save(Token{
+		AccessToken:  "new-access",
+		RefreshToken: "new-refresh",
+		TokenType:    "Bearer",
+		Scope:        "scope-imap",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("save() error = %v", err)
+	}
+
+	if _, err := os.Stat(legacyPath); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy token path to be removed, stat err = %v", err)
+	}
+	if _, err := os.Stat(cfg.TokenPath()); err != nil {
+		t.Fatalf("expected new token path to exist, stat err = %v", err)
 	}
 }

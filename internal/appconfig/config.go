@@ -26,6 +26,8 @@ const (
 	defaultPollInterval      = time.Minute
 	defaultCycleTimeout      = 2 * time.Minute
 	defaultOutputDir         = "output"
+	defaultTokenFileName     = "token.json"
+	legacyTokenFileName      = "graph-token.json"
 )
 
 type Config struct {
@@ -244,7 +246,22 @@ func (c MailConfig) ValidateSync() error {
 }
 
 func (c AuthConfig) TokenPath() string {
-	return filepath.Join(c.StateDir, "graph-token.json")
+	return filepath.Join(c.StateDir, defaultTokenFileName)
+}
+
+func (c AuthConfig) LegacyTokenPaths() []string {
+	return []string{filepath.Join(c.StateDir, legacyTokenFileName)}
+}
+
+func (c AuthConfig) TokenPaths() []string {
+	paths := []string{c.TokenPath()}
+	for _, path := range c.LegacyTokenPaths() {
+		if path == "" || path == paths[0] {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func (c MailConfig) SyncStatePath() string {

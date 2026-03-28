@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -28,7 +29,7 @@ func newLogoutCmd() *cobra.Command {
 				return fmt.Errorf("logout 失败: %w", err)
 			}
 
-			fmt.Printf("已清除本地登录状态: %s\n", cfg.Auth.TokenPath())
+			fmt.Printf("已清除本地登录状态: %s\n", strings.Join(cfg.Auth.TokenPaths(), ", "))
 			return nil
 		},
 	}

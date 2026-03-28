@@ -102,6 +102,37 @@ func TestClientLatestMessagesInFolderDecodesEncodedSubject(t *testing.T) {
 	}
 }
 
+func TestClientLatestMessagesInFolderEncodesMailboxName(t *testing.T) {
+	t.Parallel()
+
+	client := newTestClient(t, newScriptedDialer(t,
+		func(t *testing.T, conn net.Conn) {
+			rw := newScriptRW(conn)
+			rw.writeLine("* OK IMAP ready")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeTaggedOK("A0001", "CAPABILITY completed")
+			rw.expectContains("AUTHENTICATE XOAUTH2")
+			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
+			rw.expectContains(`EXAMINE "&U,BTFw-"`)
+			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
+			rw.writeLine("* OK [UIDNEXT 1] Predicted next UID")
+			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains("UID SEARCH ALL")
+			rw.writeLine("* SEARCH")
+			rw.writeTaggedOK("A0004", "SEARCH completed")
+		},
+	))
+
+	messages, err := client.latestMessagesInFolder(context.Background(), "台北", 0, 1)
+	if err != nil {
+		t.Fatalf("latestMessagesInFolder() error = %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("len(messages) = %d, want 0", len(messages))
+	}
+}
+
 func TestClientDeltaCreatedMessages(t *testing.T) {
 	t.Parallel()
 

@@ -48,7 +48,8 @@ type client struct {
 }
 
 type tokenStore struct {
-	path string
+	path        string
+	legacyPaths []string
 }
 
 type Session struct {
@@ -74,7 +75,10 @@ func NewSession(cfg appconfig.AuthConfig, httpClient *http.Client) (*Session, er
 			cfg:        cfg,
 			now:        time.Now,
 		},
-		store: &tokenStore{path: cfg.TokenPath()},
+		store: &tokenStore{
+			path:        cfg.TokenPath(),
+			legacyPaths: cfg.LegacyTokenPaths(),
+		},
 	}, nil
 }
 
@@ -319,24 +323,35 @@ func (c *client) toToken(payload tokenResponse) Token {
 }
 
 func (s *tokenStore) load() (Token, error) {
-	if s.path == "" {
+	paths := s.paths()
+	if len(paths) == 0 {
 		return Token{}, fmt.Errorf("token 路径不能为空")
 	}
 
-	content, err := os.ReadFile(s.path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Token{}, fmt.Errorf("未找到登录状态，请先执行 login")
+	var lastErr error
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			lastErr = fmt.Errorf("读取 token 缓存失败: %w", err)
+			continue
 		}
-		return Token{}, fmt.Errorf("读取 token 缓存失败: %w", err)
+
+		var token Token
+		if err := json.Unmarshal(content, &token); err != nil {
+			return Token{}, fmt.Errorf("解析 token 缓存失败: %w", err)
+		}
+
+		return token, nil
 	}
 
-	var token Token
-	if err := json.Unmarshal(content, &token); err != nil {
-		return Token{}, fmt.Errorf("解析 token 缓存失败: %w", err)
+	if lastErr != nil {
+		return Token{}, lastErr
 	}
 
-	return token, nil
+	return Token{}, fmt.Errorf("未找到登录状态，请先执行 login")
 }
 
 func (s *tokenStore) save(token Token) error {
@@ -344,19 +359,54 @@ func (s *tokenStore) save(token Token) error {
 		return fmt.Errorf("token 路径不能为空")
 	}
 
-	return writeJSONFile(s.path, token, 0o600)
+	if err := writeJSONFile(s.path, token, 0o600); err != nil {
+		return err
+	}
+	for _, path := range s.legacyPaths {
+		if path == "" || path == s.path {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("删除旧 token 缓存失败: %w", err)
+		}
+	}
+	return nil
 }
 
 func (s *tokenStore) delete() error {
-	if s.path == "" {
+	paths := s.paths()
+	if len(paths) == 0 {
 		return fmt.Errorf("token 路径不能为空")
 	}
 
-	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("删除 token 缓存失败: %w", err)
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("删除 token 缓存失败: %w", err)
+		}
 	}
 
 	return nil
+}
+
+func (s *tokenStore) paths() []string {
+	if s == nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	paths := make([]string, 0, 1+len(s.legacyPaths))
+	for _, path := range append([]string{s.path}, s.legacyPaths...) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func writeJSONFile(path string, value any, mode os.FileMode) error {

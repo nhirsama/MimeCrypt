@@ -251,6 +251,21 @@ func TestSaveAndLoadLocalConfig(t *testing.T) {
 	}
 }
 
+func TestAuthConfigTokenPaths(t *testing.T) {
+	t.Parallel()
+
+	cfg := AuthConfig{StateDir: "/state"}
+	if got := cfg.TokenPath(); got != "/state/token.json" {
+		t.Fatalf("TokenPath() = %q, want /state/token.json", got)
+	}
+	if got := cfg.LegacyTokenPaths(); !reflect.DeepEqual(got, []string{"/state/graph-token.json"}) {
+		t.Fatalf("LegacyTokenPaths() = %#v", got)
+	}
+	if got := cfg.TokenPaths(); !reflect.DeepEqual(got, []string{"/state/token.json", "/state/graph-token.json"}) {
+		t.Fatalf("TokenPaths() = %#v", got)
+	}
+}
+
 func TestMailConfigValidateSync(t *testing.T) {
 	t.Parallel()
 

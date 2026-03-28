@@ -50,7 +50,7 @@ func buildLoginService(cfg appconfig.Config) (*login.Service, error) {
 }
 
 func buildLogoutService(cfg appconfig.Config) *logout.Service {
-	return &logout.Service{TokenPath: cfg.Auth.TokenPath()}
+	return &logout.Service{TokenPaths: cfg.Auth.TokenPaths()}
 }
 
 func buildDownloadService(cfg appconfig.Config) (*download.Service, error) {
