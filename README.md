@@ -351,3 +351,7 @@ MimeCrypt 的核心目标已经明确：
 - 将邮件在明文状态下的暴露路径压缩到尽可能短
 
 现阶段代码已经完成了模块边界和 provider 抽象，后续重点应当放在真实加密、回写校验和 webhook 接入上。
+
+## License
+This project is licensed under the Apache License 2.0 - see the [LICENSE](./LICENSE) file for details.
+Copyright © 2026 [nhir](https://github.com/nhirsama).
