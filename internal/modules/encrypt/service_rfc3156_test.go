@@ -354,6 +354,9 @@ func TestRunProducesRFC3156StructureForThunderbird(t *testing.T) {
 	if parts[0].ContentType != "application/pgp-encrypted" {
 		t.Fatalf("part1 content-type = %s, want application/pgp-encrypted", parts[0].ContentType)
 	}
+	if got := strings.ToLower(strings.Join(parts[0].RawHeader["Content-Disposition"], ", ")); got != "attachment" {
+		t.Fatalf("part1 content-disposition = %q, want attachment", got)
+	}
 	if strings.TrimSpace(string(parts[0].Body)) != "Version: 1" {
 		t.Fatalf("part1 body = %q, want Version: 1", string(parts[0].Body))
 	}
@@ -361,8 +364,11 @@ func TestRunProducesRFC3156StructureForThunderbird(t *testing.T) {
 	if parts[1].ContentType != "application/octet-stream" {
 		t.Fatalf("part2 content-type = %s, want application/octet-stream", parts[1].ContentType)
 	}
-	if strings.ToLower(parts[1].Params["name"]) != "encrypted.pgp" {
-		t.Fatalf("part2 name param = %q, want encrypted.pgp", parts[1].Params["name"])
+	if strings.ToLower(parts[1].Params["name"]) != "encrypted.asc" {
+		t.Fatalf("part2 name param = %q, want encrypted.asc", parts[1].Params["name"])
+	}
+	if got := strings.TrimSpace(strings.Join(parts[1].RawHeader["Content-Description"], ", ")); got != "OpenPGP encrypted message" {
+		t.Fatalf("part2 content-description = %q, want OpenPGP encrypted message", got)
 	}
 	if !bytes.Contains(parts[1].Body, []byte("-----BEGIN PGP MESSAGE-----")) {
 		t.Fatalf("missing armored pgp payload")

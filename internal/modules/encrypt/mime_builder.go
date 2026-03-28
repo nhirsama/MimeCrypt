@@ -42,11 +42,13 @@ func buildPGPMIMEMessage(originalMIME, armored []byte) ([]byte, error) {
 	var out bytes.Buffer
 	writeHeaders(&out, message.Header, boundary)
 	out.WriteString("\r\n")
+	out.WriteString("This is an OpenPGP/MIME encrypted message (RFC 4880 and 3156)\r\n")
 
 	out.WriteString("--")
 	out.WriteString(boundary)
 	out.WriteString("\r\n")
 	out.WriteString("Content-Type: application/pgp-encrypted\r\n")
+	out.WriteString("Content-Disposition: attachment\r\n")
 	out.WriteString("Content-Transfer-Encoding: 7bit\r\n")
 	out.WriteString("\r\n")
 	out.WriteString("Version: 1\r\n")
@@ -55,8 +57,9 @@ func buildPGPMIMEMessage(originalMIME, armored []byte) ([]byte, error) {
 	out.WriteString("--")
 	out.WriteString(boundary)
 	out.WriteString("\r\n")
-	out.WriteString("Content-Type: application/octet-stream; name=\"encrypted.pgp\"\r\n")
-	out.WriteString("Content-Disposition: inline; filename=\"encrypted.pgp\"\r\n")
+	out.WriteString("Content-Type: application/octet-stream; name=\"encrypted.asc\"\r\n")
+	out.WriteString("Content-Description: OpenPGP encrypted message\r\n")
+	out.WriteString("Content-Disposition: inline; filename=\"encrypted.asc\"\r\n")
 	out.WriteString("Content-Transfer-Encoding: 7bit\r\n")
 	out.WriteString("\r\n")
 	out.Write(normalizeCRLF(armored))
@@ -89,6 +92,7 @@ func writeHeaders(out *bytes.Buffer, header mail.Header, boundary string) {
 		out.WriteString("\r\n")
 	}
 	out.WriteString("MIME-Version: 1.0\r\n")
+	out.WriteString("Content-Transfer-Encoding: 7bit\r\n")
 	out.WriteString(processedHeaderKey)
 	out.WriteString(": ")
 	out.WriteString(processedHeaderValue)
