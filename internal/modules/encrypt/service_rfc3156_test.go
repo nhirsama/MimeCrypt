@@ -354,6 +354,9 @@ func TestRunProducesRFC3156StructureForThunderbird(t *testing.T) {
 	if parts[0].ContentType != "application/pgp-encrypted" {
 		t.Fatalf("part1 content-type = %s, want application/pgp-encrypted", parts[0].ContentType)
 	}
+	if got := strings.TrimSpace(strings.Join(parts[0].RawHeader["Content-Description"], ", ")); got != "PGP/MIME version identification" {
+		t.Fatalf("part1 content-description = %q, want PGP/MIME version identification", got)
+	}
 	if got := strings.ToLower(strings.Join(parts[0].RawHeader["Content-Disposition"], ", ")); got != "attachment" {
 		t.Fatalf("part1 content-disposition = %q, want attachment", got)
 	}

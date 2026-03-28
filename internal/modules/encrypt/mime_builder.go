@@ -48,6 +48,7 @@ func buildPGPMIMEMessage(originalMIME, armored []byte) ([]byte, error) {
 	out.WriteString(boundary)
 	out.WriteString("\r\n")
 	out.WriteString("Content-Type: application/pgp-encrypted\r\n")
+	out.WriteString("Content-Description: PGP/MIME version identification\r\n")
 	out.WriteString("Content-Disposition: attachment\r\n")
 	out.WriteString("Content-Transfer-Encoding: 7bit\r\n")
 	out.WriteString("\r\n")
