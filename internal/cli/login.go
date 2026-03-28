@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -20,11 +21,12 @@ func newLoginCmd() *cobra.Command {
 	providerFlags := newProviderConfigFlags(cfg)
 
 	cmd := &cobra.Command{
-		Use:   "login",
+		Use:   "login [imap-username]",
 		Short: "通过 device code 登录并缓存 token",
-		Args:  noArgs(),
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg = providerFlags.apply(cfg)
+		Args:  argRange(0, 1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg = providerFlags.apply(cfg, cmd)
+			cfg = applyLoginIMAPUsernameArg(cfg, cmd, args)
 
 			loginCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
 			defer cancel()
@@ -38,6 +40,11 @@ func newLoginCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
+			if username := strings.TrimSpace(cfg.Mail.Client.IMAPUsername); username != "" {
+				if err := appconfig.SaveLocalConfig(cfg.Auth.StateDir, appconfig.LocalConfig{IMAPUsername: username}); err != nil {
+					return fmt.Errorf("login 成功，但保存 IMAP 用户名失败: %w", err)
+				}
+			}
 
 			fmt.Printf("登录成功，当前账号: %s (%s)\n", result.Account, result.DisplayName)
 			fmt.Printf("token 已缓存到 %s\n", result.StateDir)
@@ -49,4 +56,18 @@ func newLoginCmd() *cobra.Command {
 	providerFlags.addFlags(cmd)
 
 	return cmd
+}
+
+func applyLoginIMAPUsernameArg(cfg appconfig.Config, cmd *cobra.Command, args []string) appconfig.Config {
+	if len(args) != 1 {
+		return cfg
+	}
+	if os.Getenv("MIMECRYPT_IMAP_USERNAME") != "" {
+		return cfg
+	}
+	if cmd != nil && cmd.Flags().Changed("imap-username") {
+		return cfg
+	}
+	cfg.Mail.Client.IMAPUsername = strings.TrimSpace(args[0])
+	return cfg
 }

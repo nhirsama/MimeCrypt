@@ -33,7 +33,7 @@ func newListCmd() *cobra.Command {
 		}, "\n"),
 		Args: argRange(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = providerFlags.apply(cfg)
+			cfg = providerFlags.apply(cfg, cmd)
 			cfg.Mail.Sync.Folder = folder
 
 			start, end, err := parseLatestRange(args)

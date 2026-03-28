@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -43,8 +45,22 @@ func (f *providerConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.imapUsername, "imap-username", f.imapUsername, "IMAP 登录用户名，一般为邮箱地址")
 }
 
-func (f providerConfigFlags) apply(cfg appconfig.Config) appconfig.Config {
-	return syncConfig(cfg, f.clientID, f.tenant, f.stateDir, f.authorityBaseURL, f.graphBaseURL, f.ewsBaseURL, f.imapAddr, f.imapUsername)
+func (f providerConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
+	return syncConfig(cfg, f.clientID, f.tenant, f.stateDir, f.authorityBaseURL, f.graphBaseURL, f.ewsBaseURL, f.imapAddr, resolveIMAPUsernameForCommand(f.stateDir, f.imapUsername, cmd))
+}
+
+func resolveIMAPUsernameForCommand(stateDir, fallback string, cmd *cobra.Command) string {
+	if value := strings.TrimSpace(os.Getenv("MIMECRYPT_IMAP_USERNAME")); value != "" {
+		return value
+	}
+	if cmd != nil && cmd.Flags().Changed("imap-username") {
+		return strings.TrimSpace(fallback)
+	}
+	localCfg, err := appconfig.LoadLocalConfig(stateDir)
+	if err == nil && strings.TrimSpace(localCfg.IMAPUsername) != "" {
+		return localCfg.IMAPUsername
+	}
+	return strings.TrimSpace(fallback)
 }
 
 type processingConfigFlags struct {

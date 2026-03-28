@@ -27,7 +27,7 @@ func newProcessCmd() *cobra.Command {
 		Short: "根据邮件 ID 和配置处理邮件",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = providerFlags.apply(cfg)
+			cfg = providerFlags.apply(cfg, cmd)
 			cfg = processingFlags.apply(cfg, cmd)
 			cfg.Mail.Sync.Folder = folder
 

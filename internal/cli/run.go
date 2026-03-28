@@ -32,7 +32,7 @@ func newRunCmd() *cobra.Command {
 		Short: "发现邮件并进行路由处理",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg = providerFlags.apply(cfg)
+			cfg = providerFlags.apply(cfg, cmd)
 			cfg = processingFlags.apply(cfg, cmd)
 			cfg = syncFlags.apply(cfg)
 

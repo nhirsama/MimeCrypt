@@ -24,7 +24,7 @@ func newDownloadCmd() *cobra.Command {
 		Short: "按邮件 ID 下载原始 MIME",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = providerFlags.apply(cfg)
+			cfg = providerFlags.apply(cfg, cmd)
 			cfg.Mail.Pipeline.OutputDir = outputDir
 			cfg.Mail.Sync.Folder = folder
 

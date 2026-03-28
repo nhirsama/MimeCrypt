@@ -45,7 +45,10 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 	flags.imapAddr = "new-imap:993"
 	flags.imapUsername = "new-user@example.com"
 
-	got := flags.apply(cfg)
+	cmd := &cobra.Command{Use: "test"}
+	flags.addFlags(cmd)
+
+	got := flags.apply(cfg, cmd)
 	if got.Auth.ClientID != "new-client" || got.Auth.Tenant != "new-tenant" {
 		t.Fatalf("unexpected auth config: %+v", got.Auth)
 	}
@@ -63,6 +66,60 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 	}
 	if got.Mail.Pipeline.AuditLogPath != appconfig.DefaultAuditLogPath("/new-state") {
 		t.Fatalf("AuditLogPath = %q, want %q", got.Mail.Pipeline.AuditLogPath, appconfig.DefaultAuditLogPath("/new-state"))
+	}
+}
+
+func TestProviderConfigFlagsApplyUsesSavedIMAPUsernameForSelectedStateDir(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	if err := appconfig.SaveLocalConfig(stateDir, appconfig.LocalConfig{IMAPUsername: "saved@example.com"}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	cfg := appconfig.Config{
+		Auth: appconfig.AuthConfig{StateDir: "/old-state"},
+		Mail: appconfig.MailConfig{
+			Client: appconfig.MailClientConfig{IMAPUsername: "old@example.com"},
+			Sync:   appconfig.MailSyncConfig{StateDir: "/old-state"},
+		},
+	}
+
+	flags := newProviderConfigFlags(cfg)
+	flags.stateDir = stateDir
+	flags.imapUsername = ""
+
+	cmd := &cobra.Command{Use: "test"}
+	flags.addFlags(cmd)
+
+	got := flags.apply(cfg, cmd)
+	if got.Mail.Client.IMAPUsername != "saved@example.com" {
+		t.Fatalf("IMAPUsername = %q, want saved@example.com", got.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestProviderConfigFlagsApplyEnvOverridesSavedIMAPUsername(t *testing.T) {
+	stateDir := t.TempDir()
+	t.Setenv("MIMECRYPT_IMAP_USERNAME", "env@example.com")
+	if err := appconfig.SaveLocalConfig(stateDir, appconfig.LocalConfig{IMAPUsername: "saved@example.com"}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	cfg := appconfig.Config{
+		Auth: appconfig.AuthConfig{StateDir: stateDir},
+		Mail: appconfig.MailConfig{
+			Client: appconfig.MailClientConfig{IMAPUsername: ""},
+			Sync:   appconfig.MailSyncConfig{StateDir: stateDir},
+		},
+	}
+
+	flags := newProviderConfigFlags(cfg)
+	cmd := &cobra.Command{Use: "test"}
+	flags.addFlags(cmd)
+
+	got := flags.apply(cfg, cmd)
+	if got.Mail.Client.IMAPUsername != "env@example.com" {
+		t.Fatalf("IMAPUsername = %q, want env@example.com", got.Mail.Client.IMAPUsername)
 	}
 }
 

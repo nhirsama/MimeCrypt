@@ -80,9 +80,18 @@ func LoadFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	stateDir = getenvDefault("MIMECRYPT_STATE_DIR", stateDir)
+	localCfg, err := LoadLocalConfig(stateDir)
+	if err != nil {
+		return Config{}, err
+	}
 	saveOutput, err := getenvBoolDefault("MIMECRYPT_SAVE_OUTPUT", false)
 	if err != nil {
 		return Config{}, fmt.Errorf("解析 MIMECRYPT_SAVE_OUTPUT 失败: %w", err)
+	}
+	imapUsername := strings.TrimSpace(os.Getenv("MIMECRYPT_IMAP_USERNAME"))
+	if imapUsername == "" {
+		imapUsername = localCfg.IMAPUsername
 	}
 
 	return Config{
@@ -94,14 +103,14 @@ func LoadFromEnv() (Config, error) {
 			GraphScopes:      splitScopes(getenvDefault("MIMECRYPT_GRAPH_SCOPES", defaultGraphScopes)),
 			EWSScopes:        splitScopes(getenvDefault("MIMECRYPT_EWS_SCOPES", defaultEWSScopes)),
 			IMAPScopes:       splitScopes(getenvDefault("MIMECRYPT_IMAP_SCOPES", defaultIMAPScopes)),
-			StateDir:         getenvDefault("MIMECRYPT_STATE_DIR", stateDir),
+			StateDir:         stateDir,
 		},
 		Mail: MailConfig{
 			Client: MailClientConfig{
 				GraphBaseURL: getenvDefault("MIMECRYPT_GRAPH_BASE_URL", defaultGraphBaseURL),
 				EWSBaseURL:   getenvDefault("MIMECRYPT_EWS_BASE_URL", defaultEWSBaseURL),
 				IMAPAddr:     getenvDefault("MIMECRYPT_IMAP_ADDR", defaultIMAPAddr),
-				IMAPUsername: os.Getenv("MIMECRYPT_IMAP_USERNAME"),
+				IMAPUsername: imapUsername,
 			},
 			Pipeline: MailPipelineConfig{
 				OutputDir:         getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
@@ -114,7 +123,7 @@ func LoadFromEnv() (Config, error) {
 			},
 			Sync: MailSyncConfig{
 				Folder:       getenvDefault("MIMECRYPT_FOLDER", defaultFolder),
-				StateDir:     getenvDefault("MIMECRYPT_STATE_DIR", stateDir),
+				StateDir:     stateDir,
 				PollInterval: defaultPollInterval,
 				CycleTimeout: defaultCycleTimeout,
 			},

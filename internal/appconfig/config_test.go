@@ -1,6 +1,7 @@
 package appconfig
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -171,6 +172,68 @@ func TestLoadFromEnvRejectsInvalidSaveOutput(t *testing.T) {
 	_, err := LoadFromEnv()
 	if err == nil || !strings.Contains(err.Error(), "解析 MIMECRYPT_SAVE_OUTPUT 失败") {
 		t.Fatalf("expected invalid save-output error, got %v", err)
+	}
+}
+
+func TestLoadFromEnvUsesSavedIMAPUsernameWhenEnvMissing(t *testing.T) {
+	resetMimeCryptEnv(t)
+
+	stateDir := t.TempDir()
+	t.Setenv("MIMECRYPT_STATE_DIR", stateDir)
+	if err := SaveLocalConfig(stateDir, LocalConfig{IMAPUsername: "saved@example.com"}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv() error = %v", err)
+	}
+	if cfg.Mail.Client.IMAPUsername != "saved@example.com" {
+		t.Fatalf("Mail.Client.IMAPUsername = %q, want saved@example.com", cfg.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestLoadFromEnvEnvOverridesSavedIMAPUsername(t *testing.T) {
+	resetMimeCryptEnv(t)
+
+	stateDir := t.TempDir()
+	t.Setenv("MIMECRYPT_STATE_DIR", stateDir)
+	t.Setenv("MIMECRYPT_IMAP_USERNAME", "env@example.com")
+	if err := SaveLocalConfig(stateDir, LocalConfig{IMAPUsername: "saved@example.com"}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("LoadFromEnv() error = %v", err)
+	}
+	if cfg.Mail.Client.IMAPUsername != "env@example.com" {
+		t.Fatalf("Mail.Client.IMAPUsername = %q, want env@example.com", cfg.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestSaveAndLoadLocalConfig(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	if err := SaveLocalConfig(stateDir, LocalConfig{IMAPUsername: " user@example.com "}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	cfg, err := LoadLocalConfig(stateDir)
+	if err != nil {
+		t.Fatalf("LoadLocalConfig() error = %v", err)
+	}
+	if cfg.IMAPUsername != "user@example.com" {
+		t.Fatalf("IMAPUsername = %q, want user@example.com", cfg.IMAPUsername)
+	}
+
+	info, err := os.Stat(LocalConfigPath(stateDir))
+	if err != nil {
+		t.Fatalf("Stat() error = %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
 	}
 }
 
