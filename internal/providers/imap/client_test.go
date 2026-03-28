@@ -255,6 +255,44 @@ func TestClientDeltaCreatedMessagesStopsAtFirstFailedUID(t *testing.T) {
 	}
 }
 
+func TestClientDeltaCreatedMessagesResetsUIDValidity(t *testing.T) {
+	t.Parallel()
+
+	client := newTestClient(t, newScriptedDialer(t,
+		func(t *testing.T, conn net.Conn) {
+			rw := newScriptRW(conn)
+			rw.writeLine("* OK IMAP ready")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0001", "CAPABILITY completed")
+			rw.expectContains("AUTHENTICATE XOAUTH2")
+			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
+			rw.expectContains(`EXAMINE INBOX`)
+			rw.writeLine("* OK [UIDVALIDITY 20] UIDs valid")
+			rw.writeLine("* OK [UIDNEXT 3] Predicted next UID")
+			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains("UID 1:*")
+			rw.writeLine("* SEARCH 1 2")
+			rw.writeTaggedOK("A0004", "SEARCH completed")
+			rw.expectContains("UID FETCH 1:2 (UID INTERNALDATE BODY.PEEK[HEADER])")
+			rw.writeFetch(1, time.Date(2026, 3, 28, 8, 0, 0, 0, time.UTC), []byte("Subject: one\r\nMessage-ID: <m1@example.com>\r\n\r\n"))
+			rw.writeFetch(2, time.Date(2026, 3, 28, 9, 0, 0, 0, time.UTC), []byte("Subject: two\r\nMessage-ID: <m2@example.com>\r\n\r\n"))
+			rw.writeTaggedOK("A0005", "FETCH completed")
+		},
+	))
+
+	messages, delta, err := client.deltaCreatedMessages(context.Background(), "INBOX", "uv=9;uid=99")
+	if err != nil {
+		t.Fatalf("deltaCreatedMessages() error = %v", err)
+	}
+	if delta != "uv=20;uid=2" {
+		t.Fatalf("delta = %q, want uv=20;uid=2", delta)
+	}
+	if len(messages) != 2 || messages[0].ID != "1" || messages[1].ID != "2" {
+		t.Fatalf("unexpected messages: %+v", messages)
+	}
+}
+
 func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 	t.Parallel()
 
@@ -327,6 +365,106 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 
 	result, err := client.writeMessage(context.Background(), provider.WriteRequest{
 		Source: provider.MessageRef{ID: "1", InternetMessageID: "<m1@example.com>", FolderID: "INBOX", ReceivedDateTime: sourceReceivedAt},
+		MIME:   mimeBytes,
+	})
+	if err != nil {
+		t.Fatalf("writeMessage() error = %v", err)
+	}
+	if result.Verified {
+		t.Fatalf("Verified = true, want false")
+	}
+}
+
+func TestClientWriteMessageFallsBackWithoutAppendUID(t *testing.T) {
+	t.Parallel()
+
+	mimeBytes := []byte("Message-ID: <m2@example.com>\r\nDate: Sat, 28 Mar 2026 10:00:00 +0000\r\nX-MimeCrypt-Processed: yes\r\nContent-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"\r\n\r\nbody")
+	client := newTestClient(t, newScriptedDialer(t,
+		func(t *testing.T, conn net.Conn) {
+			rw := newScriptRW(conn)
+			rw.writeLine("* OK IMAP ready")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0001", "CAPABILITY completed")
+			rw.expectContains("AUTHENTICATE XOAUTH2")
+			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
+			rw.expectContains(`EXAMINE INBOX`)
+			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
+			rw.writeLine("* OK [UIDNEXT 12] Predicted next UID")
+			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains(`HEADER "Message-Id" "<m2@example.com>"`)
+			rw.writeLine("* SEARCH")
+			rw.writeTaggedOK("A0004", "SEARCH completed")
+		},
+		func(t *testing.T, conn net.Conn) {
+			rw := newScriptRW(conn)
+			rw.writeLine("* OK IMAP ready")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0001", "CAPABILITY completed")
+			rw.expectContains("AUTHENTICATE XOAUTH2")
+			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
+			rw.expectContains(`SELECT INBOX`)
+			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
+			rw.writeLine("* OK [UIDNEXT 12] Predicted next UID")
+			rw.writeTaggedOK("A0003", "SELECT completed")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0004", "CAPABILITY completed")
+			rw.expectContains(`APPEND INBOX "28-Mar-2026 10:00:00 +0000"`)
+			rw.writeLine("+ Ready for literal data")
+			literal := rw.readLiteral(t, len(mimeBytes))
+			if !bytes.Equal(literal, mimeBytes) {
+				t.Fatalf("append literal mismatch")
+			}
+			rw.writeTaggedOK("A0005", "APPEND completed")
+		},
+		func(t *testing.T, conn net.Conn) {
+			rw := newScriptRW(conn)
+			rw.writeLine("* OK IMAP ready")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0001", "CAPABILITY completed")
+			rw.expectContains("AUTHENTICATE XOAUTH2")
+			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
+			rw.expectContains(`EXAMINE INBOX`)
+			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
+			rw.writeLine("* OK [UIDNEXT 201] Predicted next UID")
+			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains(`HEADER "Message-Id" "<m2@example.com>"`)
+			rw.writeLine("* SEARCH 1 200")
+			rw.writeTaggedOK("A0004", "SEARCH completed")
+			rw.expectContains("UID FETCH 200 (UID INTERNALDATE BODY.PEEK[])")
+			rw.writeFetchBody(200, time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), mimeBytes)
+			rw.writeTaggedOK("A0005", "FETCH completed")
+		},
+		func(t *testing.T, conn net.Conn) {
+			rw := newScriptRW(conn)
+			rw.writeLine("* OK IMAP ready")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0001", "CAPABILITY completed")
+			rw.expectContains("AUTHENTICATE XOAUTH2")
+			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
+			rw.expectContains(`SELECT INBOX`)
+			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
+			rw.writeLine("* OK [UIDNEXT 201] Predicted next UID")
+			rw.writeTaggedOK("A0003", "SELECT completed")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0004", "CAPABILITY completed")
+			rw.expectContains("UID 1")
+			rw.writeLine("* SEARCH 1")
+			rw.writeTaggedOK("A0005", "SEARCH completed")
+			rw.expectContains("UID STORE 1 +FLAGS.SILENT (\\Deleted)")
+			rw.writeTaggedOK("A0006", "STORE completed")
+			rw.expectContains("UID EXPUNGE 1")
+			rw.writeTaggedOK("A0007", "UID EXPUNGE completed")
+		},
+	))
+
+	result, err := client.writeMessage(context.Background(), provider.WriteRequest{
+		Source: provider.MessageRef{ID: "1", InternetMessageID: "<m2@example.com>", FolderID: "INBOX"},
 		MIME:   mimeBytes,
 	})
 	if err != nil {
@@ -420,6 +558,14 @@ func (rw *scriptRW) writeTaggedBAD(text string) {
 func (rw *scriptRW) writeFetch(uid uint64, internalDate time.Time, literal []byte) {
 	date := internalDate.Format("2-Jan-2006 15:04:05 -0700")
 	rw.writeLine(fmt.Sprintf("* 1 FETCH (UID %d INTERNALDATE \"%s\" BODY[HEADER] {%d}", uid, date, len(literal)))
+	_, _ = rw.writer.Write(literal)
+	_, _ = rw.writer.WriteString(")\r\n")
+	_ = rw.writer.Flush()
+}
+
+func (rw *scriptRW) writeFetchBody(uid uint64, internalDate time.Time, literal []byte) {
+	date := internalDate.Format("2-Jan-2006 15:04:05 -0700")
+	rw.writeLine(fmt.Sprintf("* 1 FETCH (UID %d INTERNALDATE \"%s\" BODY[] {%d}", uid, date, len(literal)))
 	_, _ = rw.writer.Write(literal)
 	_, _ = rw.writer.WriteString(")\r\n")
 	_ = rw.writer.Flush()

@@ -1,7 +1,6 @@
 package imap
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -197,62 +196,6 @@ func (c *client) fetchHeadersByUIDs(ctx context.Context, folder string, uids []u
 
 func (c *client) fetchBodyByUID(ctx context.Context, folder string, uid uint64) (*fetchedMessage, error) {
 	return c.fetchBodyByUIDViaGoIMAP(ctx, folder, uid)
-}
-
-func (c *client) withSelectedMailbox(ctx context.Context, folder string, readOnly bool, fn func(*imapSession, mailboxStatus) error) error {
-	sess, err := c.connect(ctx)
-	if err != nil {
-		return err
-	}
-	defer sess.close()
-
-	status, err := sess.selectMailbox(folder, readOnly)
-	if err != nil {
-		return err
-	}
-	return fn(sess, status)
-}
-
-func (c *client) connect(ctx context.Context) (*imapSession, error) {
-	token, err := c.tokenSource.AccessTokenForScopes(ctx, c.scopes)
-	if err != nil {
-		return nil, err
-	}
-
-	conn, err := c.dialTLS(ctx, c.addr)
-	if err != nil {
-		return nil, fmt.Errorf("连接 IMAP 服务器失败: %w", err)
-	}
-
-	sess := &imapSession{
-		conn:       conn,
-		reader:     bufio.NewReader(conn),
-		writer:     bufio.NewWriter(conn),
-		tagCounter: 1,
-	}
-	if line, err := sess.readLine(); err != nil {
-		sess.close()
-		return nil, fmt.Errorf("读取 IMAP 欢迎语失败: %w", err)
-	} else if !strings.HasPrefix(strings.ToUpper(line), "* OK") {
-		sess.close()
-		return nil, fmt.Errorf("IMAP 欢迎语异常: %s", line)
-	}
-	caps, err := sess.capability()
-	if err != nil {
-		sess.close()
-		return nil, err
-	}
-	sess.capabilities = caps
-	if _, ok := caps["AUTH=XOAUTH2"]; !ok {
-		sess.close()
-		return nil, fmt.Errorf("IMAP 服务器不支持 AUTH=XOAUTH2")
-	}
-	if err := sess.authenticate(c.username, token); err != nil {
-		sess.close()
-		return nil, err
-	}
-
-	return sess, nil
 }
 
 func toProviderMessage(folder string, uid uint64, internalDate time.Time, headerBytes []byte) provider.Message {
