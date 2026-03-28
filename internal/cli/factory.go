@@ -77,22 +77,27 @@ func buildProcessService(cfg appconfig.Config) (*process.Service, error) {
 		return nil, err
 	}
 
-	return buildProcessServiceWithProvider(cfg, clients.Reader, clients.Writer), nil
+	return buildProcessServiceWithProvider(cfg, clients.Reader, clients.Writer)
 }
 
 func buildDownloadServiceWithReader(reader provider.Reader) *download.Service {
 	return &download.Service{Client: reader}
 }
 
-func buildProcessServiceWithProvider(cfg appconfig.Config, reader provider.Reader, writer provider.Writer) *process.Service {
+func buildProcessServiceWithProvider(cfg appconfig.Config, reader provider.Reader, writer provider.Writer) (*process.Service, error) {
+	backupEncryptor, err := buildCatchAllBackupEncryptor(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	return &process.Service{
 		Downloader:      buildDownloadServiceWithReader(reader),
 		Encryptor:       &encrypt.Service{ProtectSubject: cfg.Mail.Pipeline.ProtectSubject},
-		BackupEncryptor: buildCatchAllBackupEncryptor(cfg),
+		BackupEncryptor: backupEncryptor,
 		Backupper:       &backup.Service{},
 		WriteBack:       &writeback.Service{Writer: writer},
 		Auditor:         &audit.Service{Path: cfg.Mail.Pipeline.AuditLogPath},
-	}
+	}, nil
 }
 
 func buildProcessRequest(cfg appconfig.Config, source provider.MessageRef, writeBack bool, writeBackFolder string, verifyWriteBack bool) process.Request {
@@ -115,9 +120,14 @@ func buildDiscoverService(cfg appconfig.Config) (*discover.Service, error) {
 		return nil, err
 	}
 
+	processor, err := buildProcessServiceWithProvider(cfg, clients.Reader, clients.Writer)
+	if err != nil {
+		return nil, err
+	}
+
 	return &discover.Service{
 		Client:    clients.Reader,
-		Processor: buildProcessServiceWithProvider(cfg, clients.Reader, clients.Writer),
+		Processor: processor,
 	}, nil
 }
 
@@ -153,10 +163,9 @@ func validateWriteBackFlags(writeBack, verifyWriteBack bool, writeBackFolder str
 	return nil
 }
 
-func buildCatchAllBackupEncryptor(cfg appconfig.Config) *encrypt.Service {
-	recipients := normalizeRecipientSpecs([]string{cfg.Mail.Pipeline.BackupKeyID})
-	if len(recipients) == 0 {
-		return nil
+func buildCatchAllBackupEncryptor(cfg appconfig.Config) (*encrypt.Service, error) {
+	if strings.TrimSpace(cfg.Mail.Pipeline.BackupKeyID) == "" {
+		return nil, nil
 	}
-	return buildLocalEncryptService(recipients, "", false)
+	return buildLocalEncryptService(nil, []string{cfg.Mail.Pipeline.BackupKeyID}, "", false)
 }

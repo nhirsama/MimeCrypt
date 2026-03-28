@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"net/mail"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,8 +42,10 @@ func newEncryptCmd() *cobra.Command {
 				return fmt.Errorf("encrypt 失败: 读取输入文件失败: %w", err)
 			}
 
-			explicitRecipients := normalizeRecipientSpecs(append(append([]string(nil), recipients...), keys...))
-			service := buildLocalEncryptService(explicitRecipients, gpgBinary, protectSubject)
+			service, err := buildLocalEncryptService(recipients, keys, gpgBinary, protectSubject)
+			if err != nil {
+				return fmt.Errorf("encrypt 失败: %w", err)
+			}
 
 			result, err := service.RunContext(cmd.Context(), input)
 			if err != nil {
@@ -58,32 +61,40 @@ func newEncryptCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringArrayVarP(&recipients, "recipient", "r", nil, "指定加密收件人（邮箱或 GPG user id/key id），可重复")
-	cmd.Flags().StringArrayVar(&keys, "key", nil, "指定 GPG key（指纹或 key id），可重复")
+	cmd.Flags().StringArrayVarP(&recipients, "recipient", "r", nil, "指定加密收件人邮箱，可重复")
+	cmd.Flags().StringArrayVar(&keys, "key", nil, "指定 GPG key（指纹、key id 或 user id），可重复")
 	cmd.Flags().StringVar(&gpgBinary, "gpg-binary", "", "gpg 可执行文件路径，覆盖 MIMECRYPT_GPG_BINARY")
 	cmd.Flags().BoolVar(&protectSubject, "protect-subject", false, "是否将外层邮件主题写为 \"...\"，以贴近 Thunderbird 的加密主题展示")
 
 	return cmd
 }
 
-func buildLocalEncryptService(explicitRecipients []string, gpgBinary string, protectSubject bool) *encrypt.Service {
+func buildLocalEncryptService(explicitRecipients, explicitKeys []string, gpgBinary string, protectSubject bool) (*encrypt.Service, error) {
 	trimmedBinary := strings.TrimSpace(gpgBinary)
-	recipients := normalizeRecipientSpecs(explicitRecipients)
+	recipients, err := normalizeExplicitRecipientEmails(explicitRecipients)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := normalizeExplicitKeySpecs(explicitKeys)
+	if err != nil {
+		return nil, err
+	}
+	specs := append(append([]string(nil), recipients...), keys...)
 	service := &encrypt.Service{ProtectSubject: protectSubject}
 
-	if len(recipients) > 0 {
-		recipientCopy := append([]string(nil), recipients...)
+	if len(specs) > 0 {
+		recipientCopy := append([]string(nil), specs...)
 		service.RecipientResolver = func([]byte) ([]string, error) {
 			return recipientCopy, nil
 		}
 	}
 
-	if len(recipients) > 0 || trimmedBinary != "" {
+	if len(specs) > 0 || trimmedBinary != "" {
 		service.EnvLookup = func(key string) string {
 			switch key {
 			case envPGPRecipientsKey:
-				if len(recipients) > 0 {
-					return strings.Join(recipients, ",")
+				if len(specs) > 0 {
+					return strings.Join(specs, ",")
 				}
 			case envGPGBinaryKey:
 				if trimmedBinary != "" {
@@ -94,10 +105,34 @@ func buildLocalEncryptService(explicitRecipients []string, gpgBinary string, pro
 		}
 	}
 
-	return service
+	return service, nil
 }
 
-func normalizeRecipientSpecs(values []string) []string {
+func normalizeExplicitRecipientEmails(values []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+
+	for _, value := range values {
+		for _, part := range splitRecipientSpec(value) {
+			email, err := normalizeExplicitRecipientEmail(part)
+			if err != nil {
+				return nil, err
+			}
+			if email == "" {
+				continue
+			}
+			if _, ok := seen[email]; ok {
+				continue
+			}
+			seen[email] = struct{}{}
+			out = append(out, email)
+		}
+	}
+
+	return out, nil
+}
+
+func normalizeExplicitKeySpecs(values []string) ([]string, error) {
 	seen := make(map[string]struct{}, len(values))
 	out := make([]string, 0, len(values))
 
@@ -107,6 +142,9 @@ func normalizeRecipientSpecs(values []string) []string {
 			if trimmed == "" {
 				continue
 			}
+			if err := encrypt.ValidateRecipientSpec(trimmed); err != nil {
+				return nil, err
+			}
 			if _, ok := seen[trimmed]; ok {
 				continue
 			}
@@ -115,7 +153,19 @@ func normalizeRecipientSpecs(values []string) []string {
 		}
 	}
 
-	return out
+	return out, nil
+}
+
+func normalizeExplicitRecipientEmail(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return "", nil
+	}
+	addr, err := mail.ParseAddress(trimmed)
+	if err != nil || strings.TrimSpace(addr.Address) == "" {
+		return "", fmt.Errorf("无效的收件人邮箱: %s", trimmed)
+	}
+	return strings.ToLower(strings.TrimSpace(addr.Address)), nil
 }
 
 func splitRecipientSpec(value string) []string {

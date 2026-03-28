@@ -41,6 +41,9 @@ func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients 
 		"-",
 	}
 	for _, recipient := range recipients {
+		if err := ValidateRecipientSpec(recipient); err != nil {
+			return nil, err
+		}
 		args = append(args, "--recipient", recipient)
 	}
 

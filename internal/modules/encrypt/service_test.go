@@ -254,3 +254,22 @@ func TestRunContextUsesEnvLookupForGPGBinary(t *testing.T) {
 		t.Fatalf("expected custom gpg binary error, got %v", err)
 	}
 }
+
+func TestValidateRecipientSpecRejectsOptionLikeValue(t *testing.T) {
+	t.Parallel()
+
+	err := ValidateRecipientSpec("--homedir=/tmp/bad")
+	if err == nil || !strings.Contains(err.Error(), "不能以 '-' 开头") {
+		t.Fatalf("ValidateRecipientSpec() error = %v, want option-like validation error", err)
+	}
+}
+
+func TestParseAddressListDropsInvalidTokens(t *testing.T) {
+	t.Parallel()
+
+	got := parseAddressList("alice@example.com, --homedir=/tmp/bad, bob@example.com")
+	want := []string{"alice@example.com", "bob@example.com"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("parseAddressList() = %v, want %v", got, want)
+	}
+}

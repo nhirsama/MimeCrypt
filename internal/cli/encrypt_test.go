@@ -4,36 +4,70 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-func TestNormalizeRecipientSpecs(t *testing.T) {
+func TestNormalizeExplicitRecipientEmails(t *testing.T) {
 	t.Parallel()
 
-	got := normalizeRecipientSpecs([]string{
-		"alice@example.com",
+	got, err := normalizeExplicitRecipientEmails([]string{
+		"Alice <alice@example.com>",
 		"bob@example.com,carol@example.com",
 		"  ",
-		"0xDEADBEEF;alice@example.com",
-		"FINGERPRINT123",
 	})
+	if err != nil {
+		t.Fatalf("normalizeExplicitRecipientEmails() error = %v", err)
+	}
 
 	want := []string{
 		"alice@example.com",
 		"bob@example.com",
 		"carol@example.com",
-		"0xDEADBEEF",
-		"FINGERPRINT123",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("normalizeRecipientSpecs() = %v, want %v", got, want)
+		t.Fatalf("normalizeExplicitRecipientEmails() = %v, want %v", got, want)
 	}
 }
 
-func TestBuildLocalEncryptServiceWithExplicitRecipients(t *testing.T) {
+func TestNormalizeExplicitRecipientEmailsRejectsInvalidValue(t *testing.T) {
 	t.Parallel()
 
-	svc := buildLocalEncryptService([]string{"alice@example.com", "FPR123"}, "", false)
+	_, err := normalizeExplicitRecipientEmails([]string{"not-an-email"})
+	if err == nil || !strings.Contains(err.Error(), "无效的收件人邮箱") {
+		t.Fatalf("normalizeExplicitRecipientEmails() error = %v, want invalid email error", err)
+	}
+}
+
+func TestNormalizeExplicitKeySpecs(t *testing.T) {
+	t.Parallel()
+
+	got, err := normalizeExplicitKeySpecs([]string{"0xDEADBEEF;FINGERPRINT123", "Alice Example <alice@example.com>"})
+	if err != nil {
+		t.Fatalf("normalizeExplicitKeySpecs() error = %v", err)
+	}
+	want := []string{"0xDEADBEEF", "FINGERPRINT123", "Alice Example <alice@example.com>"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalizeExplicitKeySpecs() = %v, want %v", got, want)
+	}
+}
+
+func TestNormalizeExplicitKeySpecsRejectsOptionLikeValue(t *testing.T) {
+	t.Parallel()
+
+	_, err := normalizeExplicitKeySpecs([]string{"--homedir=/tmp/bad"})
+	if err == nil || !strings.Contains(err.Error(), "不能以 '-' 开头") {
+		t.Fatalf("normalizeExplicitKeySpecs() error = %v, want option-like value error", err)
+	}
+}
+
+func TestBuildLocalEncryptServiceWithExplicitRecipientsAndKeys(t *testing.T) {
+	t.Parallel()
+
+	svc, err := buildLocalEncryptService([]string{"alice@example.com"}, []string{"FPR123"}, "", false)
+	if err != nil {
+		t.Fatalf("buildLocalEncryptService() error = %v", err)
+	}
 	if svc.RecipientResolver == nil {
 		t.Fatalf("RecipientResolver should be set")
 	}
@@ -56,7 +90,10 @@ func TestBuildLocalEncryptServiceWithExplicitRecipients(t *testing.T) {
 
 func TestBuildLocalEncryptServiceWithCustomGPGBinary(t *testing.T) {
 	t.Setenv(envGPGBinaryKey, "gpg-from-env")
-	svc := buildLocalEncryptService(nil, "/usr/local/bin/gpg", false)
+	svc, err := buildLocalEncryptService(nil, nil, "/usr/local/bin/gpg", false)
+	if err != nil {
+		t.Fatalf("buildLocalEncryptService() error = %v", err)
+	}
 	if svc.EnvLookup == nil {
 		t.Fatalf("EnvLookup should be set")
 	}

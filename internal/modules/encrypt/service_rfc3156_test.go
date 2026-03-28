@@ -138,11 +138,11 @@ func TestCollectRecipientsFromEnvSupportsMixedSeparators(t *testing.T) {
 	}
 }
 
-func TestParseAddressListFallbackOnInvalidInput(t *testing.T) {
+func TestParseAddressListDropsInvalidFallbackTokens(t *testing.T) {
 	t.Parallel()
 
 	got := parseAddressList("broken-address-list@@;B@example.com test@example.com")
-	want := []string{"broken-address-list@@", "b@example.com", "test@example.com"}
+	want := []string{"b@example.com", "test@example.com"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("parseAddressList() = %v, want %v", got, want)
 	}

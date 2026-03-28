@@ -249,9 +249,10 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - `MIMECRYPT_IMAP_USERNAME` 为 IMAP 登录用户名，一般就是邮箱地址；使用 `imap` provider 时必需
 - `MIMECRYPT_EWS_SCOPES` 为 EWS 回写申请 OAuth scope；默认使用 `https://outlook.office365.com/EWS.AccessAsUser.All`
 - `MIMECRYPT_EWS_BASE_URL` 为 EWS SOAP 端点；默认 `https://outlook.office365.com/EWS/Exchange.asmx`
-- `MIMECRYPT_PGP_RECIPIENTS` 用于补充/覆盖收件人；如果邮件头缺少 `To/Cc/Bcc`，该变量是必需的
+- `MIMECRYPT_PGP_RECIPIENTS` 用于补充/覆盖收件人邮箱列表；如果邮件头缺少 `To/Cc/Bcc`，该变量是必需的
 - 未加密邮件会调用本地 `gpg` 生成 `PGP/MIME (RFC 3156)`；请确保对应收件人的公钥已导入 keyring
-- `encrypt` 命令默认会从输入 MIME 的 `To/Cc/Bcc` 推断收件人并匹配同邮箱公钥；传入 `--key` 或 `--recipient` 时会改用显式指定的 key/recipient
+- `encrypt` 命令默认会从输入 MIME 的 `To/Cc/Bcc` 推断收件人并匹配同邮箱公钥；`--recipient` 只接受邮箱地址，`--key` 用于显式指定 GPG key（指纹、key id 或 user id）
+- 显式传入的 `--recipient` / `--key` 值会拒绝以 `-` 开头或包含控制字符的输入，避免污染 GPG 参数语义
 - 加密时进入 `gpg` 的明文载荷始终是原始 MIME 字节；解密后应恢复出与输入一致的原始邮件内容（包括头与正文）
 - `process` / `run` 默认只产出 `backup/*.pgp` 密文备份，不额外本地落盘 `.eml`
 - 开启 `--save-output` 或 `MIMECRYPT_SAVE_OUTPUT=true` 后，才会额外产出 `output/*.eml`，供 Thunderbird 等客户端直接打开

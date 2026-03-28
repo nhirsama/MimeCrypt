@@ -58,8 +58,8 @@ func parseAddressList(value string) []string {
 	})
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
-		email := strings.TrimSpace(strings.ToLower(part))
-		if email != "" {
+		email, normalizeErr := NormalizeEmailAddress(part)
+		if normalizeErr == nil {
 			result = append(result, email)
 		}
 	}
