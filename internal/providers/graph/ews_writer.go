@@ -185,9 +185,6 @@ func (w *ewsWriter) WriteMessage(ctx context.Context, req provider.WriteRequest)
 	if strings.TrimSpace(req.Source.ID) == "" {
 		return provider.WriteResult{}, fmt.Errorf("原邮件 ID 不能为空")
 	}
-	if len(req.MIME) == 0 {
-		return provider.WriteResult{}, fmt.Errorf("回写 MIME 不能为空")
-	}
 
 	targetFolderID, err := w.graphHelper.targetFolderID(ctx, req)
 	if err != nil {
@@ -205,7 +202,12 @@ func (w *ewsWriter) WriteMessage(ctx context.Context, req provider.WriteRequest)
 		return provider.WriteResult{}, fmt.Errorf("转换目标文件夹 ID 失败: %w", err)
 	}
 
-	createdEWSID, err := w.ewsClient.createMessage(ctx, targetFolderEWSID, req.MIME)
+	mimeBytes, err := req.ReadMIME()
+	if err != nil {
+		return provider.WriteResult{}, err
+	}
+
+	createdEWSID, err := w.ewsClient.createMessage(ctx, targetFolderEWSID, mimeBytes)
 	if err != nil {
 		return provider.WriteResult{}, err
 	}

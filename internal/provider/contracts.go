@@ -1,8 +1,10 @@
 package provider
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
@@ -89,12 +91,57 @@ type Reader interface {
 	LatestMessagesInFolder(ctx context.Context, folder string, skip, limit int) ([]Message, error)
 }
 
+// MIMEOpener 以流的形式提供 MIME 数据。
+type MIMEOpener func() (io.ReadCloser, error)
+
 // WriteRequest 表示回写邮件时的统一请求。
 type WriteRequest struct {
 	Source              MessageRef
 	MIME                []byte
+	MIMEOpener          MIMEOpener
 	DestinationFolderID string
 	Verify              bool
+}
+
+// OpenMIME 以流的形式打开待回写的 MIME。
+func (r WriteRequest) OpenMIME() (io.ReadCloser, error) {
+	if r.MIMEOpener != nil {
+		return r.MIMEOpener()
+	}
+	if len(r.MIME) == 0 {
+		return nil, fmt.Errorf("回写 MIME 不能为空")
+	}
+	return bytesReadCloser{Reader: bytes.NewReader(r.MIME)}, nil
+}
+
+// ReadMIME 读取完整 MIME 字节，供需要内存副本的 provider 使用。
+func (r WriteRequest) ReadMIME() ([]byte, error) {
+	if len(r.MIME) > 0 {
+		return append([]byte(nil), r.MIME...), nil
+	}
+
+	reader, err := r.OpenMIME()
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	mimeBytes, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("读取回写 MIME 失败: %w", err)
+	}
+	if len(mimeBytes) == 0 {
+		return nil, fmt.Errorf("回写 MIME 不能为空")
+	}
+	return mimeBytes, nil
+}
+
+type bytesReadCloser struct {
+	*bytes.Reader
+}
+
+func (r bytesReadCloser) Close() error {
+	return nil
 }
 
 // WriteResult 表示回写邮件后的统一结果。

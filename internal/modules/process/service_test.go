@@ -146,10 +146,24 @@ type fakeWriter struct {
 	reconcileResult writeback.Result
 	reconcileFound  bool
 	reconcileErr    error
+	mime            []byte
 }
 
 func (f *fakeWriter) Run(_ context.Context, req writeback.Request) (writeback.Result, error) {
 	f.req = req
+	if req.MIMEOpener != nil {
+		reader, err := req.MIMEOpener()
+		if err != nil {
+			return writeback.Result{}, err
+		}
+		defer reader.Close()
+		f.mime, err = io.ReadAll(reader)
+		if err != nil {
+			return writeback.Result{}, err
+		}
+	} else {
+		f.mime = append([]byte(nil), req.MIME...)
+	}
 	return writeback.Result{Verified: req.Verify}, nil
 }
 
@@ -260,6 +274,15 @@ func TestRunPassesWriteBackFolders(t *testing.T) {
 	}
 	if !writer.req.Verify {
 		t.Fatalf("Verify = false, want true")
+	}
+	if writer.req.MIMEOpener == nil {
+		t.Fatalf("expected MIMEOpener to be passed to writeback")
+	}
+	if len(writer.req.MIME) != 0 {
+		t.Fatalf("expected writeback MIME bytes to stay empty when using MIMEOpener")
+	}
+	if string(writer.mime) != "encrypted-mime" {
+		t.Fatalf("writeback MIME = %q, want encrypted-mime", string(writer.mime))
 	}
 	if result.BackupPath != "backup/backup.pgp" {
 		t.Fatalf("BackupPath = %q, want backup/backup.pgp", result.BackupPath)

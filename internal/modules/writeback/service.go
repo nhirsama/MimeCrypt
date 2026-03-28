@@ -18,6 +18,7 @@ type Service struct {
 type Request struct {
 	Source              provider.MessageRef
 	MIME                []byte
+	MIMEOpener          provider.MIMEOpener
 	DestinationFolderID string
 	Verify              bool
 }
@@ -31,6 +32,9 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	if err := req.validate(); err != nil {
 		return Result{}, err
 	}
+	if len(req.MIME) == 0 && req.MIMEOpener == nil {
+		return Result{}, fmt.Errorf("回写 MIME 不能为空")
+	}
 	if s.Writer == nil {
 		return Result{}, ErrNotImplemented
 	}
@@ -38,6 +42,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 	result, err := s.Writer.WriteMessage(ctx, provider.WriteRequest{
 		Source:              req.Source,
 		MIME:                req.MIME,
+		MIMEOpener:          req.MIMEOpener,
 		DestinationFolderID: req.DestinationFolderID,
 		Verify:              req.Verify,
 	})
@@ -68,6 +73,7 @@ func (s *Service) Reconcile(ctx context.Context, req Request) (Result, bool, err
 	result, found, err := reconciler.ReconcileMessage(ctx, provider.WriteRequest{
 		Source:              req.Source,
 		MIME:                req.MIME,
+		MIMEOpener:          req.MIMEOpener,
 		DestinationFolderID: req.DestinationFolderID,
 		Verify:              req.Verify,
 	})

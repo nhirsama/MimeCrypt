@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/textproto"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -18,7 +20,7 @@ import (
 
 const appendUIDStatusCode = goimap.StatusRespCode("APPENDUID")
 
-func (c *client) appendViaGoIMAP(ctx context.Context, folder string, flags []string, internalDate time.Time, mimeBytes []byte) (appendResult, error) {
+func (c *client) appendViaGoIMAP(ctx context.Context, folder string, flags []string, internalDate time.Time, open provider.MIMEOpener) (appendResult, error) {
 	folder = c.mailboxOrDefault(folder)
 	var result appendResult
 
@@ -31,11 +33,17 @@ func (c *client) appendViaGoIMAP(ctx context.Context, folder string, flags []str
 			return fmt.Errorf("IMAP 服务器未声明 UIDPLUS，无法安全删除原邮件")
 		}
 
+		literal, closer, err := openAppendLiteral(open)
+		if err != nil {
+			return err
+		}
+		defer closer.Close()
+
 		status, err := cli.Execute(&commands.Append{
 			Mailbox: folder,
 			Flags:   flags,
 			Date:    internalDate,
-			Message: bytes.NewReader(mimeBytes),
+			Message: literal,
 		}, nil)
 		if err != nil {
 			return err
@@ -196,4 +204,83 @@ func uidExpungeWithClient(cli *goimapclient.Client, uid uint64) error {
 		return err
 	}
 	return status.Err()
+}
+
+func openAppendLiteral(open provider.MIMEOpener) (goimap.Literal, io.Closer, error) {
+	if open == nil {
+		return nil, nil, fmt.Errorf("回写 MIME 不能为空")
+	}
+
+	reader, err := open()
+	if err != nil {
+		return nil, nil, err
+	}
+	if reader == nil {
+		return nil, nil, fmt.Errorf("回写 MIME 不能为空")
+	}
+
+	if literal, ok := reader.(goimap.Literal); ok {
+		return literal, reader, nil
+	}
+
+	if seeker, ok := reader.(io.Seeker); ok {
+		length, err := remainingLength(seeker)
+		if err != nil {
+			_ = reader.Close()
+			return nil, nil, err
+		}
+		return appendLiteral{ReadCloser: reader, length: length}, reader, nil
+	}
+
+	if statter, ok := reader.(interface{ Stat() (os.FileInfo, error) }); ok {
+		info, err := statter.Stat()
+		if err != nil {
+			_ = reader.Close()
+			return nil, nil, fmt.Errorf("获取回写 MIME 大小失败: %w", err)
+		}
+		return appendLiteral{ReadCloser: reader, length: int(info.Size())}, reader, nil
+	}
+
+	data, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil {
+		return nil, nil, fmt.Errorf("读取回写 MIME 失败: %w", err)
+	}
+	literal := bytesLiteral{Reader: bytes.NewReader(data)}
+	return literal, literal, nil
+}
+
+func remainingLength(seeker io.Seeker) (int, error) {
+	start, err := seeker.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return 0, fmt.Errorf("获取回写 MIME 偏移失败: %w", err)
+	}
+	end, err := seeker.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, fmt.Errorf("获取回写 MIME 长度失败: %w", err)
+	}
+	if _, err := seeker.Seek(start, io.SeekStart); err != nil {
+		return 0, fmt.Errorf("恢复回写 MIME 偏移失败: %w", err)
+	}
+	if end < start {
+		return 0, fmt.Errorf("回写 MIME 长度非法")
+	}
+	return int(end - start), nil
+}
+
+type appendLiteral struct {
+	io.ReadCloser
+	length int
+}
+
+func (l appendLiteral) Len() int {
+	return l.length
+}
+
+type bytesLiteral struct {
+	*bytes.Reader
+}
+
+func (l bytesLiteral) Close() error {
+	return nil
 }

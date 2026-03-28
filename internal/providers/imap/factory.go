@@ -99,7 +99,7 @@ func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (p
 	if strings.TrimSpace(req.Source.ID) == "" {
 		return provider.WriteResult{}, fmt.Errorf("原邮件 ID 不能为空")
 	}
-	if len(req.MIME) == 0 {
+	if len(req.MIME) == 0 && req.MIMEOpener == nil {
 		return provider.WriteResult{}, fmt.Errorf("回写 MIME 不能为空")
 	}
 	return w.client.writeMessage(ctx, req)

@@ -87,7 +87,10 @@ func (c *client) latestMessagesInFolder(ctx context.Context, folder string, skip
 
 func (c *client) writeMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, error) {
 	targetFolder := c.resolveTargetFolder(req)
-	messageID := firstNonEmpty(strings.TrimSpace(req.Source.InternetMessageID), extractInternetMessageID(req.MIME))
+	messageID, internalDate, err := resolveWriteRequestMetadata(req)
+	if err != nil {
+		return provider.WriteResult{}, err
+	}
 	if messageID == "" {
 		return provider.WriteResult{}, fmt.Errorf("缺少 Message-ID，无法进行 IMAP 幂等对账")
 	}
@@ -98,11 +101,7 @@ func (c *client) writeMessage(ctx context.Context, req provider.WriteRequest) (p
 		return result, nil
 	}
 
-	internalDate := req.Source.ReceivedDateTime.UTC()
-	if internalDate.IsZero() {
-		internalDate = extractMessageDate(req.MIME)
-	}
-	appended, err := c.appendViaGoIMAP(ctx, targetFolder, nil, internalDate, req.MIME)
+	appended, err := c.appendViaGoIMAP(ctx, targetFolder, nil, internalDate, req.OpenMIME)
 	if err != nil {
 		return provider.WriteResult{}, err
 	}
@@ -345,4 +344,24 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func resolveWriteRequestMetadata(req provider.WriteRequest) (string, time.Time, error) {
+	messageID := strings.TrimSpace(req.Source.InternetMessageID)
+	internalDate := req.Source.ReceivedDateTime.UTC()
+	if messageID != "" && !internalDate.IsZero() {
+		return messageID, internalDate, nil
+	}
+
+	mimeBytes, err := req.ReadMIME()
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if messageID == "" {
+		messageID = extractInternetMessageID(mimeBytes)
+	}
+	if internalDate.IsZero() {
+		internalDate = extractMessageDate(mimeBytes)
+	}
+	return messageID, internalDate, nil
 }

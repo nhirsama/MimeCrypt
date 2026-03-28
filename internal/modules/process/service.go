@@ -279,14 +279,9 @@ func (r *runState) writeBack(ctx context.Context) error {
 		return nil
 	}
 
-	mimeBytes, err := os.ReadFile(r.encryptedPath)
-	if err != nil {
-		return r.fail("writeback_failed", fmt.Errorf("读取加密 MIME 失败: %w", err))
-	}
-
 	writeBackResult, err := r.service.WriteBack.Run(ctx, writeback.Request{
 		Source:              r.source,
-		MIME:                mimeBytes,
+		MIMEOpener:          r.openEncryptedMIME,
 		DestinationFolderID: r.request.WriteBack.DestinationFolderID,
 		Verify:              r.request.WriteBack.Verify,
 	})
