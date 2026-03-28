@@ -5,7 +5,7 @@
 - `internal/cli/`: Cobra command tree (`login`, `logout`, `download`, `process`, `run`).
 - `internal/modules/`: Core pipeline modules (`login`, `discover`, `download`, `encrypt`, `process`, `writeback`, `logout`).
 - `internal/provider/` and `internal/providers/`: provider interfaces and implementations (currently `graph`).
-- `internal/auth/`, `internal/mail/`, `internal/mimefile/`, `internal/appconfig/`: auth, message fetch, MIME storage, and env config support.
+- `internal/auth/`, `internal/mimefile/`, `internal/appconfig/`: auth, MIME storage, and env config support.
 - Keep new code inside `internal/` unless it must be publicly reusable.
 
 ## Build, Test, and Development Commands

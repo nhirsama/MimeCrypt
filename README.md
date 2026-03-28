@@ -70,9 +70,8 @@ MimeCrypt 的定位是一个自动化邮件加密中间层。
 
 - `internal/provider`：统一的认证、收件、回写接口契约
 - `internal/providers`：按配置选择 provider 的工厂
-- `internal/providers/graph`：当前 Microsoft Graph provider 实现
+- `internal/providers/graph`：当前 Microsoft Graph provider 的收件/回写实现
 - `internal/auth`：Graph 登录、refresh token 刷新、token 缓存
-- `internal/mail`：当前 Graph 的收件读取实现
 - `internal/mimefile`：MIME 文件落盘
 - `internal/appconfig`：配置读取
 - `internal/cli`：CLI 命令树

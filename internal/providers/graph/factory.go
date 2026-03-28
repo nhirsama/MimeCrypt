@@ -3,7 +3,6 @@ package graph
 import (
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
-	"mimecrypt/internal/mail"
 	"mimecrypt/internal/provider"
 )
 
@@ -14,7 +13,7 @@ func Build(cfg appconfig.Config) (provider.Session, provider.Reader, provider.Wr
 		return nil, nil, nil, err
 	}
 
-	client, err := mail.NewClient(cfg.Mail, session, nil)
+	client, err := newReader(cfg.Mail, session, nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}
