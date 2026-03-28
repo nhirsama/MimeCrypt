@@ -44,6 +44,10 @@ func (fakeMailClient) FetchMIME(context.Context, string) (io.ReadCloser, error) 
 	return io.NopCloser(strings.NewReader("")), nil
 }
 
+func (f fakeMailClient) LatestMessagesInFolder(context.Context, string, int, int) ([]provider.Message, error) {
+	return f.messages, nil
+}
+
 type fakeProcessor struct {
 	processed []string
 	errByID   map[string]error

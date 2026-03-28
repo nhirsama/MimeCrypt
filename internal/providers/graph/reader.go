@@ -135,8 +135,37 @@ func (r *reader) DeltaCreatedMessages(ctx context.Context, folder, deltaLink str
 
 // FirstMessageInFolder 返回指定文件夹中最新的一封邮件，便于调试直接保存 MIME。
 func (r *reader) FirstMessageInFolder(ctx context.Context, folder string) (provider.Message, bool, error) {
+	payload, err := r.latestMessagesInFolder(ctx, folder, 0, 1)
+	if err != nil {
+		return provider.Message{}, false, err
+	}
+	if len(payload.Value) == 0 {
+		return provider.Message{}, false, nil
+	}
+
+	return payload.Value[0], true, nil
+}
+
+// LatestMessagesInFolder 返回指定文件夹中最新的一段消息，按接收时间倒序排列。
+func (r *reader) LatestMessagesInFolder(ctx context.Context, folder string, skip, limit int) ([]provider.Message, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("limit 必须大于 0")
+	}
+	if skip < 0 {
+		return nil, fmt.Errorf("skip 不能小于 0")
+	}
+
+	payload, err := r.latestMessagesInFolder(ctx, folder, skip, limit)
+	if err != nil {
+		return nil, err
+	}
+	return payload.Value, nil
+}
+
+func (r *reader) latestMessagesInFolder(ctx context.Context, folder string, skip, limit int) (listMessagesResponse, error) {
 	query := url.Values{}
-	query.Set("$top", "1")
+	query.Set("$top", fmt.Sprintf("%d", limit))
+	query.Set("$skip", fmt.Sprintf("%d", skip))
 	query.Set("$orderby", "receivedDateTime desc")
 	query.Set("$select", "id,subject,receivedDateTime,internetMessageId,parentFolderId")
 
@@ -149,21 +178,17 @@ func (r *reader) FirstMessageInFolder(ctx context.Context, folder string) (provi
 
 	req, err := r.newRequest(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return provider.Message{}, false, err
+		return listMessagesResponse{}, err
 	}
 
 	req.Header.Add("Prefer", `IdType="ImmutableId"`)
 
 	var payload listMessagesResponse
 	if err := r.doJSON(req, &payload, http.StatusOK); err != nil {
-		return provider.Message{}, false, err
+		return listMessagesResponse{}, err
 	}
 
-	if len(payload.Value) == 0 {
-		return provider.Message{}, false, nil
-	}
-
-	return payload.Value[0], true, nil
+	return payload, nil
 }
 
 // FetchMIME 获取指定邮件的 MIME 字节流。

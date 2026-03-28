@@ -84,6 +84,7 @@ type Reader interface {
 	FetchMIME(ctx context.Context, messageID string) (io.ReadCloser, error)
 	DeltaCreatedMessages(ctx context.Context, folder, deltaLink string) ([]Message, string, error)
 	FirstMessageInFolder(ctx context.Context, folder string) (Message, bool, error)
+	LatestMessagesInFolder(ctx context.Context, folder string, skip, limit int) ([]Message, error)
 }
 
 // WriteRequest 表示回写邮件时的统一请求。

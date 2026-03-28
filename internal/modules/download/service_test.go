@@ -180,6 +180,10 @@ func (f *fakeReader) FirstMessageInFolder(context.Context, string) (provider.Mes
 	return provider.Message{}, false, nil
 }
 
+func (f *fakeReader) LatestMessagesInFolder(context.Context, string, int, int) ([]provider.Message, error) {
+	return nil, nil
+}
+
 type trackingReadCloser struct {
 	reader  io.Reader
 	readErr error

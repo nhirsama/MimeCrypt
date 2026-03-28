@@ -56,10 +56,11 @@ MimeCrypt 的定位是一个自动化邮件加密中间层。
 
 ## 模块结构
 
-业务模块保持为 7 个：
+业务模块保持为 8 个：
 
 - `internal/modules/login`：登录并验证当前账号
 - `internal/modules/logout`：清除本地登录状态
+- `internal/modules/list`：列出最新邮件摘要
 - `internal/modules/download`：按邮件 ID 下载原始 MIME
 - `internal/modules/writeback`：回写邮件并校验
 - `internal/modules/process`：按邮件 ID 和配置处理邮件
@@ -135,6 +136,16 @@ go run ./cmd/mimecrypt logout
 ```bash
 go run ./cmd/mimecrypt download <message-id> --output-dir ./output
 ```
+
+列出指定文件夹中最新一段邮件摘要：
+
+```bash
+go run ./cmd/mimecrypt list 10
+go run ./cmd/mimecrypt list 10 20
+go run ./cmd/mimecrypt list 0 5 --folder inbox
+```
+
+`list 10` 表示列出半开区间 `[0,10)`，`list 10 20` 表示列出半开区间 `[10,20)`，都按 `receivedDateTime desc` 排序。
 
 加密本地 MIME 文件到 RFC 3156 PGP/MIME：
 

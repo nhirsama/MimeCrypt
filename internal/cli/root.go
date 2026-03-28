@@ -32,6 +32,7 @@ func newRootCmd() *cobra.Command {
 
 	rootCmd.AddCommand(newLoginCmd())
 	rootCmd.AddCommand(newLogoutCmd())
+	rootCmd.AddCommand(newListCmd())
 	rootCmd.AddCommand(newEncryptCmd())
 	rootCmd.AddCommand(newDownloadCmd())
 	rootCmd.AddCommand(newProcessCmd())

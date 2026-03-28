@@ -13,6 +13,7 @@ import (
 	"mimecrypt/internal/modules/discover"
 	"mimecrypt/internal/modules/download"
 	"mimecrypt/internal/modules/encrypt"
+	"mimecrypt/internal/modules/list"
 	"mimecrypt/internal/modules/login"
 	"mimecrypt/internal/modules/logout"
 	"mimecrypt/internal/modules/process"
@@ -59,6 +60,15 @@ func buildDownloadService(cfg appconfig.Config) (*download.Service, error) {
 	}
 
 	return buildDownloadServiceWithReader(clients.Reader), nil
+}
+
+func buildListService(cfg appconfig.Config) (*list.Service, error) {
+	clients, err := buildProviderClients(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &list.Service{Client: clients.Reader}, nil
 }
 
 func buildProcessService(cfg appconfig.Config) (*process.Service, error) {

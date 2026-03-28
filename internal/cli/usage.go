@@ -37,6 +37,25 @@ func exactArgs(n int) cobra.PositionalArgs {
 	}
 }
 
+func argRange(minArgs, maxArgs int) cobra.PositionalArgs {
+	return func(cmd *cobra.Command, args []string) error {
+		switch {
+		case len(args) < minArgs:
+			return &usageError{
+				cmd:     cmd,
+				message: fmt.Sprintf("缺少必需参数，至少需要 %d 个，实际收到 %d 个", minArgs, len(args)),
+			}
+		case len(args) > maxArgs:
+			return &usageError{
+				cmd:     cmd,
+				message: fmt.Sprintf("参数过多，最多需要 %d 个，实际收到 %d 个", maxArgs, len(args)),
+			}
+		default:
+			return nil
+		}
+	}
+}
+
 func noArgs() cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if len(args) == 0 {
