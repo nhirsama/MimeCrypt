@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,7 +30,7 @@ func TestWriterWriteMessageUsesSourceFolderByDefault(t *testing.T) {
 		}
 
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/mailFolders/source-folder/messages":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages":
 			if got := r.Header.Get("Content-Type"); got != "text/plain" {
 				t.Fatalf("Content-Type = %q, want text/plain", got)
 			}
@@ -40,6 +41,22 @@ func TestWriterWriteMessageUsesSourceFolderByDefault(t *testing.T) {
 			wantBody := base64.StdEncoding.EncodeToString(mimeBytes)
 			if string(body) != wantBody {
 				t.Fatalf("request body = %q, want %q", string(body), wantBody)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"draft-1","parentFolderId":"drafts"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages/draft-1/move":
+			if got := r.Header.Get("Content-Type"); got != "application/json" {
+				t.Fatalf("Content-Type = %q, want application/json", got)
+			}
+			var payload struct {
+				DestinationID string `json:"destinationId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			if payload.DestinationID != "source-folder" {
+				t.Fatalf("destinationId = %q, want source-folder", payload.DestinationID)
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
@@ -88,7 +105,20 @@ func TestWriterWriteMessageUsesExplicitDestinationAndVerify(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"folder-archive"}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/mailFolders/folder-archive/messages":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"draft-2","parentFolderId":"drafts"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages/draft-2/move":
+			var payload struct {
+				DestinationID string `json:"destinationId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			if payload.DestinationID != "folder-archive" {
+				t.Fatalf("destinationId = %q, want folder-archive", payload.DestinationID)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"new-2","parentFolderId":"folder-archive"}`))
@@ -135,7 +165,11 @@ func TestWriterWriteMessageKeepsCreatedMessageWhenDeletingOriginalFails(t *testi
 	var rollbackCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/mailFolders/source-folder/messages":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"draft-keep","parentFolderId":"drafts"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages/draft-keep/move":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"new-keep","parentFolderId":"source-folder"}`))
@@ -193,7 +227,7 @@ func TestWriterWriteMessageReusesExistingProcessedMessageBeforeCreatingDuplicate
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-3":
 			deleteCalled = true
 			w.WriteHeader(http.StatusNoContent)
-		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/mailFolders/source-folder/messages":
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages":
 			createCalled = true
 			t.Fatalf("unexpected duplicate create request")
 		default:

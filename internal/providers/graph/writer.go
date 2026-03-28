@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -45,9 +46,13 @@ func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (p
 		return result, nil
 	}
 
-	created, err := w.createMessage(ctx, targetFolderID, req.MIME)
+	createdDraft, err := w.createDraftMessage(ctx, req.MIME)
 	if err != nil {
 		return provider.WriteResult{}, err
+	}
+	created, err := w.moveMessage(ctx, createdDraft.ID, targetFolderID)
+	if err != nil {
+		return provider.WriteResult{}, w.createdMessageRetainedError(createdDraft.ID, req.Source.ID, fmt.Errorf("移动回写邮件到目标文件夹 %s 失败: %w", targetFolderID, err))
 	}
 
 	if req.Verify {
@@ -110,8 +115,8 @@ func (w *writer) resolveFolderID(ctx context.Context, folder string) (string, er
 	return payload.ID, nil
 }
 
-func (w *writer) createMessage(ctx context.Context, folderID string, mimeBytes []byte) (provider.Message, error) {
-	endpoint := fmt.Sprintf("%s/me/mailFolders/%s/messages", w.baseURL, url.PathEscape(folderID))
+func (w *writer) createDraftMessage(ctx context.Context, mimeBytes []byte) (provider.Message, error) {
+	endpoint := fmt.Sprintf("%s/me/messages", w.baseURL)
 
 	req, err := w.newRequest(ctx, http.MethodPost, endpoint, bytes.NewReader([]byte(base64.StdEncoding.EncodeToString(mimeBytes))))
 	if err != nil {
@@ -121,10 +126,38 @@ func (w *writer) createMessage(ctx context.Context, folderID string, mimeBytes [
 
 	var message provider.Message
 	if err := w.doJSON(req, &message, http.StatusCreated); err != nil {
-		return provider.Message{}, fmt.Errorf("创建回写邮件失败: %w", err)
+		return provider.Message{}, fmt.Errorf("创建回写草稿失败: %w", err)
 	}
 	if strings.TrimSpace(message.ID) == "" {
-		return provider.Message{}, fmt.Errorf("创建回写邮件失败: 响应中缺少消息 ID")
+		return provider.Message{}, fmt.Errorf("创建回写草稿失败: 响应中缺少消息 ID")
+	}
+
+	return message, nil
+}
+
+func (w *writer) moveMessage(ctx context.Context, messageID, targetFolderID string) (provider.Message, error) {
+	endpoint := fmt.Sprintf("%s/me/messages/%s/move", w.baseURL, url.PathEscape(messageID))
+	body, err := json.Marshal(struct {
+		DestinationID string `json:"destinationId"`
+	}{
+		DestinationID: targetFolderID,
+	})
+	if err != nil {
+		return provider.Message{}, fmt.Errorf("序列化移动邮件请求失败: %w", err)
+	}
+
+	req, err := w.newRequest(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return provider.Message{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	var message provider.Message
+	if err := w.doJSON(req, &message, http.StatusCreated); err != nil {
+		return provider.Message{}, fmt.Errorf("移动回写邮件失败: %w", err)
+	}
+	if strings.TrimSpace(message.ID) == "" {
+		return provider.Message{}, fmt.Errorf("移动回写邮件失败: 响应中缺少消息 ID")
 	}
 
 	return message, nil
