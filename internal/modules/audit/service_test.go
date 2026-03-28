@@ -1,6 +1,7 @@
 package audit
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -54,6 +55,35 @@ func TestRecordAppendsJSONL(t *testing.T) {
 	}
 	if second.BackupPath != "backup/file.pgp" {
 		t.Fatalf("second backup path = %q, want backup/file.pgp", second.BackupPath)
+	}
+}
+
+func TestRecordWritesToStdoutOnly(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	service := Service{
+		Stdout: true,
+		Writer: &stdout,
+		Now: func() time.Time {
+			return time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC)
+		},
+	}
+
+	if err := service.Record(Event{Event: "process_completed", MessageID: "m1"}); err != nil {
+		t.Fatalf("Record() error = %v", err)
+	}
+	if stdout.Len() == 0 {
+		t.Fatalf("expected stdout audit output")
+	}
+}
+
+func TestRecordRejectsMissingOutputs(t *testing.T) {
+	t.Parallel()
+
+	service := Service{}
+	if err := service.Record(Event{Event: "encrypted"}); err == nil {
+		t.Fatalf("Record() error = nil, want validation error")
 	}
 }
 

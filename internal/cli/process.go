@@ -40,8 +40,8 @@ func newProcessCmd() *cobra.Command {
 			if strings.TrimSpace(cfg.Mail.Pipeline.BackupDir) == "" {
 				return fmt.Errorf("process 失败: backup-dir 不能为空")
 			}
-			if strings.TrimSpace(cfg.Mail.Pipeline.AuditLogPath) == "" {
-				return fmt.Errorf("process 失败: audit-log-path 不能为空")
+			if !cfg.Mail.Pipeline.HasAuditOutput() {
+				return fmt.Errorf("process 失败: 至少需要一个审计输出：audit-log-path 或 audit-stdout")
 			}
 
 			service, err := buildProcessService(cfg)

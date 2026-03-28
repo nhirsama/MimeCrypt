@@ -133,6 +133,7 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 				BackupDir:         "backup",
 				BackupKeyID:       "old-key",
 				AuditLogPath:      "/old/audit.jsonl",
+				AuditStdout:       false,
 				WriteBackProvider: "ews",
 			},
 		},
@@ -147,6 +148,7 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	flags.backupDir = "new-backup"
 	flags.backupKeyID = "new-key"
 	flags.auditLogPath = "/ignored/audit.jsonl"
+	flags.auditStdout = true
 	flags.writeBackProvider = "graph"
 	flags.writeBackFolder = "archive"
 
@@ -168,6 +170,9 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	}
 	if got.Mail.Pipeline.AuditLogPath != "/old/audit.jsonl" {
 		t.Fatalf("AuditLogPath = %q, want /old/audit.jsonl", got.Mail.Pipeline.AuditLogPath)
+	}
+	if !got.Mail.Pipeline.AuditStdout {
+		t.Fatalf("AuditStdout = false, want true")
 	}
 }
 

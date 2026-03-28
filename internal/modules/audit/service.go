@@ -3,6 +3,7 @@ package audit
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,16 +27,13 @@ type Event struct {
 }
 
 type Service struct {
-	Path string
-	Now  func() time.Time
+	Path   string
+	Stdout bool
+	Writer io.Writer
+	Now    func() time.Time
 }
 
 func (s *Service) Record(event Event) error {
-	path := strings.TrimSpace(s.Path)
-	if path == "" {
-		return fmt.Errorf("审计日志路径不能为空")
-	}
-
 	if event.Timestamp.IsZero() {
 		event.Timestamp = s.now().UTC()
 	}
@@ -46,6 +44,24 @@ func (s *Service) Record(event Event) error {
 	}
 	content = append(content, '\n')
 
+	if !s.hasOutput() {
+		return fmt.Errorf("审计输出不能为空")
+	}
+	if path := strings.TrimSpace(s.Path); path != "" {
+		if err := writeAuditFile(path, content); err != nil {
+			return err
+		}
+	}
+	if s.Stdout {
+		if _, err := s.stdoutWriter().Write(content); err != nil {
+			return fmt.Errorf("写入 stdout 审计日志失败: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func writeAuditFile(path string, content []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("创建审计日志目录失败: %w", err)
 	}
@@ -62,8 +78,18 @@ func (s *Service) Record(event Event) error {
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("关闭审计日志失败: %w", err)
 	}
-
 	return nil
+}
+
+func (s *Service) hasOutput() bool {
+	return strings.TrimSpace(s.Path) != "" || s.Stdout
+}
+
+func (s *Service) stdoutWriter() io.Writer {
+	if s != nil && s.Writer != nil {
+		return s.Writer
+	}
+	return os.Stdout
 }
 
 func (s *Service) now() time.Time {

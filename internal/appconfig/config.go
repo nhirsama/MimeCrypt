@@ -70,6 +70,7 @@ type MailPipelineConfig struct {
 	BackupDir         string
 	BackupKeyID       string
 	AuditLogPath      string
+	AuditStdout       bool
 	WriteBackProvider string
 	WriteBackFolder   string
 }
@@ -99,6 +100,10 @@ func LoadFromEnv() (Config, error) {
 	protectSubject, err := getenvBoolDefault("MIMECRYPT_PROTECT_SUBJECT", false)
 	if err != nil {
 		return Config{}, fmt.Errorf("解析 MIMECRYPT_PROTECT_SUBJECT 失败: %w", err)
+	}
+	auditStdout, err := getenvBoolDefault("MIMECRYPT_AUDIT_STDOUT", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("解析 MIMECRYPT_AUDIT_STDOUT 失败: %w", err)
 	}
 	imapUsername := strings.TrimSpace(os.Getenv("MIMECRYPT_IMAP_USERNAME"))
 	if imapUsername == "" {
@@ -132,6 +137,7 @@ func LoadFromEnv() (Config, error) {
 				BackupDir:         getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
 				BackupKeyID:       os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),
 				AuditLogPath:      getenvDefault("MIMECRYPT_AUDIT_LOG_PATH", DefaultAuditLogPath(stateDir)),
+				AuditStdout:       auditStdout,
 				WriteBackProvider: getenvDefault("MIMECRYPT_WRITEBACK_PROVIDER", defaultWriteBackProvider),
 				WriteBackFolder:   os.Getenv("MIMECRYPT_WRITEBACK_FOLDER"),
 			},
@@ -225,8 +231,8 @@ func (c MailConfig) ValidateSync() error {
 	if strings.TrimSpace(c.Pipeline.BackupDir) == "" {
 		return fmt.Errorf("backup dir 不能为空")
 	}
-	if strings.TrimSpace(c.Pipeline.AuditLogPath) == "" {
-		return fmt.Errorf("audit log path 不能为空")
+	if !c.Pipeline.HasAuditOutput() {
+		return fmt.Errorf("至少需要一个审计输出：audit log path 或 audit stdout")
 	}
 	switch strings.ToLower(strings.TrimSpace(c.Pipeline.WriteBackProvider)) {
 	case "", "graph":
@@ -258,6 +264,10 @@ func (c MailConfig) ValidateSync() error {
 	}
 
 	return nil
+}
+
+func (c MailPipelineConfig) HasAuditOutput() bool {
+	return strings.TrimSpace(c.AuditLogPath) != "" || c.AuditStdout
 }
 
 func (c AuthConfig) TokenPath() string {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"mimecrypt/internal/modules/discover"
 	"mimecrypt/internal/modules/download"
 	"mimecrypt/internal/modules/encrypt"
+	"mimecrypt/internal/modules/health"
 	"mimecrypt/internal/modules/list"
 	"mimecrypt/internal/modules/login"
 	"mimecrypt/internal/modules/logout"
@@ -76,6 +78,21 @@ func buildListService(cfg appconfig.Config) (*list.Service, error) {
 	return &list.Service{Client: clients.Reader}, nil
 }
 
+func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
+	clients, err := buildProviderClients(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	return &health.Service{
+		StateDir: cfg.Auth.StateDir,
+		Folder:   cfg.Mail.Sync.Folder,
+		Provider: cfg.Provider,
+		Session:  clients.Session,
+		Reader:   clients.Reader,
+	}, nil
+}
+
 func buildProcessService(cfg appconfig.Config) (*process.Service, error) {
 	clients, err := buildProviderClients(cfg)
 	if err != nil {
@@ -101,7 +118,11 @@ func buildProcessServiceWithProvider(cfg appconfig.Config, reader provider.Reade
 		BackupEncryptor: backupEncryptor,
 		Backupper:       &backup.Service{},
 		WriteBack:       &writeback.Service{Writer: writer},
-		Auditor:         &audit.Service{Path: cfg.Mail.Pipeline.AuditLogPath},
+		Auditor: &audit.Service{
+			Path:   cfg.Mail.Pipeline.AuditLogPath,
+			Stdout: cfg.Mail.Pipeline.AuditStdout,
+			Writer: os.Stdout,
+		},
 	}, nil
 }
 

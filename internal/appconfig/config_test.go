@@ -72,6 +72,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.Mail.Pipeline.AuditLogPath != DefaultAuditLogPath(wantStateDir) {
 		t.Fatalf("Mail.Pipeline.AuditLogPath = %q, want %q", cfg.Mail.Pipeline.AuditLogPath, DefaultAuditLogPath(wantStateDir))
 	}
+	if cfg.Mail.Pipeline.AuditStdout {
+		t.Fatalf("Mail.Pipeline.AuditStdout = true, want false")
+	}
 	if cfg.Mail.Pipeline.WriteBackProvider != defaultWriteBackProvider {
 		t.Fatalf("Mail.Pipeline.WriteBackProvider = %q, want %q", cfg.Mail.Pipeline.WriteBackProvider, defaultWriteBackProvider)
 	}
@@ -115,6 +118,7 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("MIMECRYPT_BACKUP_DIR", "/backup")
 	t.Setenv("MIMECRYPT_BACKUP_KEY_ID", "backup-key")
 	t.Setenv("MIMECRYPT_AUDIT_LOG_PATH", "/audit/events.jsonl")
+	t.Setenv("MIMECRYPT_AUDIT_STDOUT", "true")
 	t.Setenv("MIMECRYPT_WRITEBACK_PROVIDER", "graph")
 	t.Setenv("MIMECRYPT_FOLDER", "archive")
 	t.Setenv("MIMECRYPT_WRITEBACK_FOLDER", "encrypted")
@@ -175,6 +179,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	if cfg.Mail.Pipeline.AuditLogPath != "/audit/events.jsonl" {
 		t.Fatalf("Mail.Pipeline.AuditLogPath = %q", cfg.Mail.Pipeline.AuditLogPath)
 	}
+	if !cfg.Mail.Pipeline.AuditStdout {
+		t.Fatalf("Mail.Pipeline.AuditStdout = false, want true")
+	}
 	if cfg.Mail.Pipeline.WriteBackFolder != "encrypted" {
 		t.Fatalf("Mail.Pipeline.WriteBackFolder = %q", cfg.Mail.Pipeline.WriteBackFolder)
 	}
@@ -206,6 +213,16 @@ func TestLoadFromEnvRejectsInvalidProtectSubject(t *testing.T) {
 	_, err := LoadFromEnv()
 	if err == nil || !strings.Contains(err.Error(), "解析 MIMECRYPT_PROTECT_SUBJECT 失败") {
 		t.Fatalf("expected invalid protect-subject error, got %v", err)
+	}
+}
+
+func TestLoadFromEnvRejectsInvalidAuditStdout(t *testing.T) {
+	resetMimeCryptEnv(t)
+	t.Setenv("MIMECRYPT_AUDIT_STDOUT", "not-a-bool")
+
+	_, err := LoadFromEnv()
+	if err == nil || !strings.Contains(err.Error(), "解析 MIMECRYPT_AUDIT_STDOUT 失败") {
+		t.Fatalf("expected invalid audit-stdout error, got %v", err)
 	}
 }
 
@@ -379,11 +396,18 @@ func TestMailConfigValidateSync(t *testing.T) {
 			wantErr: "backup dir 不能为空",
 		},
 		{
-			name: "missing audit log path",
+			name: "missing audit outputs",
 			mutate: func(cfg *MailConfig) {
 				cfg.Pipeline.AuditLogPath = ""
 			},
-			wantErr: "audit log path 不能为空",
+			wantErr: "至少需要一个审计输出",
+		},
+		{
+			name: "missing audit log path allowed when stdout enabled",
+			mutate: func(cfg *MailConfig) {
+				cfg.Pipeline.AuditLogPath = ""
+				cfg.Pipeline.AuditStdout = true
+			},
 		},
 		{
 			name: "missing folder",
@@ -424,6 +448,12 @@ func TestMailConfigValidateSync(t *testing.T) {
 			tc.mutate(&cfg)
 
 			err := cfg.ValidateSync()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateSync() error = %v, want nil", err)
+				}
+				return
+			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("ValidateSync() error = %v, want substring %q", err, tc.wantErr)
 			}
@@ -470,6 +500,7 @@ func resetMimeCryptEnv(t *testing.T) {
 		"MIMECRYPT_BACKUP_DIR",
 		"MIMECRYPT_BACKUP_KEY_ID",
 		"MIMECRYPT_AUDIT_LOG_PATH",
+		"MIMECRYPT_AUDIT_STDOUT",
 		"MIMECRYPT_WRITEBACK_PROVIDER",
 		"MIMECRYPT_FOLDER",
 		"MIMECRYPT_WRITEBACK_FOLDER",
