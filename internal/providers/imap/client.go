@@ -197,7 +197,10 @@ func (c *client) writeMessage(ctx context.Context, req provider.WriteRequest) (p
 		return result, nil
 	}
 
-	internalDate := extractMessageDate(req.MIME)
+	internalDate := req.Source.ReceivedDateTime.UTC()
+	if internalDate.IsZero() {
+		internalDate = extractMessageDate(req.MIME)
+	}
 	var createdUID uint64
 	err := c.withSelectedMailbox(ctx, targetFolder, false, func(sess *imapSession, _ mailboxStatus) error {
 		if _, ok := sess.capabilities["UIDPLUS"]; !ok {

@@ -259,6 +259,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 	t.Parallel()
 
 	mimeBytes := []byte("Message-ID: <m1@example.com>\r\nDate: Sat, 28 Mar 2026 10:00:00 +0000\r\nX-MimeCrypt-Processed: yes\r\nContent-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"\r\n\r\nbody")
+	sourceReceivedAt := time.Date(2026, 3, 27, 8, 30, 0, 0, time.UTC)
 	client := newTestClient(t, newScriptedDialer(t,
 		func(t *testing.T, conn net.Conn) {
 			rw := newScriptRW(conn)
@@ -288,7 +289,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 12] Predicted next UID")
 			rw.writeTaggedOK("A0003", "SELECT completed")
-			rw.expectContains(`APPEND "INBOX"`)
+			rw.expectContains(`APPEND "INBOX" "27-Mar-2026 08:30:00 +0000"`)
 			rw.writeLine("+ Ready for literal data")
 			literal := rw.readLiteral(t, len(mimeBytes))
 			if !bytes.Equal(literal, mimeBytes) {
@@ -319,7 +320,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 	))
 
 	result, err := client.writeMessage(context.Background(), provider.WriteRequest{
-		Source: provider.MessageRef{ID: "1", InternetMessageID: "<m1@example.com>", FolderID: "INBOX"},
+		Source: provider.MessageRef{ID: "1", InternetMessageID: "<m1@example.com>", FolderID: "INBOX", ReceivedDateTime: sourceReceivedAt},
 		MIME:   mimeBytes,
 	})
 	if err != nil {

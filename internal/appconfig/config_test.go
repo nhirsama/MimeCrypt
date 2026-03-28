@@ -81,6 +81,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.Mail.Sync.CycleTimeout != defaultCycleTimeout {
 		t.Fatalf("Mail.Sync.CycleTimeout = %s, want %s", cfg.Mail.Sync.CycleTimeout, defaultCycleTimeout)
 	}
+	if cfg.RunLockPath() != filepath.Join(wantStateDir, "run-imap-INBOX.lock") {
+		t.Fatalf("RunLockPath() = %q", cfg.RunLockPath())
+	}
 }
 
 func TestLoadFromEnvOverrides(t *testing.T) {
@@ -166,6 +169,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	}
 	if cfg.Mail.Sync.Folder != "archive" {
 		t.Fatalf("Mail.Sync.Folder = %q", cfg.Mail.Sync.Folder)
+	}
+	if cfg.RunLockPath() != filepath.Join("/state", "run-custom-archive.lock") {
+		t.Fatalf("RunLockPath() = %q", cfg.RunLockPath())
 	}
 }
 

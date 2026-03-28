@@ -51,14 +51,16 @@ func (m Message) Ref() MessageRef {
 		ID:                m.ID,
 		InternetMessageID: m.InternetMessageID,
 		FolderID:          m.ParentFolderID,
+		ReceivedDateTime:  m.ReceivedDateTime,
 	}
 }
 
 // MessageRef 表示一封消息在系统中的稳定引用。
 type MessageRef struct {
-	ID                string `json:"id,omitempty"`
-	InternetMessageID string `json:"internetMessageId,omitempty"`
-	FolderID          string `json:"folderId,omitempty"`
+	ID                string    `json:"id,omitempty"`
+	InternetMessageID string    `json:"internetMessageId,omitempty"`
+	FolderID          string    `json:"folderId,omitempty"`
+	ReceivedDateTime  time.Time `json:"receivedDateTime,omitempty"`
 }
 
 // WithFallbackFolder 在缺少文件夹信息时补上默认值。

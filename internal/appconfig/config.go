@@ -268,6 +268,10 @@ func (c MailConfig) SyncStatePath() string {
 	return filepath.Join(c.Sync.StateDir, "sync-"+sanitizeFileComponent(c.Sync.Folder)+".json")
 }
 
+func (c Config) RunLockPath() string {
+	return filepath.Join(c.Auth.StateDir, "run-"+sanitizeFileComponent(c.Provider)+"-"+sanitizeFileComponent(c.Mail.Sync.Folder)+".lock")
+}
+
 func DefaultAuditLogPath(stateDir string) string {
 	return filepath.Join(stateDir, "audit.jsonl")
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"mimecrypt/internal/modules/audit"
 	"mimecrypt/internal/modules/backup"
@@ -100,6 +101,7 @@ func TestRunPassesWriteBackFolders(t *testing.T) {
 				ID:                "m1",
 				InternetMessageID: "<m1@example.com>",
 				ParentFolderID:    "source-folder",
+				ReceivedDateTime:  time.Date(2026, 3, 28, 6, 32, 0, 0, time.UTC),
 			},
 			MIME: []byte("plain"),
 		},
@@ -139,6 +141,9 @@ func TestRunPassesWriteBackFolders(t *testing.T) {
 	}
 	if writer.req.Source.InternetMessageID != "<m1@example.com>" {
 		t.Fatalf("SourceInternetMessageID = %q, want <m1@example.com>", writer.req.Source.InternetMessageID)
+	}
+	if !writer.req.Source.ReceivedDateTime.Equal(time.Date(2026, 3, 28, 6, 32, 0, 0, time.UTC)) {
+		t.Fatalf("SourceReceivedDateTime = %s", writer.req.Source.ReceivedDateTime)
 	}
 	if writer.req.DestinationFolderID != "target-folder" {
 		t.Fatalf("DestinationFolderID = %q, want target-folder", writer.req.DestinationFolderID)

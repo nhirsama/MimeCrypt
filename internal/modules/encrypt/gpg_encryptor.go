@@ -10,7 +10,8 @@ import (
 )
 
 type gpgEncryptor struct {
-	binary string
+	binary     string
+	trustModel string
 }
 
 func defaultGPGBinary() string {
@@ -18,6 +19,13 @@ func defaultGPGBinary() string {
 		return value
 	}
 	return "gpg"
+}
+
+func defaultGPGTrustModel() string {
+	if value := strings.TrimSpace(os.Getenv(envGPGTrustModel)); value != "" {
+		return value
+	}
+	return "always"
 }
 
 func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients []string) ([]byte, error) {
@@ -29,13 +37,20 @@ func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients 
 	if binary == "" {
 		binary = "gpg"
 	}
+	trustModel := strings.TrimSpace(g.trustModel)
+	if trustModel == "" {
+		trustModel = defaultGPGTrustModel()
+	}
+	if err := validateGPGTrustModel(trustModel); err != nil {
+		return nil, err
+	}
 
 	args := []string{
 		"--batch",
 		"--yes",
 		"--armor",
 		"--trust-model",
-		"always",
+		trustModel,
 		"--encrypt",
 		"--output",
 		"-",
@@ -71,4 +86,13 @@ func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients 
 	}
 
 	return stdout.Bytes(), nil
+}
+
+func validateGPGTrustModel(value string) error {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "always", "auto", "classic", "direct", "tofu", "tofu+pgp", "pgp":
+		return nil
+	default:
+		return fmt.Errorf("不支持的 GPG trust model: %s", value)
+	}
 }

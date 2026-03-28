@@ -11,6 +11,7 @@ import (
 const (
 	envPGPRecipients = "MIMECRYPT_PGP_RECIPIENTS"
 	envGPGBinary     = "MIMECRYPT_GPG_BINARY"
+	envGPGTrustModel = "MIMECRYPT_GPG_TRUST_MODEL"
 )
 
 type Service struct {
@@ -100,7 +101,7 @@ func (s *Service) encryptor() MIMEEncryptor {
 	if s != nil && s.Encryptor != nil {
 		return s.Encryptor
 	}
-	return gpgEncryptor{binary: s.gpgBinary()}
+	return gpgEncryptor{binary: s.gpgBinary(), trustModel: s.gpgTrustModel()}
 }
 
 func (s *Service) getenv(key string) string {
@@ -115,4 +116,11 @@ func (s *Service) gpgBinary() string {
 		return value
 	}
 	return "gpg"
+}
+
+func (s *Service) gpgTrustModel() string {
+	if value := strings.TrimSpace(s.getenv(envGPGTrustModel)); value != "" {
+		return value
+	}
+	return defaultGPGTrustModel()
 }

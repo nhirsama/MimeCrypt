@@ -42,6 +42,13 @@ func newRunCmd() *cobra.Command {
 			if err := cfg.Mail.ValidateSync(); err != nil {
 				return fmt.Errorf("run 失败: %w", err)
 			}
+			lock, err := acquireRunLock(cfg.RunLockPath())
+			if err != nil {
+				return fmt.Errorf("run 失败: %w", err)
+			}
+			defer func() {
+				_ = lock.Release()
+			}()
 
 			service, err := buildDiscoverService(cfg)
 			if err != nil {

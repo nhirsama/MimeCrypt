@@ -124,6 +124,7 @@ MimeCrypt 的定位是一个自动化邮件加密中间层。
 
 ```bash
 go run ./cmd/mimecrypt login
+go run ./cmd/mimecrypt login your-mailbox@example.com
 ```
 
 清除本地登录状态：
@@ -229,6 +230,7 @@ export MIMECRYPT_EWS_BASE_URL="https://outlook.office365.com/EWS/Exchange.asmx"
 ```bash
 export MIMECRYPT_PGP_RECIPIENTS="alice@example.com,bob@example.com"
 export MIMECRYPT_GPG_BINARY="gpg"
+export MIMECRYPT_GPG_TRUST_MODEL="always"
 ```
 
 说明：
@@ -247,9 +249,11 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - `MIMECRYPT_IMAP_SCOPES` 为 IMAP OAuth 申请 scope；默认 `https://outlook.office.com/IMAP.AccessAsUser.All offline_access`
 - `MIMECRYPT_IMAP_ADDR` 为 IMAP 服务地址；默认 `outlook.office365.com:993`
 - `MIMECRYPT_IMAP_USERNAME` 为 IMAP 登录用户名，一般就是邮箱地址；使用 `imap` provider 时必需
+- `login [imap-username]` 支持把 IMAP 用户名保存到本地配置；优先级始终是 `MIMECRYPT_IMAP_USERNAME` > `--imap-username` > `login` 参数 > 已保存值
 - `MIMECRYPT_EWS_SCOPES` 为 EWS 回写申请 OAuth scope；默认使用 `https://outlook.office365.com/EWS.AccessAsUser.All`
 - `MIMECRYPT_EWS_BASE_URL` 为 EWS SOAP 端点；默认 `https://outlook.office365.com/EWS/Exchange.asmx`
 - `MIMECRYPT_PGP_RECIPIENTS` 用于补充/覆盖收件人邮箱列表；如果邮件头缺少 `To/Cc/Bcc`，该变量是必需的
+- `MIMECRYPT_GPG_TRUST_MODEL` 控制 `gpg --trust-model`；当前允许 `always`、`auto`、`classic`、`direct`、`tofu`、`tofu+pgp`、`pgp`
 - 未加密邮件会调用本地 `gpg` 生成 `PGP/MIME (RFC 3156)`；请确保对应收件人的公钥已导入 keyring
 - `encrypt` 命令默认会从输入 MIME 的 `To/Cc/Bcc` 推断收件人并匹配同邮箱公钥；`--recipient` 只接受邮箱地址，`--key` 用于显式指定 GPG key（指纹、key id 或 user id）
 - 显式传入的 `--recipient` / `--key` 值会拒绝以 `-` 开头或包含控制字符的输入，避免污染 GPG 参数语义
@@ -259,9 +263,11 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - `backup/*.pgp` 始终针对原始 MIME 源字节加密；如果设置了 `--backup-key-id` 或 `MIMECRYPT_BACKUP_KEY_ID`，则统一使用该 catch-all key 生成备份
 - 加密输出的外层包装会增加 `X-MimeCrypt-Processed: yes`，用于标记该邮件经过 MimeCrypt 处理；该头不会进入解密后的原始 MIME
 - 使用 `imap` provider 或 `imap` 回写后端时，需要 `https://outlook.office.com/IMAP.AccessAsUser.All`
+- 使用 IMAP 回写时，会优先保留源邮件的 `INTERNALDATE`；如果源元数据缺失，才退回到 MIME `Date` 头
 - 使用 `graph` provider 读信时，仍然需要 `Mail.ReadWrite`
 - 如果你之前是在旧版本上登录过，需要重新执行 `logout` 和 `login`，以获取包含 IMAP scope 的新 token
 - `graph` 写回后端仍保留作为可选项，但 Outlook Web 会把导入结果显示为 draft；如果要求“真实收件邮件”语义，应优先使用默认的 `imap`
+- `run` 现在会对 `provider + folder` 维度加单实例锁；同一状态目录下重复启动相同同步任务会直接失败，避免重复加密和重复回写
 
 ## 回写行为
 
@@ -301,6 +307,7 @@ MimeCrypt 当前保留两类回写/上传行为：
 
 - IMAP 原生处理 RFC 822 / MIME，不需要把邮件转换成 Graph 的 draft 对象
 - IMAP `APPEND` 没有 `isDraft` 语义包袱，写进去就是普通邮件
+- IMAP `APPEND` 现在会尽量保留原邮件 `INTERNALDATE`，避免回写后全部堆到“今天”
 - 在 Microsoft 365 上，IMAP OAuth 属于当前官方持续支持的长期协议路径
 
 需要明确的边界：
@@ -312,7 +319,7 @@ MimeCrypt 当前保留两类回写/上传行为：
 
 ## 文件说明
 
-- `graph-token.json`：当前 provider 的 token 缓存
+- `token.json`：当前 provider 的 token 缓存
 - `sync-<folder>.json`：文件夹增量同步状态
 - `audit.jsonl`：关键流程审计日志，按 JSONL 逐行追加
 - `output/*.eml`：仅在开启 `save-output` 时生成的 PGP/MIME 邮件文件

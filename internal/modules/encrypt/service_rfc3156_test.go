@@ -421,7 +421,7 @@ func TestGPGEncryptorInvokesBinaryWithExpectedFlags(t *testing.T) {
 		argsFile,
 	))
 
-	enc := gpgEncryptor{binary: script}
+	enc := gpgEncryptor{binary: script, trustModel: "tofu+pgp"}
 	out, err := enc.Encrypt(context.Background(), []byte("hello"), []string{"alice@example.com", "bob@example.com"})
 	if err != nil {
 		t.Fatalf("Encrypt() error = %v", err)
@@ -440,7 +440,7 @@ func TestGPGEncryptorInvokesBinaryWithExpectedFlags(t *testing.T) {
 		"--yes",
 		"--armor",
 		"--trust-model",
-		"always",
+		"tofu+pgp",
 		"--encrypt",
 		"--output",
 		"-",
@@ -463,6 +463,26 @@ func TestDefaultGPGBinaryReadsEnv(t *testing.T) {
 	t.Setenv("MIMECRYPT_GPG_BINARY", "/tmp/custom-gpg")
 	if got := defaultGPGBinary(); got != "/tmp/custom-gpg" {
 		t.Fatalf("defaultGPGBinary() = %q, want /tmp/custom-gpg", got)
+	}
+}
+
+func TestDefaultGPGTrustModelReadsEnv(t *testing.T) {
+	t.Setenv("MIMECRYPT_GPG_TRUST_MODEL", "")
+	if got := defaultGPGTrustModel(); got != "always" {
+		t.Fatalf("defaultGPGTrustModel() = %q, want always", got)
+	}
+
+	t.Setenv("MIMECRYPT_GPG_TRUST_MODEL", "tofu+pgp")
+	if got := defaultGPGTrustModel(); got != "tofu+pgp" {
+		t.Fatalf("defaultGPGTrustModel() = %q, want tofu+pgp", got)
+	}
+}
+
+func TestGPGEncryptorRejectsInvalidTrustModel(t *testing.T) {
+	enc := gpgEncryptor{binary: "gpg", trustModel: "not-a-model"}
+	_, err := enc.Encrypt(context.Background(), []byte("hello"), []string{"alice@example.com"})
+	if err == nil || !strings.Contains(err.Error(), "不支持的 GPG trust model") {
+		t.Fatalf("Encrypt() error = %v, want invalid trust model", err)
 	}
 }
 
