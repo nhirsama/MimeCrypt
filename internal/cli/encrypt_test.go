@@ -33,7 +33,7 @@ func TestNormalizeRecipientSpecs(t *testing.T) {
 func TestBuildLocalEncryptServiceWithExplicitRecipients(t *testing.T) {
 	t.Parallel()
 
-	svc := buildLocalEncryptService([]string{"alice@example.com", "FPR123"}, "")
+	svc := buildLocalEncryptService([]string{"alice@example.com", "FPR123"}, "", false)
 	if svc.RecipientResolver == nil {
 		t.Fatalf("RecipientResolver should be set")
 	}
@@ -56,7 +56,7 @@ func TestBuildLocalEncryptServiceWithExplicitRecipients(t *testing.T) {
 
 func TestBuildLocalEncryptServiceWithCustomGPGBinary(t *testing.T) {
 	t.Setenv(envGPGBinaryKey, "gpg-from-env")
-	svc := buildLocalEncryptService(nil, "/usr/local/bin/gpg")
+	svc := buildLocalEncryptService(nil, "/usr/local/bin/gpg", false)
 	if svc.EnvLookup == nil {
 		t.Fatalf("EnvLookup should be set")
 	}

@@ -17,6 +17,7 @@ type Service struct {
 	Encryptor         MIMEEncryptor
 	EnvLookup         func(string) string
 	RecipientResolver func(mimeBytes []byte) ([]string, error)
+	ProtectSubject    bool
 }
 
 type Result struct {
@@ -74,7 +75,7 @@ func (s *Service) RunContext(ctx context.Context, mimeBytes []byte) (Result, err
 		return Result{}, err
 	}
 
-	encryptedMIME, err := buildPGPMIMEMessage(mimeBytes, armored)
+	encryptedMIME, err := buildPGPMIMEMessage(mimeBytes, armored, s != nil && s.ProtectSubject)
 	if err != nil {
 		return Result{}, err
 	}

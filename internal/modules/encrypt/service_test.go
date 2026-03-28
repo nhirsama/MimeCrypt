@@ -126,6 +126,45 @@ func TestRunEncryptsPlainMIMEToPGPMIME(t *testing.T) {
 	}
 }
 
+func TestRunProtectSubjectWritesOuterPlaceholderOnly(t *testing.T) {
+	t.Parallel()
+
+	encryptor := &fakeEncryptor{
+		output: []byte("-----BEGIN PGP MESSAGE-----\nabc\n-----END PGP MESSAGE-----\n"),
+	}
+	service := Service{
+		Encryptor:      encryptor,
+		ProtectSubject: true,
+		RecipientResolver: func([]byte) ([]string, error) {
+			return []string{"alice@example.com"}, nil
+		},
+	}
+
+	input := []byte(
+		"From: sender@example.com\r\n" +
+			"To: alice@example.com\r\n" +
+			"Subject: Secret Subject\r\n" +
+			"Date: Thu, 02 Jan 2026 10:00:00 +0000\r\n" +
+			"Message-ID: <m1@example.com>\r\n" +
+			"\r\n" +
+			"hello world\r\n",
+	)
+
+	result, err := service.Run(input)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !bytes.Equal(encryptor.gotMIME, input) {
+		t.Fatalf("encryptor input was changed unexpectedly")
+	}
+	if !bytes.Contains(result.MIME, []byte("Subject: ...")) {
+		t.Fatalf("expected outer placeholder subject in output")
+	}
+	if bytes.Contains(result.MIME, []byte("Subject: Secret Subject")) {
+		t.Fatalf("outer MIME should not expose original subject")
+	}
+}
+
 func TestRunPlainMIMEWithoutRecipientsReturnsError(t *testing.T) {
 	t.Parallel()
 

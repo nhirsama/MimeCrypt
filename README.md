@@ -155,6 +155,7 @@ go run ./cmd/mimecrypt list 0 5 --folder inbox
 go run ./cmd/mimecrypt encrypt ./plain.eml ./encrypted.eml
 go run ./cmd/mimecrypt encrypt ./plain.eml ./encrypted.eml --key 0xDEADBEEF
 go run ./cmd/mimecrypt encrypt ./plain.eml ./encrypted.eml --recipient alice@example.com --recipient bob@example.com
+go run ./cmd/mimecrypt encrypt ./plain.eml ./encrypted.eml --protect-subject
 ```
 
 按邮件 ID 执行处理链路：
@@ -167,6 +168,7 @@ go run ./cmd/mimecrypt process <message-id> --backup-key-id 0xDEADBEEF
 go run ./cmd/mimecrypt process <message-id> --write-back
 go run ./cmd/mimecrypt process <message-id> --write-back --write-back-provider imap
 go run ./cmd/mimecrypt process <message-id> --write-back --write-back-folder archive
+go run ./cmd/mimecrypt process <message-id> --protect-subject
 ```
 
 发现邮件并持续处理：
@@ -179,6 +181,7 @@ go run ./cmd/mimecrypt run --once --backup-key-id 0xDEADBEEF
 go run ./cmd/mimecrypt run --once --write-back
 go run ./cmd/mimecrypt run --once --write-back --write-back-provider imap
 go run ./cmd/mimecrypt run --once --write-back --write-back-folder archive
+go run ./cmd/mimecrypt run --once --protect-subject
 ```
 
 调试时直接处理当前文件夹中最新的一封邮件：
@@ -206,6 +209,7 @@ export MIMECRYPT_TENANT="organizations"
 export MIMECRYPT_STATE_DIR="$HOME/.config/mimecrypt"
 export MIMECRYPT_OUTPUT_DIR="./output"
 export MIMECRYPT_SAVE_OUTPUT="false"
+export MIMECRYPT_PROTECT_SUBJECT="false"
 export MIMECRYPT_BACKUP_DIR="./backup"
 export MIMECRYPT_BACKUP_KEY_ID=""
 export MIMECRYPT_AUDIT_LOG_PATH="$HOME/.config/mimecrypt/audit.jsonl"
@@ -234,6 +238,7 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - `MIMECRYPT_STATE_DIR` 用来保存 token 和同步状态
 - `MIMECRYPT_OUTPUT_DIR` 仅在开启 `MIMECRYPT_SAVE_OUTPUT=true` 或 `--save-output` 时用于保存本地 `PGP/MIME .eml`
 - `MIMECRYPT_SAVE_OUTPUT` 控制是否将加密后的 `PGP/MIME .eml` 额外落盘，默认 `false`
+- `MIMECRYPT_PROTECT_SUBJECT` 控制是否将外层 `Subject` 改写为 `...`；开启后行为更接近 Thunderbird，解密后的原始主题仍保持不变
 - `MIMECRYPT_BACKUP_DIR` 保存对原始 MIME 源字节直接执行 `gpg --armor --encrypt` 后得到的密文备份
 - `MIMECRYPT_BACKUP_KEY_ID` 为备份指定 catch-all GPG key id；设置后所有备份都使用这把 key，而不是邮件收件人 key
 - `MIMECRYPT_AUDIT_LOG_PATH` 保存关键流程的追加式 JSONL 审计日志

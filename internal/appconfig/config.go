@@ -60,6 +60,7 @@ type MailClientConfig struct {
 type MailPipelineConfig struct {
 	OutputDir         string
 	SaveOutput        bool
+	ProtectSubject    bool
 	BackupDir         string
 	BackupKeyID       string
 	AuditLogPath      string
@@ -89,6 +90,10 @@ func LoadFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("解析 MIMECRYPT_SAVE_OUTPUT 失败: %w", err)
 	}
+	protectSubject, err := getenvBoolDefault("MIMECRYPT_PROTECT_SUBJECT", false)
+	if err != nil {
+		return Config{}, fmt.Errorf("解析 MIMECRYPT_PROTECT_SUBJECT 失败: %w", err)
+	}
 	imapUsername := strings.TrimSpace(os.Getenv("MIMECRYPT_IMAP_USERNAME"))
 	if imapUsername == "" {
 		imapUsername = localCfg.IMAPUsername
@@ -115,6 +120,7 @@ func LoadFromEnv() (Config, error) {
 			Pipeline: MailPipelineConfig{
 				OutputDir:         getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
 				SaveOutput:        saveOutput,
+				ProtectSubject:    protectSubject,
 				BackupDir:         getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
 				BackupKeyID:       os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),
 				AuditLogPath:      getenvDefault("MIMECRYPT_AUDIT_LOG_PATH", DefaultAuditLogPath(stateDir)),

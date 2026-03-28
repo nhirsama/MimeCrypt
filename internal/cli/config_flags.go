@@ -66,6 +66,7 @@ func resolveIMAPUsernameForCommand(stateDir, fallback string, cmd *cobra.Command
 type processingConfigFlags struct {
 	outputDir         string
 	saveOutput        bool
+	protectSubject    bool
 	backupDir         string
 	backupKeyID       string
 	auditLogPath      string
@@ -77,6 +78,7 @@ func newProcessingConfigFlags(cfg appconfig.Config) processingConfigFlags {
 	return processingConfigFlags{
 		outputDir:         cfg.Mail.Pipeline.OutputDir,
 		saveOutput:        cfg.Mail.Pipeline.SaveOutput,
+		protectSubject:    cfg.Mail.Pipeline.ProtectSubject,
 		backupDir:         cfg.Mail.Pipeline.BackupDir,
 		backupKeyID:       cfg.Mail.Pipeline.BackupKeyID,
 		auditLogPath:      cfg.Mail.Pipeline.AuditLogPath,
@@ -88,6 +90,7 @@ func newProcessingConfigFlags(cfg appconfig.Config) processingConfigFlags {
 func (f *processingConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.outputDir, "output-dir", f.outputDir, "处理结果输出目录")
 	cmd.Flags().BoolVar(&f.saveOutput, "save-output", f.saveOutput, "是否将加密后的 PGP/MIME 额外保存到本地 output-dir，默认关闭")
+	cmd.Flags().BoolVar(&f.protectSubject, "protect-subject", f.protectSubject, "是否将外层邮件主题写为 \"...\"，以贴近 Thunderbird 的加密主题展示")
 	cmd.Flags().StringVar(&f.backupDir, "backup-dir", f.backupDir, "源邮件加密备份目录；保存 gpg 直接加密后的文件")
 	cmd.Flags().StringVar(&f.backupKeyID, "backup-key-id", f.backupKeyID, "备份加密使用的 catch-all GPG key id；设置后所有备份统一用该 key")
 	cmd.Flags().StringVar(&f.auditLogPath, "audit-log-path", f.auditLogPath, "审计日志输出路径（JSONL）")
@@ -98,6 +101,7 @@ func (f *processingConfigFlags) addFlags(cmd *cobra.Command) {
 func (f processingConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
 	cfg.Mail.Pipeline.OutputDir = f.outputDir
 	cfg.Mail.Pipeline.SaveOutput = f.saveOutput
+	cfg.Mail.Pipeline.ProtectSubject = f.protectSubject
 	cfg.Mail.Pipeline.BackupDir = f.backupDir
 	cfg.Mail.Pipeline.BackupKeyID = f.backupKeyID
 	cfg.Mail.Pipeline.WriteBackProvider = f.writeBackProvider

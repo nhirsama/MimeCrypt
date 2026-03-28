@@ -28,11 +28,12 @@ var passThroughHeaderKeys = []string{
 	"Reply-To",
 }
 
-func buildPGPMIMEMessage(originalMIME, armored []byte) ([]byte, error) {
+func buildPGPMIMEMessage(originalMIME, armored []byte, protectSubject ...bool) ([]byte, error) {
 	message, err := mail.ReadMessage(bytes.NewReader(originalMIME))
 	if err != nil {
 		return nil, fmt.Errorf("解析原始 MIME 失败: %w", err)
 	}
+	enableProtectSubject := len(protectSubject) > 0 && protectSubject[0]
 
 	boundary, err := newBoundary()
 	if err != nil {
@@ -40,7 +41,7 @@ func buildPGPMIMEMessage(originalMIME, armored []byte) ([]byte, error) {
 	}
 
 	var out bytes.Buffer
-	writeHeaders(&out, message.Header, boundary)
+	writeHeaders(&out, message.Header, boundary, enableProtectSubject)
 	out.WriteString("\r\n")
 	out.WriteString("This is an OpenPGP/MIME encrypted message (RFC 4880 and 3156)\r\n")
 
@@ -73,8 +74,14 @@ func buildPGPMIMEMessage(originalMIME, armored []byte) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func writeHeaders(out *bytes.Buffer, header mail.Header, boundary string) {
+func writeHeaders(out *bytes.Buffer, header mail.Header, boundary string, protectSubject bool) {
 	for _, key := range passThroughHeaderKeys {
+		if protectSubject && strings.EqualFold(key, "Subject") {
+			if hasNonEmptyHeaderValue(header, key) {
+				out.WriteString("Subject: ...\r\n")
+			}
+			continue
+		}
 		for _, value := range headerValues(header, key) {
 			trimmed := strings.TrimSpace(value)
 			if trimmed == "" {
@@ -129,4 +136,13 @@ func headerValues(header mail.Header, key string) []string {
 
 	canonical := textproto.CanonicalMIMEHeaderKey(key)
 	return append([]string(nil), header[canonical]...)
+}
+
+func hasNonEmptyHeaderValue(header mail.Header, key string) bool {
+	for _, value := range headerValues(header, key) {
+		if strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
 }

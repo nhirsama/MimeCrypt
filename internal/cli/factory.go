@@ -87,7 +87,7 @@ func buildDownloadServiceWithReader(reader provider.Reader) *download.Service {
 func buildProcessServiceWithProvider(cfg appconfig.Config, reader provider.Reader, writer provider.Writer) *process.Service {
 	return &process.Service{
 		Downloader:      buildDownloadServiceWithReader(reader),
-		Encryptor:       &encrypt.Service{},
+		Encryptor:       &encrypt.Service{ProtectSubject: cfg.Mail.Pipeline.ProtectSubject},
 		BackupEncryptor: buildCatchAllBackupEncryptor(cfg),
 		Backupper:       &backup.Service{},
 		WriteBack:       &writeback.Service{Writer: writer},
@@ -158,5 +158,5 @@ func buildCatchAllBackupEncryptor(cfg appconfig.Config) *encrypt.Service {
 	if len(recipients) == 0 {
 		return nil
 	}
-	return buildLocalEncryptService(recipients, "")
+	return buildLocalEncryptService(recipients, "", false)
 }

@@ -20,6 +20,7 @@ func newEncryptCmd() *cobra.Command {
 	var recipients []string
 	var keys []string
 	var gpgBinary string
+	var protectSubject bool
 
 	cmd := &cobra.Command{
 		Use:   "encrypt <input.eml> <output.eml>",
@@ -41,7 +42,7 @@ func newEncryptCmd() *cobra.Command {
 			}
 
 			explicitRecipients := normalizeRecipientSpecs(append(append([]string(nil), recipients...), keys...))
-			service := buildLocalEncryptService(explicitRecipients, gpgBinary)
+			service := buildLocalEncryptService(explicitRecipients, gpgBinary, protectSubject)
 
 			result, err := service.RunContext(cmd.Context(), input)
 			if err != nil {
@@ -60,14 +61,15 @@ func newEncryptCmd() *cobra.Command {
 	cmd.Flags().StringArrayVarP(&recipients, "recipient", "r", nil, "指定加密收件人（邮箱或 GPG user id/key id），可重复")
 	cmd.Flags().StringArrayVar(&keys, "key", nil, "指定 GPG key（指纹或 key id），可重复")
 	cmd.Flags().StringVar(&gpgBinary, "gpg-binary", "", "gpg 可执行文件路径，覆盖 MIMECRYPT_GPG_BINARY")
+	cmd.Flags().BoolVar(&protectSubject, "protect-subject", false, "是否将外层邮件主题写为 \"...\"，以贴近 Thunderbird 的加密主题展示")
 
 	return cmd
 }
 
-func buildLocalEncryptService(explicitRecipients []string, gpgBinary string) *encrypt.Service {
+func buildLocalEncryptService(explicitRecipients []string, gpgBinary string, protectSubject bool) *encrypt.Service {
 	trimmedBinary := strings.TrimSpace(gpgBinary)
 	recipients := normalizeRecipientSpecs(explicitRecipients)
-	service := &encrypt.Service{}
+	service := &encrypt.Service{ProtectSubject: protectSubject}
 
 	if len(recipients) > 0 {
 		recipientCopy := append([]string(nil), recipients...)

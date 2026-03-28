@@ -26,9 +26,7 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 				IMAPAddr:     "old-imap:993",
 				IMAPUsername: "old-user@example.com",
 			},
-			Pipeline: appconfig.MailPipelineConfig{
-				AuditLogPath: appconfig.DefaultAuditLogPath("/old-state"),
-			},
+			Pipeline: appconfig.MailPipelineConfig{AuditLogPath: appconfig.DefaultAuditLogPath("/old-state")},
 			Sync: appconfig.MailSyncConfig{
 				StateDir: "/old-state",
 			},
@@ -131,6 +129,7 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 			Pipeline: appconfig.MailPipelineConfig{
 				OutputDir:         "output",
 				SaveOutput:        false,
+				ProtectSubject:    false,
 				BackupDir:         "backup",
 				BackupKeyID:       "old-key",
 				AuditLogPath:      "/old/audit.jsonl",
@@ -144,6 +143,7 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	flags.addFlags(cmd)
 	flags.outputDir = "new-output"
 	flags.saveOutput = true
+	flags.protectSubject = true
 	flags.backupDir = "new-backup"
 	flags.backupKeyID = "new-key"
 	flags.auditLogPath = "/ignored/audit.jsonl"
@@ -153,6 +153,9 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	got := flags.apply(cfg, cmd)
 	if got.Mail.Pipeline.OutputDir != "new-output" || !got.Mail.Pipeline.SaveOutput {
 		t.Fatalf("unexpected output config: %+v", got.Mail)
+	}
+	if !got.Mail.Pipeline.ProtectSubject {
+		t.Fatalf("ProtectSubject = false, want true")
 	}
 	if got.Mail.Pipeline.BackupDir != "new-backup" || got.Mail.Pipeline.BackupKeyID != "new-key" {
 		t.Fatalf("unexpected backup config: %+v", got.Mail)

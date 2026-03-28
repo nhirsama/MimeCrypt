@@ -100,6 +100,7 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("MIMECRYPT_IMAP_USERNAME", "user@example.com")
 	t.Setenv("MIMECRYPT_OUTPUT_DIR", "/output")
 	t.Setenv("MIMECRYPT_SAVE_OUTPUT", "true")
+	t.Setenv("MIMECRYPT_PROTECT_SUBJECT", "true")
 	t.Setenv("MIMECRYPT_BACKUP_DIR", "/backup")
 	t.Setenv("MIMECRYPT_BACKUP_KEY_ID", "backup-key")
 	t.Setenv("MIMECRYPT_AUDIT_LOG_PATH", "/audit/events.jsonl")
@@ -148,6 +149,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	if cfg.Mail.Pipeline.OutputDir != "/output" || !cfg.Mail.Pipeline.SaveOutput {
 		t.Fatalf("unexpected pipeline output config: %+v", cfg.Mail.Pipeline)
 	}
+	if !cfg.Mail.Pipeline.ProtectSubject {
+		t.Fatalf("Mail.Pipeline.ProtectSubject = false, want true")
+	}
 	if cfg.Mail.Pipeline.BackupDir != "/backup" || cfg.Mail.Pipeline.BackupKeyID != "backup-key" {
 		t.Fatalf("unexpected backup config: %+v", cfg.Mail.Pipeline)
 	}
@@ -172,6 +176,16 @@ func TestLoadFromEnvRejectsInvalidSaveOutput(t *testing.T) {
 	_, err := LoadFromEnv()
 	if err == nil || !strings.Contains(err.Error(), "解析 MIMECRYPT_SAVE_OUTPUT 失败") {
 		t.Fatalf("expected invalid save-output error, got %v", err)
+	}
+}
+
+func TestLoadFromEnvRejectsInvalidProtectSubject(t *testing.T) {
+	resetMimeCryptEnv(t)
+	t.Setenv("MIMECRYPT_PROTECT_SUBJECT", "not-a-bool")
+
+	_, err := LoadFromEnv()
+	if err == nil || !strings.Contains(err.Error(), "解析 MIMECRYPT_PROTECT_SUBJECT 失败") {
+		t.Fatalf("expected invalid protect-subject error, got %v", err)
 	}
 }
 
@@ -250,6 +264,7 @@ func TestMailConfigValidateSync(t *testing.T) {
 		Pipeline: MailPipelineConfig{
 			OutputDir:         "output",
 			SaveOutput:        true,
+			ProtectSubject:    false,
 			BackupDir:         "backup",
 			AuditLogPath:      "audit.jsonl",
 			WriteBackProvider: "ews",
@@ -398,6 +413,7 @@ func resetMimeCryptEnv(t *testing.T) {
 		"MIMECRYPT_IMAP_USERNAME",
 		"MIMECRYPT_OUTPUT_DIR",
 		"MIMECRYPT_SAVE_OUTPUT",
+		"MIMECRYPT_PROTECT_SUBJECT",
 		"MIMECRYPT_BACKUP_DIR",
 		"MIMECRYPT_BACKUP_KEY_ID",
 		"MIMECRYPT_AUDIT_LOG_PATH",
