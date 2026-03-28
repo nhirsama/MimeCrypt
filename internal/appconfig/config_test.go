@@ -66,6 +66,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.Mail.Pipeline.SaveOutput {
 		t.Fatalf("Mail.Pipeline.SaveOutput = true, want false")
 	}
+	if cfg.Mail.Pipeline.WorkDir != "" {
+		t.Fatalf("Mail.Pipeline.WorkDir = %q, want empty", cfg.Mail.Pipeline.WorkDir)
+	}
 	if cfg.Mail.Pipeline.BackupDir != "backup" {
 		t.Fatalf("Mail.Pipeline.BackupDir = %q, want backup", cfg.Mail.Pipeline.BackupDir)
 	}
@@ -114,6 +117,7 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("MIMECRYPT_IMAP_USERNAME", "user@example.com")
 	t.Setenv("MIMECRYPT_OUTPUT_DIR", "/output")
 	t.Setenv("MIMECRYPT_SAVE_OUTPUT", "true")
+	t.Setenv("MIMECRYPT_WORK_DIR", "/work")
 	t.Setenv("MIMECRYPT_PROTECT_SUBJECT", "true")
 	t.Setenv("MIMECRYPT_BACKUP_DIR", "/backup")
 	t.Setenv("MIMECRYPT_BACKUP_KEY_ID", "backup-key")
@@ -169,6 +173,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	}
 	if cfg.Mail.Pipeline.OutputDir != "/output" || !cfg.Mail.Pipeline.SaveOutput {
 		t.Fatalf("unexpected pipeline output config: %+v", cfg.Mail.Pipeline)
+	}
+	if cfg.Mail.Pipeline.WorkDir != "/work" {
+		t.Fatalf("Mail.Pipeline.WorkDir = %q, want /work", cfg.Mail.Pipeline.WorkDir)
 	}
 	if !cfg.Mail.Pipeline.ProtectSubject {
 		t.Fatalf("Mail.Pipeline.ProtectSubject = false, want true")
@@ -496,6 +503,7 @@ func resetMimeCryptEnv(t *testing.T) {
 		"MIMECRYPT_IMAP_USERNAME",
 		"MIMECRYPT_OUTPUT_DIR",
 		"MIMECRYPT_SAVE_OUTPUT",
+		"MIMECRYPT_WORK_DIR",
 		"MIMECRYPT_PROTECT_SUBJECT",
 		"MIMECRYPT_BACKUP_DIR",
 		"MIMECRYPT_BACKUP_KEY_ID",

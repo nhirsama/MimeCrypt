@@ -63,6 +63,7 @@ type Request struct {
 	Source     provider.MessageRef
 	OutputDir  string
 	SaveOutput bool
+	WorkDir    string
 	BackupDir  string
 	WriteBack  WriteBackOptions
 }
@@ -385,7 +386,14 @@ func (s *Service) fail(event audit.Event, err error) error {
 }
 
 func (r *runState) prepareWorkDir() error {
-	dir, err := os.MkdirTemp("", "mimecrypt-process-*")
+	baseDir := strings.TrimSpace(r.request.WorkDir)
+	if baseDir != "" {
+		if err := os.MkdirAll(baseDir, 0o700); err != nil {
+			return fmt.Errorf("创建处理工作根目录失败: %w", err)
+		}
+	}
+
+	dir, err := os.MkdirTemp(baseDir, "mimecrypt-process-*")
 	if err != nil {
 		return fmt.Errorf("创建处理临时目录失败: %w", err)
 	}

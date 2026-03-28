@@ -146,6 +146,7 @@ func buildProcessRequest(cfg appconfig.Config, source provider.MessageRef, write
 		Source:     source,
 		OutputDir:  cfg.Mail.Pipeline.OutputDir,
 		SaveOutput: cfg.Mail.Pipeline.SaveOutput,
+		WorkDir:    cfg.Mail.Pipeline.WorkDir,
 		BackupDir:  cfg.Mail.Pipeline.BackupDir,
 		WriteBack: process.WriteBackOptions{
 			Enabled:             writeBack,

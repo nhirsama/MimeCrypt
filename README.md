@@ -247,6 +247,7 @@ export MIMECRYPT_EWS_BASE_URL="https://outlook.office365.com/EWS/Exchange.asmx"
 export MIMECRYPT_PGP_RECIPIENTS="alice@example.com,bob@example.com"
 export MIMECRYPT_GPG_BINARY="gpg"
 export MIMECRYPT_GPG_TRUST_MODEL="auto"
+export MIMECRYPT_WORK_DIR=""
 ```
 
 说明：
@@ -256,6 +257,7 @@ export MIMECRYPT_GPG_TRUST_MODEL="auto"
 - `MIMECRYPT_STATE_DIR` 用来保存 token 和同步状态
 - `MIMECRYPT_OUTPUT_DIR` 仅在开启 `MIMECRYPT_SAVE_OUTPUT=true` 或 `--save-output` 时用于保存本地 `PGP/MIME .eml`
 - `MIMECRYPT_SAVE_OUTPUT` 控制是否将加密后的 `PGP/MIME .eml` 额外落盘，默认 `false`
+- `MIMECRYPT_WORK_DIR` 控制处理链路的临时工作目录；为空时使用系统临时目录，容器里建议指向 `tmpfs`（例如 `/tmp/mimecrypt`）
 - `MIMECRYPT_PROTECT_SUBJECT` 控制是否将外层 `Subject` 改写为 `...`；开启后行为更接近 Thunderbird，解密后的原始主题仍保持不变
 - `MIMECRYPT_BACKUP_DIR` 保存对原始 MIME 源字节直接执行 `gpg --armor --encrypt` 后得到的密文备份
 - `MIMECRYPT_BACKUP_KEY_ID` 为备份指定 catch-all GPG key id；设置后所有备份都使用这把 key，而不是邮件收件人 key
@@ -406,6 +408,7 @@ MIMECRYPT_PROVIDER=imap
 MIMECRYPT_WRITEBACK_PROVIDER=imap
 MIMECRYPT_STATE_DIR=/state
 MIMECRYPT_BACKUP_DIR=/backup
+MIMECRYPT_WORK_DIR=/tmp/mimecrypt
 MIMECRYPT_AUDIT_LOG_PATH=
 MIMECRYPT_AUDIT_STDOUT=true
 MIMECRYPT_TOKEN_STORE=file

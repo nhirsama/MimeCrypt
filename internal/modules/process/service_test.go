@@ -5,6 +5,8 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ type fakeDownloader struct {
 	payload download.Payload
 	saved   bool
 	err     error
+	tempDir string
 }
 
 func (f *fakeDownloader) Fetch(context.Context, string) (download.Payload, error) {
@@ -33,6 +36,7 @@ func (f *fakeDownloader) FetchToTemp(_ context.Context, _ string, tempDir string
 	if f.err != nil {
 		return download.TempPayload{}, f.err
 	}
+	f.tempDir = tempDir
 	file, err := os.CreateTemp(tempDir, "payload-*.eml")
 	if err != nil {
 		return download.TempPayload{}, err
@@ -340,6 +344,51 @@ func TestRunSkipsLocalSaveWhenDisabled(t *testing.T) {
 	}
 	if result.Path != "" || result.Bytes != 0 {
 		t.Fatalf("unexpected local save result: %+v", result)
+	}
+}
+
+func TestRunUsesConfiguredWorkDirAndCleansTempDirectory(t *testing.T) {
+	t.Parallel()
+
+	workRoot := filepath.Join(t.TempDir(), "work")
+	downloader := &fakeDownloader{
+		payload: download.Payload{
+			Message: provider.Message{ID: "m1"},
+			MIME:    []byte("plain"),
+		},
+	}
+	service := Service{
+		Downloader: downloader,
+		Encryptor: fakeEncryptor{
+			result: encrypt.Result{
+				Armored:   []byte("armored-ciphertext"),
+				MIME:      []byte("encrypted-mime"),
+				Encrypted: true,
+				Format:    "pgp-mime",
+			},
+		},
+		Backupper: &fakeBackupper{},
+	}
+
+	if _, err := service.Run(context.Background(), Request{
+		Source:  provider.MessageRef{ID: "m1"},
+		WorkDir: workRoot,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if downloader.tempDir == "" {
+		t.Fatalf("expected downloader to receive temp work dir")
+	}
+	wantPrefix := filepath.Clean(workRoot) + string(os.PathSeparator)
+	if !strings.HasPrefix(filepath.Clean(downloader.tempDir)+string(os.PathSeparator), wantPrefix) {
+		t.Fatalf("tempDir = %q, want under %q", downloader.tempDir, workRoot)
+	}
+	if _, err := os.Stat(workRoot); err != nil {
+		t.Fatalf("Stat(workRoot) error = %v", err)
+	}
+	if _, err := os.Stat(downloader.tempDir); !os.IsNotExist(err) {
+		t.Fatalf("tempDir still exists after cleanup: %v", err)
 	}
 }
 

@@ -66,6 +66,7 @@ type MailClientConfig struct {
 type MailPipelineConfig struct {
 	OutputDir         string
 	SaveOutput        bool
+	WorkDir           string
 	ProtectSubject    bool
 	BackupDir         string
 	BackupKeyID       string
@@ -133,6 +134,7 @@ func LoadFromEnv() (Config, error) {
 			Pipeline: MailPipelineConfig{
 				OutputDir:         getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
 				SaveOutput:        saveOutput,
+				WorkDir:           os.Getenv("MIMECRYPT_WORK_DIR"),
 				ProtectSubject:    protectSubject,
 				BackupDir:         getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
 				BackupKeyID:       os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),

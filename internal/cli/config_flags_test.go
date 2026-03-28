@@ -129,6 +129,7 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 			Pipeline: appconfig.MailPipelineConfig{
 				OutputDir:         "output",
 				SaveOutput:        false,
+				WorkDir:           "",
 				ProtectSubject:    false,
 				BackupDir:         "backup",
 				BackupKeyID:       "old-key",
@@ -144,6 +145,7 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	flags.addFlags(cmd)
 	flags.outputDir = "new-output"
 	flags.saveOutput = true
+	flags.workDir = "/new-work"
 	flags.protectSubject = true
 	flags.backupDir = "new-backup"
 	flags.backupKeyID = "new-key"
@@ -155,6 +157,9 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	got := flags.apply(cfg, cmd)
 	if got.Mail.Pipeline.OutputDir != "new-output" || !got.Mail.Pipeline.SaveOutput {
 		t.Fatalf("unexpected output config: %+v", got.Mail)
+	}
+	if got.Mail.Pipeline.WorkDir != "/new-work" {
+		t.Fatalf("WorkDir = %q, want /new-work", got.Mail.Pipeline.WorkDir)
 	}
 	if !got.Mail.Pipeline.ProtectSubject {
 		t.Fatalf("ProtectSubject = false, want true")
