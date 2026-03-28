@@ -246,7 +246,7 @@ export MIMECRYPT_EWS_BASE_URL="https://outlook.office365.com/EWS/Exchange.asmx"
 ```bash
 export MIMECRYPT_PGP_RECIPIENTS="alice@example.com,bob@example.com"
 export MIMECRYPT_GPG_BINARY="gpg"
-export MIMECRYPT_GPG_TRUST_MODEL="always"
+export MIMECRYPT_GPG_TRUST_MODEL="auto"
 ```
 
 说明：
@@ -270,7 +270,8 @@ export MIMECRYPT_GPG_TRUST_MODEL="always"
 - `MIMECRYPT_EWS_SCOPES` 为 EWS 回写申请 OAuth scope；默认使用 `https://outlook.office365.com/EWS.AccessAsUser.All`
 - `MIMECRYPT_EWS_BASE_URL` 为 EWS SOAP 端点；默认 `https://outlook.office365.com/EWS/Exchange.asmx`
 - `MIMECRYPT_PGP_RECIPIENTS` 用于补充/覆盖收件人邮箱列表；如果邮件头缺少 `To/Cc/Bcc`，该变量是必需的
-- `MIMECRYPT_GPG_TRUST_MODEL` 控制 `gpg --trust-model`；当前允许 `always`、`auto`、`classic`、`direct`、`tofu`、`tofu+pgp`、`pgp`
+- `MIMECRYPT_GPG_TRUST_MODEL` 控制 `gpg --trust-model`；默认 `auto`，允许 `always`、`auto`、`classic`、`direct`、`tofu`、`tofu+pgp`、`pgp`
+- 如果你确实要保留旧的“无条件信任本地 keyring 公钥”行为，需要显式设置 `MIMECRYPT_GPG_TRUST_MODEL=always`；这会放大错误公钥被选中的风险
 - 未加密邮件会调用本地 `gpg` 生成 `PGP/MIME (RFC 3156)`；请确保对应收件人的公钥已导入 keyring
 - `encrypt` 命令默认会从输入 MIME 的 `To/Cc/Bcc` 推断收件人并匹配同邮箱公钥；`--recipient` 只接受邮箱地址，`--key` 用于显式指定 GPG key（指纹、key id 或 user id）
 - 显式传入的 `--recipient` / `--key` 值会拒绝以 `-` 开头或包含控制字符的输入，避免污染 GPG 参数语义

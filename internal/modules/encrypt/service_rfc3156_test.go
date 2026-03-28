@@ -502,13 +502,52 @@ func TestDefaultGPGBinaryReadsEnv(t *testing.T) {
 
 func TestDefaultGPGTrustModelReadsEnv(t *testing.T) {
 	t.Setenv("MIMECRYPT_GPG_TRUST_MODEL", "")
-	if got := defaultGPGTrustModel(); got != "always" {
-		t.Fatalf("defaultGPGTrustModel() = %q, want always", got)
+	if got := defaultGPGTrustModel(); got != "auto" {
+		t.Fatalf("defaultGPGTrustModel() = %q, want auto", got)
 	}
 
 	t.Setenv("MIMECRYPT_GPG_TRUST_MODEL", "tofu+pgp")
 	if got := defaultGPGTrustModel(); got != "tofu+pgp" {
 		t.Fatalf("defaultGPGTrustModel() = %q, want tofu+pgp", got)
+	}
+}
+
+func TestGPGEncryptorUsesAutoTrustModelByDefault(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script helper is unix-only")
+	}
+
+	argsFile := t.TempDir() + "/args.txt"
+	script := writeExecutable(t, fmt.Sprintf(
+		"#!/bin/sh\nset -eu\nprintf '%%s\\n' \"$@\" > %q\ncat >/dev/null\ncat <<'EOF'\n-----BEGIN PGP MESSAGE-----\nabc\n-----END PGP MESSAGE-----\nEOF\n",
+		argsFile,
+	))
+
+	t.Setenv("MIMECRYPT_GPG_TRUST_MODEL", "")
+	enc := gpgEncryptor{binary: script}
+	if _, err := enc.Encrypt(context.Background(), []byte("hello"), []string{"alice@example.com"}); err != nil {
+		t.Fatalf("Encrypt() error = %v", err)
+	}
+
+	rawArgs, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("ReadFile(args) error = %v", err)
+	}
+	gotArgs := strings.Split(strings.TrimSpace(string(rawArgs)), "\n")
+	wantArgs := []string{
+		"--batch",
+		"--yes",
+		"--armor",
+		"--trust-model",
+		"auto",
+		"--encrypt",
+		"--output",
+		"-",
+		"--recipient",
+		"alice@example.com",
+	}
+	if !slices.Equal(gotArgs, wantArgs) {
+		t.Fatalf("gpg args mismatch\ngot:  %v\nwant: %v", gotArgs, wantArgs)
 	}
 }
 

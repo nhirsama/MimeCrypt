@@ -26,7 +26,7 @@ func defaultGPGTrustModel() string {
 	if value := strings.TrimSpace(os.Getenv(envGPGTrustModel)); value != "" {
 		return value
 	}
-	return "always"
+	return "auto"
 }
 
 func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients []string) ([]byte, error) {
