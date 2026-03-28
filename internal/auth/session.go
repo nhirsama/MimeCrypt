@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,19 +109,24 @@ func (s *Session) Login(ctx context.Context, out io.Writer) (Token, error) {
 
 // AccessToken 返回可直接用于 Graph 调用的 access token，必要时会自动刷新。
 func (s *Session) AccessToken(ctx context.Context) (string, error) {
+	return s.AccessTokenForScopes(ctx, s.client.cfg.GraphScopes)
+}
+
+// AccessTokenForScopes 返回满足指定 scopes 的 access token，必要时会自动刷新。
+func (s *Session) AccessTokenForScopes(ctx context.Context, scopes []string) (string, error) {
 	token, err := s.store.load()
 	if err != nil {
 		return "", err
 	}
 
-	if token.AccessToken != "" && time.Until(token.ExpiresAt) > 2*time.Minute {
+	if token.AccessToken != "" && time.Until(token.ExpiresAt) > 2*time.Minute && tokenCoversScopes(token.Scope, scopes) {
 		return token.AccessToken, nil
 	}
 	if token.RefreshToken == "" {
 		return "", fmt.Errorf("本地 token 缓存中没有 refresh token，请先执行 login")
 	}
 
-	refreshed, err := s.client.refreshToken(ctx, token.RefreshToken)
+	refreshed, err := s.client.refreshTokenForScopes(ctx, token.RefreshToken, scopes)
 	if err != nil {
 		return "", err
 	}
@@ -145,7 +151,7 @@ func (s *Session) Logout() error {
 func (c *client) startDeviceCode(ctx context.Context) (DeviceCode, error) {
 	form := url.Values{}
 	form.Set("client_id", c.cfg.ClientID)
-	form.Set("scope", strings.Join(c.cfg.GraphScopes, " "))
+	form.Set("scope", strings.Join(consentScopes(c.cfg.GraphScopes, c.cfg.EWSScopes), " "))
 
 	endpoint := fmt.Sprintf(
 		"%s/%s/oauth2/v2.0/devicecode",
@@ -213,12 +219,12 @@ func (c *client) waitForToken(ctx context.Context, deviceCode DeviceCode) (Token
 	}
 }
 
-func (c *client) refreshToken(ctx context.Context, refreshToken string) (Token, error) {
+func (c *client) refreshTokenForScopes(ctx context.Context, refreshToken string, scopes []string) (Token, error) {
 	form := url.Values{}
 	form.Set("client_id", c.cfg.ClientID)
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
-	form.Set("scope", strings.Join(c.cfg.GraphScopes, " "))
+	form.Set("scope", strings.Join(scopes, " "))
 
 	payload, status, err := c.doTokenRequest(ctx, form)
 	if err != nil {
@@ -372,4 +378,56 @@ func writeJSONFile(path string, value any, mode os.FileMode) error {
 	}
 
 	return nil
+}
+
+func consentScopes(groups ...[]string) []string {
+	seen := make(map[string]struct{})
+	scopes := make([]string, 0)
+	for _, group := range groups {
+		for _, scope := range group {
+			scope = strings.TrimSpace(scope)
+			if scope == "" {
+				continue
+			}
+			if _, ok := seen[scope]; ok {
+				continue
+			}
+			seen[scope] = struct{}{}
+			scopes = append(scopes, scope)
+		}
+	}
+	slices.Sort(scopes)
+	return scopes
+}
+
+func tokenCoversScopes(granted string, requested []string) bool {
+	grantedSet := make(map[string]struct{})
+	for _, scope := range strings.Fields(granted) {
+		scope = strings.TrimSpace(scope)
+		if scope == "" || ignoredTokenScope(scope) {
+			continue
+		}
+		grantedSet[scope] = struct{}{}
+	}
+
+	for _, scope := range requested {
+		scope = strings.TrimSpace(scope)
+		if scope == "" || ignoredTokenScope(scope) {
+			continue
+		}
+		if _, ok := grantedSet[scope]; !ok {
+			return false
+		}
+	}
+
+	return true
+}
+
+func ignoredTokenScope(scope string) bool {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "", "offline_access", "openid", "profile":
+		return true
+	default:
+		return false
+	}
 }

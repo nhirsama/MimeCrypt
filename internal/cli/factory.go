@@ -121,7 +121,7 @@ func buildDiscoverService(cfg appconfig.Config) (*discover.Service, error) {
 	}, nil
 }
 
-func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL string) appconfig.Config {
+func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL, ewsBaseURL string) appconfig.Config {
 	cfg := defaults
 	previousStateDir := cfg.Mail.Sync.StateDir
 	previousAuditLogPath := cfg.Mail.Pipeline.AuditLogPath
@@ -130,6 +130,7 @@ func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authority
 	cfg.Auth.StateDir = stateDir
 	cfg.Auth.AuthorityBaseURL = authorityBaseURL
 	cfg.Mail.Client.GraphBaseURL = graphBaseURL
+	cfg.Mail.Client.EWSBaseURL = ewsBaseURL
 	cfg.Mail.Sync.StateDir = stateDir
 	if strings.TrimSpace(previousAuditLogPath) == "" || previousAuditLogPath == appconfig.DefaultAuditLogPath(previousStateDir) {
 		cfg.Mail.Pipeline.AuditLogPath = appconfig.DefaultAuditLogPath(stateDir)

@@ -94,7 +94,7 @@ MimeCrypt 的定位是一个自动化邮件加密中间层。
 - 增量同步发现邮件的基础框架
 - 已加密邮件识别与拒绝重复加密（PGP/S-MIME）
 - 基于 `gpg` 的 PGP/MIME（RFC 3156）加密封装
-- Graph 回写、原文件夹保留回写与可选指定文件夹回写
+- EWS 回写、原文件夹保留回写与可选指定文件夹回写
 - 回写后基础校验
 - 关键流程 JSONL 审计日志
 - 本地加密备份目录
@@ -162,6 +162,7 @@ go run ./cmd/mimecrypt process <message-id> --save-output --output-dir ./output
 go run ./cmd/mimecrypt process <message-id> --backup-dir ./backup --audit-log-path ./audit.jsonl
 go run ./cmd/mimecrypt process <message-id> --backup-key-id 0xDEADBEEF
 go run ./cmd/mimecrypt process <message-id> --write-back
+go run ./cmd/mimecrypt process <message-id> --write-back --write-back-provider ews
 go run ./cmd/mimecrypt process <message-id> --write-back --write-back-folder archive
 ```
 
@@ -173,6 +174,7 @@ go run ./cmd/mimecrypt run --poll-interval 1m --save-output --output-dir ./outpu
 go run ./cmd/mimecrypt run --once --backup-dir ./backup --audit-log-path ./audit.jsonl
 go run ./cmd/mimecrypt run --once --backup-key-id 0xDEADBEEF
 go run ./cmd/mimecrypt run --once --write-back
+go run ./cmd/mimecrypt run --once --write-back --write-back-provider ews
 go run ./cmd/mimecrypt run --once --write-back --write-back-folder archive
 ```
 
@@ -182,7 +184,8 @@ go run ./cmd/mimecrypt run --once --write-back --write-back-folder archive
 go run ./cmd/mimecrypt run --debug-save-first --save-output --output-dir ./output
 ```
 
-需要注意的是，`process` 和 `run` 已经接入真实加密与 Graph 回写；默认回写到原文件夹，也可以通过 `--write-back-folder` 指定目标文件夹。
+需要注意的是，`process` 和 `run` 已经接入真实加密与邮箱回写；默认回写到原文件夹，也可以通过 `--write-back-folder` 指定目标文件夹。
+当前默认回写后端是 `ews`，因为 Graph 的 `create message` 会把导入邮件标记为 draft，不符合“真实收件邮件”的语义要求。
 
 ## 配置
 
@@ -204,8 +207,11 @@ export MIMECRYPT_BACKUP_DIR="./backup"
 export MIMECRYPT_BACKUP_KEY_ID=""
 export MIMECRYPT_AUDIT_LOG_PATH="$HOME/.config/mimecrypt/audit.jsonl"
 export MIMECRYPT_FOLDER="inbox"
+export MIMECRYPT_WRITEBACK_PROVIDER="ews"
 export MIMECRYPT_WRITEBACK_FOLDER=""
 export MIMECRYPT_GRAPH_SCOPES="https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/User.Read offline_access openid profile"
+export MIMECRYPT_EWS_SCOPES="https://outlook.office365.com/EWS.AccessAsUser.All"
+export MIMECRYPT_EWS_BASE_URL="https://outlook.office365.com/EWS/Exchange.asmx"
 ```
 
 加密相关配置：
@@ -225,7 +231,10 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - `MIMECRYPT_BACKUP_DIR` 保存对原始 MIME 源字节直接执行 `gpg --armor --encrypt` 后得到的密文备份
 - `MIMECRYPT_BACKUP_KEY_ID` 为备份指定 catch-all GPG key id；设置后所有备份都使用这把 key，而不是邮件收件人 key
 - `MIMECRYPT_AUDIT_LOG_PATH` 保存关键流程的追加式 JSONL 审计日志
+- `MIMECRYPT_WRITEBACK_PROVIDER` 控制回写后端；当前支持 `ews` 和 `graph`，默认 `ews`
 - `MIMECRYPT_WRITEBACK_FOLDER` 为空时默认回写到原文件夹；设置后会回写到指定文件夹标识
+- `MIMECRYPT_EWS_SCOPES` 为 EWS 回写申请 OAuth scope；默认使用 `https://outlook.office365.com/EWS.AccessAsUser.All`
+- `MIMECRYPT_EWS_BASE_URL` 为 EWS SOAP 端点；默认 `https://outlook.office365.com/EWS/Exchange.asmx`
 - `MIMECRYPT_PGP_RECIPIENTS` 用于补充/覆盖收件人；如果邮件头缺少 `To/Cc/Bcc`，该变量是必需的
 - 未加密邮件会调用本地 `gpg` 生成 `PGP/MIME (RFC 3156)`；请确保对应收件人的公钥已导入 keyring
 - `encrypt` 命令默认会从输入 MIME 的 `To/Cc/Bcc` 推断收件人并匹配同邮箱公钥；传入 `--key` 或 `--recipient` 时会改用显式指定的 key/recipient
@@ -234,7 +243,31 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - 开启 `--save-output` 或 `MIMECRYPT_SAVE_OUTPUT=true` 后，才会额外产出 `output/*.eml`，供 Thunderbird 等客户端直接打开
 - `backup/*.pgp` 始终针对原始 MIME 源字节加密；如果设置了 `--backup-key-id` 或 `MIMECRYPT_BACKUP_KEY_ID`，则统一使用该 catch-all key 生成备份
 - 加密输出的外层包装会增加 `X-MimeCrypt-Processed: yes`，用于标记该邮件经过 MimeCrypt 处理；该头不会进入解密后的原始 MIME
-- 开启回写需要 `Mail.ReadWrite` 权限；如果你之前使用 `Mail.Read` 登录过，需要重新执行 `logout` 和 `login` 获取新 token
+- 开启 Graph 读信与发现需要 `Mail.ReadWrite`；开启 EWS 回写还需要 `https://outlook.office365.com/EWS.AccessAsUser.All`
+- 如果你之前是在旧版本上登录过，需要重新执行 `logout` 和 `login`，以获取包含 EWS scope 的新 token
+- `graph` 写回后端仍保留作为可选项，但 Outlook Web 会把导入结果显示为 draft；如果要求“真实收件邮件”语义，应使用默认的 `ews`
+
+## 回写实现说明
+
+当前默认回写链路是：
+
+1. 用 Microsoft Graph 发现和读取原始 MIME
+2. 在本地生成加密后的 `PGP/MIME`
+3. 用 EWS `CreateItem + MimeContent` 把 MIME 导入目标文件夹
+4. 通过 `PidTagMessageFlags (0x0E07)` 清除 draft 语义
+5. 再用 Graph 做未读标记、校验和幂等对账
+
+这样做的原因很直接：
+
+- Microsoft Graph 的 `POST /me/messages` 只能创建 draft，即使请求体是 MIME
+- 这会让 Outlook Web 显示“这是草稿”或“此草稿尚未发送”，破坏邮件语义
+- EWS 支持直接导入 `.eml`/MIME，并允许把导入邮件保存成非 draft 形式
+
+需要明确的边界：
+
+- 这条 EWS 路线是为了当前 Exchange Online 的行为现实做的兼容实现
+- Microsoft 已宣布 Exchange Online 的 EWS 将从 `2026-10-01` 开始逐步禁用，并在 `2027-04-01` 完全禁用
+- 所以这是一条务实但有时限的方案；后续需要继续关注 Graph 的导入能力是否出现可替代的正式接口
 
 ## 文件说明
 

@@ -22,6 +22,7 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 		Mail: appconfig.MailConfig{
 			Client: appconfig.MailClientConfig{
 				GraphBaseURL: "https://old-graph",
+				EWSBaseURL:   "https://old-ews",
 			},
 			Pipeline: appconfig.MailPipelineConfig{
 				AuditLogPath: appconfig.DefaultAuditLogPath("/old-state"),
@@ -38,6 +39,7 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 	flags.stateDir = "/new-state"
 	flags.authorityBaseURL = "https://new-authority"
 	flags.graphBaseURL = "https://new-graph"
+	flags.ewsBaseURL = "https://new-ews"
 
 	got := flags.apply(cfg)
 	if got.Auth.ClientID != "new-client" || got.Auth.Tenant != "new-tenant" {
@@ -48,6 +50,9 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 	}
 	if got.Mail.Client.GraphBaseURL != "https://new-graph" {
 		t.Fatalf("GraphBaseURL = %q, want https://new-graph", got.Mail.Client.GraphBaseURL)
+	}
+	if got.Mail.Client.EWSBaseURL != "https://new-ews" {
+		t.Fatalf("EWSBaseURL = %q, want https://new-ews", got.Mail.Client.EWSBaseURL)
 	}
 	if got.Mail.Pipeline.AuditLogPath != appconfig.DefaultAuditLogPath("/new-state") {
 		t.Fatalf("AuditLogPath = %q, want %q", got.Mail.Pipeline.AuditLogPath, appconfig.DefaultAuditLogPath("/new-state"))
@@ -60,11 +65,12 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	cfg := appconfig.Config{
 		Mail: appconfig.MailConfig{
 			Pipeline: appconfig.MailPipelineConfig{
-				OutputDir:    "output",
-				SaveOutput:   false,
-				BackupDir:    "backup",
-				BackupKeyID:  "old-key",
-				AuditLogPath: "/old/audit.jsonl",
+				OutputDir:         "output",
+				SaveOutput:        false,
+				BackupDir:         "backup",
+				BackupKeyID:       "old-key",
+				AuditLogPath:      "/old/audit.jsonl",
+				WriteBackProvider: "ews",
 			},
 		},
 	}
@@ -77,6 +83,7 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	flags.backupDir = "new-backup"
 	flags.backupKeyID = "new-key"
 	flags.auditLogPath = "/ignored/audit.jsonl"
+	flags.writeBackProvider = "graph"
 	flags.writeBackFolder = "archive"
 
 	got := flags.apply(cfg, cmd)
@@ -89,6 +96,9 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	if got.Mail.Pipeline.WriteBackFolder != "archive" {
 		t.Fatalf("WriteBackFolder = %q, want archive", got.Mail.Pipeline.WriteBackFolder)
 	}
+	if got.Mail.Pipeline.WriteBackProvider != "graph" {
+		t.Fatalf("WriteBackProvider = %q, want graph", got.Mail.Pipeline.WriteBackProvider)
+	}
 	if got.Mail.Pipeline.AuditLogPath != "/old/audit.jsonl" {
 		t.Fatalf("AuditLogPath = %q, want /old/audit.jsonl", got.Mail.Pipeline.AuditLogPath)
 	}
@@ -100,7 +110,8 @@ func TestProcessingConfigFlagsApplyOverridesAuditLogPathWhenFlagChanged(t *testi
 	cfg := appconfig.Config{
 		Mail: appconfig.MailConfig{
 			Pipeline: appconfig.MailPipelineConfig{
-				AuditLogPath: "/old/audit.jsonl",
+				AuditLogPath:      "/old/audit.jsonl",
+				WriteBackProvider: "ews",
 			},
 		},
 	}
@@ -115,6 +126,9 @@ func TestProcessingConfigFlagsApplyOverridesAuditLogPathWhenFlagChanged(t *testi
 	got := flags.apply(cfg, cmd)
 	if got.Mail.Pipeline.AuditLogPath != "/new/audit.jsonl" {
 		t.Fatalf("AuditLogPath = %q, want /new/audit.jsonl", got.Mail.Pipeline.AuditLogPath)
+	}
+	if got.Mail.Pipeline.WriteBackProvider != "ews" {
+		t.Fatalf("WriteBackProvider = %q, want ews", got.Mail.Pipeline.WriteBackProvider)
 	}
 }
 

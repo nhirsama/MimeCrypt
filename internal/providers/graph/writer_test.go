@@ -20,6 +20,10 @@ func (fakeTokenSource) AccessToken(context.Context) (string, error) {
 	return "token", nil
 }
 
+func (fakeTokenSource) AccessTokenForScopes(context.Context, []string) (string, error) {
+	return "token", nil
+}
+
 func TestWriterWriteMessageUsesSourceFolderByDefault(t *testing.T) {
 	t.Parallel()
 

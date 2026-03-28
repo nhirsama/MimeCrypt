@@ -35,11 +35,17 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Auth.GraphScopes, splitScopes(defaultGraphScopes)) {
 		t.Fatalf("Auth.GraphScopes = %#v, want %#v", cfg.Auth.GraphScopes, splitScopes(defaultGraphScopes))
 	}
+	if !reflect.DeepEqual(cfg.Auth.EWSScopes, splitScopes(defaultEWSScopes)) {
+		t.Fatalf("Auth.EWSScopes = %#v, want %#v", cfg.Auth.EWSScopes, splitScopes(defaultEWSScopes))
+	}
 	if cfg.Auth.StateDir != wantStateDir {
 		t.Fatalf("Auth.StateDir = %q, want %q", cfg.Auth.StateDir, wantStateDir)
 	}
 	if cfg.Mail.Client.GraphBaseURL != defaultGraphBaseURL {
 		t.Fatalf("Mail.Client.GraphBaseURL = %q, want %q", cfg.Mail.Client.GraphBaseURL, defaultGraphBaseURL)
+	}
+	if cfg.Mail.Client.EWSBaseURL != defaultEWSBaseURL {
+		t.Fatalf("Mail.Client.EWSBaseURL = %q, want %q", cfg.Mail.Client.EWSBaseURL, defaultEWSBaseURL)
 	}
 	if cfg.Mail.Pipeline.OutputDir != defaultOutputDir {
 		t.Fatalf("Mail.Pipeline.OutputDir = %q, want %q", cfg.Mail.Pipeline.OutputDir, defaultOutputDir)
@@ -52,6 +58,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	}
 	if cfg.Mail.Pipeline.AuditLogPath != DefaultAuditLogPath(wantStateDir) {
 		t.Fatalf("Mail.Pipeline.AuditLogPath = %q, want %q", cfg.Mail.Pipeline.AuditLogPath, DefaultAuditLogPath(wantStateDir))
+	}
+	if cfg.Mail.Pipeline.WriteBackProvider != defaultWriteBackProvider {
+		t.Fatalf("Mail.Pipeline.WriteBackProvider = %q, want %q", cfg.Mail.Pipeline.WriteBackProvider, defaultWriteBackProvider)
 	}
 	if cfg.Mail.Sync.Folder != defaultFolder {
 		t.Fatalf("Mail.Sync.Folder = %q, want %q", cfg.Mail.Sync.Folder, defaultFolder)
@@ -75,13 +84,16 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("MIMECRYPT_TENANT", "tenant-id")
 	t.Setenv("MIMECRYPT_AUTHORITY_BASE_URL", "https://authority.example.com")
 	t.Setenv("MIMECRYPT_GRAPH_SCOPES", "scope-a scope-b")
+	t.Setenv("MIMECRYPT_EWS_SCOPES", "scope-ews")
 	t.Setenv("MIMECRYPT_STATE_DIR", "/state")
 	t.Setenv("MIMECRYPT_GRAPH_BASE_URL", "https://graph.example.com/v1.0")
+	t.Setenv("MIMECRYPT_EWS_BASE_URL", "https://ews.example.com/EWS/Exchange.asmx")
 	t.Setenv("MIMECRYPT_OUTPUT_DIR", "/output")
 	t.Setenv("MIMECRYPT_SAVE_OUTPUT", "true")
 	t.Setenv("MIMECRYPT_BACKUP_DIR", "/backup")
 	t.Setenv("MIMECRYPT_BACKUP_KEY_ID", "backup-key")
 	t.Setenv("MIMECRYPT_AUDIT_LOG_PATH", "/audit/events.jsonl")
+	t.Setenv("MIMECRYPT_WRITEBACK_PROVIDER", "graph")
 	t.Setenv("MIMECRYPT_FOLDER", "archive")
 	t.Setenv("MIMECRYPT_WRITEBACK_FOLDER", "encrypted")
 
@@ -105,11 +117,17 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Auth.GraphScopes, []string{"scope-a", "scope-b"}) {
 		t.Fatalf("Auth.GraphScopes = %#v", cfg.Auth.GraphScopes)
 	}
+	if !reflect.DeepEqual(cfg.Auth.EWSScopes, []string{"scope-ews"}) {
+		t.Fatalf("Auth.EWSScopes = %#v", cfg.Auth.EWSScopes)
+	}
 	if cfg.Auth.StateDir != "/state" || cfg.Mail.Sync.StateDir != "/state" {
 		t.Fatalf("unexpected state dirs: auth=%q sync=%q", cfg.Auth.StateDir, cfg.Mail.Sync.StateDir)
 	}
 	if cfg.Mail.Client.GraphBaseURL != "https://graph.example.com/v1.0" {
 		t.Fatalf("Mail.Client.GraphBaseURL = %q", cfg.Mail.Client.GraphBaseURL)
+	}
+	if cfg.Mail.Client.EWSBaseURL != "https://ews.example.com/EWS/Exchange.asmx" {
+		t.Fatalf("Mail.Client.EWSBaseURL = %q", cfg.Mail.Client.EWSBaseURL)
 	}
 	if cfg.Mail.Pipeline.OutputDir != "/output" || !cfg.Mail.Pipeline.SaveOutput {
 		t.Fatalf("unexpected pipeline output config: %+v", cfg.Mail.Pipeline)
@@ -122,6 +140,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	}
 	if cfg.Mail.Pipeline.WriteBackFolder != "encrypted" {
 		t.Fatalf("Mail.Pipeline.WriteBackFolder = %q", cfg.Mail.Pipeline.WriteBackFolder)
+	}
+	if cfg.Mail.Pipeline.WriteBackProvider != "graph" {
+		t.Fatalf("Mail.Pipeline.WriteBackProvider = %q", cfg.Mail.Pipeline.WriteBackProvider)
 	}
 	if cfg.Mail.Sync.Folder != "archive" {
 		t.Fatalf("Mail.Sync.Folder = %q", cfg.Mail.Sync.Folder)
@@ -144,12 +165,14 @@ func TestMailConfigValidateSync(t *testing.T) {
 	base := MailConfig{
 		Client: MailClientConfig{
 			GraphBaseURL: "https://graph.example.com/v1.0",
+			EWSBaseURL:   "https://ews.example.com/EWS/Exchange.asmx",
 		},
 		Pipeline: MailPipelineConfig{
-			OutputDir:    "output",
-			SaveOutput:   true,
-			BackupDir:    "backup",
-			AuditLogPath: "audit.jsonl",
+			OutputDir:         "output",
+			SaveOutput:        true,
+			BackupDir:         "backup",
+			AuditLogPath:      "audit.jsonl",
+			WriteBackProvider: "ews",
 		},
 		Sync: MailSyncConfig{
 			Folder:       "inbox",
@@ -170,6 +193,13 @@ func TestMailConfigValidateSync(t *testing.T) {
 				cfg.Client.GraphBaseURL = ""
 			},
 			wantErr: "graph base URL 不能为空",
+		},
+		{
+			name: "missing ews base url when ews writeback enabled",
+			mutate: func(cfg *MailConfig) {
+				cfg.Client.EWSBaseURL = ""
+			},
+			wantErr: "ews base URL 不能为空",
 		},
 		{
 			name: "missing state dir",
@@ -220,6 +250,13 @@ func TestMailConfigValidateSync(t *testing.T) {
 			},
 			wantErr: "cycle timeout 必须大于 0",
 		},
+		{
+			name: "unsupported writeback provider",
+			mutate: func(cfg *MailConfig) {
+				cfg.Pipeline.WriteBackProvider = "smtp"
+			},
+			wantErr: "write back provider 不支持",
+		},
 	}
 
 	for _, tc := range cases {
@@ -264,13 +301,16 @@ func resetMimeCryptEnv(t *testing.T) {
 		"MIMECRYPT_TENANT",
 		"MIMECRYPT_AUTHORITY_BASE_URL",
 		"MIMECRYPT_GRAPH_SCOPES",
+		"MIMECRYPT_EWS_SCOPES",
 		"MIMECRYPT_STATE_DIR",
 		"MIMECRYPT_GRAPH_BASE_URL",
+		"MIMECRYPT_EWS_BASE_URL",
 		"MIMECRYPT_OUTPUT_DIR",
 		"MIMECRYPT_SAVE_OUTPUT",
 		"MIMECRYPT_BACKUP_DIR",
 		"MIMECRYPT_BACKUP_KEY_ID",
 		"MIMECRYPT_AUDIT_LOG_PATH",
+		"MIMECRYPT_WRITEBACK_PROVIDER",
 		"MIMECRYPT_FOLDER",
 		"MIMECRYPT_WRITEBACK_FOLDER",
 	}

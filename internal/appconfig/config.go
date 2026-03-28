@@ -11,16 +11,19 @@ import (
 )
 
 const (
-	defaultProvider         = "graph"
-	defaultClientID         = "fff3108f-14f7-4877-9739-1a2766e5ca9a"
-	defaultTenant           = "organizations"
-	defaultAuthorityBaseURL = "https://login.microsoftonline.com"
-	defaultGraphBaseURL     = "https://graph.microsoft.com/v1.0"
-	defaultGraphScopes      = "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/User.Read offline_access openid profile"
-	defaultFolder           = "inbox"
-	defaultPollInterval     = time.Minute
-	defaultCycleTimeout     = 2 * time.Minute
-	defaultOutputDir        = "output"
+	defaultProvider          = "graph"
+	defaultClientID          = "fff3108f-14f7-4877-9739-1a2766e5ca9a"
+	defaultTenant            = "organizations"
+	defaultAuthorityBaseURL  = "https://login.microsoftonline.com"
+	defaultGraphBaseURL      = "https://graph.microsoft.com/v1.0"
+	defaultGraphScopes       = "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/User.Read offline_access openid profile"
+	defaultEWSBaseURL        = "https://outlook.office365.com/EWS/Exchange.asmx"
+	defaultEWSScopes         = "https://outlook.office365.com/EWS.AccessAsUser.All"
+	defaultWriteBackProvider = "ews"
+	defaultFolder            = "inbox"
+	defaultPollInterval      = time.Minute
+	defaultCycleTimeout      = 2 * time.Minute
+	defaultOutputDir         = "output"
 )
 
 type Config struct {
@@ -34,6 +37,7 @@ type AuthConfig struct {
 	Tenant           string
 	AuthorityBaseURL string
 	GraphScopes      []string
+	EWSScopes        []string
 	StateDir         string
 }
 
@@ -45,15 +49,17 @@ type MailConfig struct {
 
 type MailClientConfig struct {
 	GraphBaseURL string
+	EWSBaseURL   string
 }
 
 type MailPipelineConfig struct {
-	OutputDir       string
-	SaveOutput      bool
-	BackupDir       string
-	BackupKeyID     string
-	AuditLogPath    string
-	WriteBackFolder string
+	OutputDir         string
+	SaveOutput        bool
+	BackupDir         string
+	BackupKeyID       string
+	AuditLogPath      string
+	WriteBackProvider string
+	WriteBackFolder   string
 }
 
 type MailSyncConfig struct {
@@ -81,19 +87,22 @@ func LoadFromEnv() (Config, error) {
 			Tenant:           getenvDefault("MIMECRYPT_TENANT", defaultTenant),
 			AuthorityBaseURL: getenvDefault("MIMECRYPT_AUTHORITY_BASE_URL", defaultAuthorityBaseURL),
 			GraphScopes:      splitScopes(getenvDefault("MIMECRYPT_GRAPH_SCOPES", defaultGraphScopes)),
+			EWSScopes:        splitScopes(getenvDefault("MIMECRYPT_EWS_SCOPES", defaultEWSScopes)),
 			StateDir:         getenvDefault("MIMECRYPT_STATE_DIR", stateDir),
 		},
 		Mail: MailConfig{
 			Client: MailClientConfig{
 				GraphBaseURL: getenvDefault("MIMECRYPT_GRAPH_BASE_URL", defaultGraphBaseURL),
+				EWSBaseURL:   getenvDefault("MIMECRYPT_EWS_BASE_URL", defaultEWSBaseURL),
 			},
 			Pipeline: MailPipelineConfig{
-				OutputDir:       getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
-				SaveOutput:      saveOutput,
-				BackupDir:       getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
-				BackupKeyID:     os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),
-				AuditLogPath:    getenvDefault("MIMECRYPT_AUDIT_LOG_PATH", DefaultAuditLogPath(stateDir)),
-				WriteBackFolder: os.Getenv("MIMECRYPT_WRITEBACK_FOLDER"),
+				OutputDir:         getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
+				SaveOutput:        saveOutput,
+				BackupDir:         getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
+				BackupKeyID:       os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),
+				AuditLogPath:      getenvDefault("MIMECRYPT_AUDIT_LOG_PATH", DefaultAuditLogPath(stateDir)),
+				WriteBackProvider: getenvDefault("MIMECRYPT_WRITEBACK_PROVIDER", defaultWriteBackProvider),
+				WriteBackFolder:   os.Getenv("MIMECRYPT_WRITEBACK_FOLDER"),
 			},
 			Sync: MailSyncConfig{
 				Folder:       getenvDefault("MIMECRYPT_FOLDER", defaultFolder),
@@ -146,6 +155,14 @@ func (c MailClientConfig) Validate() error {
 	return nil
 }
 
+func (c MailClientConfig) ValidateEWS() error {
+	if strings.TrimSpace(c.EWSBaseURL) == "" {
+		return fmt.Errorf("ews base URL 不能为空")
+	}
+
+	return nil
+}
+
 // ValidateSync 校验邮件同步所需配置。
 func (c MailConfig) ValidateSync() error {
 	if err := c.ValidateClient(); err != nil {
@@ -162,6 +179,15 @@ func (c MailConfig) ValidateSync() error {
 	}
 	if strings.TrimSpace(c.Pipeline.AuditLogPath) == "" {
 		return fmt.Errorf("audit log path 不能为空")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Pipeline.WriteBackProvider)) {
+	case "", "graph":
+	case "ews":
+		if err := c.Client.ValidateEWS(); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("write back provider 不支持: %s", c.Pipeline.WriteBackProvider)
 	}
 	if strings.TrimSpace(c.Sync.Folder) == "" {
 		return fmt.Errorf("folder 不能为空")

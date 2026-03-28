@@ -1,14 +1,21 @@
 package graph
 
 import (
+	"fmt"
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
 	"mimecrypt/internal/provider"
+	"strings"
 )
 
 // Build 构造当前基于 Microsoft Graph 的 provider 实现。
 func Build(cfg appconfig.Config) (provider.Clients, error) {
-	session, err := auth.NewSession(cfg.Auth, nil)
+	authCfg := cfg.Auth
+	if strings.ToLower(strings.TrimSpace(cfg.Mail.Pipeline.WriteBackProvider)) != "ews" {
+		authCfg.EWSScopes = nil
+	}
+
+	session, err := auth.NewSession(authCfg, nil)
 	if err != nil {
 		return provider.Clients{}, err
 	}
@@ -18,7 +25,15 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 		return provider.Clients{}, err
 	}
 
-	writer, err := newWriter(cfg.Mail.Client, session, nil)
+	var writer provider.Writer
+	switch strings.ToLower(strings.TrimSpace(cfg.Mail.Pipeline.WriteBackProvider)) {
+	case "", "graph":
+		writer, err = newWriter(cfg.Mail.Client, session, nil)
+	case "ews":
+		writer, err = newEWSWriter(cfg, session, nil)
+	default:
+		return provider.Clients{}, fmt.Errorf("不支持的回写后端: %s", cfg.Mail.Pipeline.WriteBackProvider)
+	}
 	if err != nil {
 		return provider.Clients{}, err
 	}

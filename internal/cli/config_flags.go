@@ -14,6 +14,7 @@ type providerConfigFlags struct {
 	stateDir         string
 	authorityBaseURL string
 	graphBaseURL     string
+	ewsBaseURL       string
 }
 
 func newProviderConfigFlags(cfg appconfig.Config) providerConfigFlags {
@@ -23,6 +24,7 @@ func newProviderConfigFlags(cfg appconfig.Config) providerConfigFlags {
 		stateDir:         cfg.Auth.StateDir,
 		authorityBaseURL: cfg.Auth.AuthorityBaseURL,
 		graphBaseURL:     cfg.Mail.Client.GraphBaseURL,
+		ewsBaseURL:       cfg.Mail.Client.EWSBaseURL,
 	}
 }
 
@@ -32,29 +34,32 @@ func (f *providerConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.stateDir, "state-dir", f.stateDir, "本地状态目录")
 	cmd.Flags().StringVar(&f.authorityBaseURL, "authority-base-url", f.authorityBaseURL, "Microsoft Entra 认证基础地址")
 	cmd.Flags().StringVar(&f.graphBaseURL, "graph-base-url", f.graphBaseURL, "Microsoft Graph 基础地址")
+	cmd.Flags().StringVar(&f.ewsBaseURL, "ews-base-url", f.ewsBaseURL, "EWS 基础地址")
 }
 
 func (f providerConfigFlags) apply(cfg appconfig.Config) appconfig.Config {
-	return syncConfig(cfg, f.clientID, f.tenant, f.stateDir, f.authorityBaseURL, f.graphBaseURL)
+	return syncConfig(cfg, f.clientID, f.tenant, f.stateDir, f.authorityBaseURL, f.graphBaseURL, f.ewsBaseURL)
 }
 
 type processingConfigFlags struct {
-	outputDir       string
-	saveOutput      bool
-	backupDir       string
-	backupKeyID     string
-	auditLogPath    string
-	writeBackFolder string
+	outputDir         string
+	saveOutput        bool
+	backupDir         string
+	backupKeyID       string
+	auditLogPath      string
+	writeBackProvider string
+	writeBackFolder   string
 }
 
 func newProcessingConfigFlags(cfg appconfig.Config) processingConfigFlags {
 	return processingConfigFlags{
-		outputDir:       cfg.Mail.Pipeline.OutputDir,
-		saveOutput:      cfg.Mail.Pipeline.SaveOutput,
-		backupDir:       cfg.Mail.Pipeline.BackupDir,
-		backupKeyID:     cfg.Mail.Pipeline.BackupKeyID,
-		auditLogPath:    cfg.Mail.Pipeline.AuditLogPath,
-		writeBackFolder: cfg.Mail.Pipeline.WriteBackFolder,
+		outputDir:         cfg.Mail.Pipeline.OutputDir,
+		saveOutput:        cfg.Mail.Pipeline.SaveOutput,
+		backupDir:         cfg.Mail.Pipeline.BackupDir,
+		backupKeyID:       cfg.Mail.Pipeline.BackupKeyID,
+		auditLogPath:      cfg.Mail.Pipeline.AuditLogPath,
+		writeBackProvider: cfg.Mail.Pipeline.WriteBackProvider,
+		writeBackFolder:   cfg.Mail.Pipeline.WriteBackFolder,
 	}
 }
 
@@ -64,6 +69,7 @@ func (f *processingConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.backupDir, "backup-dir", f.backupDir, "源邮件加密备份目录；保存 gpg 直接加密后的文件")
 	cmd.Flags().StringVar(&f.backupKeyID, "backup-key-id", f.backupKeyID, "备份加密使用的 catch-all GPG key id；设置后所有备份统一用该 key")
 	cmd.Flags().StringVar(&f.auditLogPath, "audit-log-path", f.auditLogPath, "审计日志输出路径（JSONL）")
+	cmd.Flags().StringVar(&f.writeBackProvider, "write-back-provider", f.writeBackProvider, "回写后端；可选 graph 或 ews")
 	cmd.Flags().StringVar(&f.writeBackFolder, "write-back-folder", f.writeBackFolder, "回写目标文件夹标识；默认回写到原文件夹")
 }
 
@@ -72,6 +78,7 @@ func (f processingConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) a
 	cfg.Mail.Pipeline.SaveOutput = f.saveOutput
 	cfg.Mail.Pipeline.BackupDir = f.backupDir
 	cfg.Mail.Pipeline.BackupKeyID = f.backupKeyID
+	cfg.Mail.Pipeline.WriteBackProvider = f.writeBackProvider
 	cfg.Mail.Pipeline.WriteBackFolder = f.writeBackFolder
 	if cmd.Flags().Changed("audit-log-path") {
 		cfg.Mail.Pipeline.AuditLogPath = f.auditLogPath
