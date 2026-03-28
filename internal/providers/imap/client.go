@@ -71,117 +71,19 @@ func (c *client) me() provider.User {
 }
 
 func (c *client) message(ctx context.Context, folder, messageID string) (provider.Message, error) {
-	uid, err := parseUID(messageID)
-	if err != nil {
-		return provider.Message{}, err
-	}
-
-	messages, err := c.fetchHeadersByUIDs(ctx, folder, []uint64{uid})
-	if err != nil {
-		return provider.Message{}, err
-	}
-	if len(messages) == 0 {
-		return provider.Message{}, fmt.Errorf("邮件 %s 不存在", messageID)
-	}
-	return messages[0], nil
+	return c.messageViaGoIMAP(ctx, folder, messageID)
 }
 
 func (c *client) fetchMIME(ctx context.Context, folder, messageID string) (io.ReadCloser, error) {
-	uid, err := parseUID(messageID)
-	if err != nil {
-		return nil, err
-	}
-
-	fetched, err := c.fetchBodyByUID(ctx, folder, uid)
-	if err != nil {
-		return nil, err
-	}
-	if fetched == nil {
-		return nil, fmt.Errorf("邮件 %s 不存在", messageID)
-	}
-	return io.NopCloser(bytes.NewReader(fetched.Literal)), nil
+	return c.fetchMIMEViaGoIMAP(ctx, folder, messageID)
 }
 
 func (c *client) deltaCreatedMessages(ctx context.Context, folder, deltaLink string) ([]provider.Message, string, error) {
-	folder = c.mailboxOrDefault(folder)
-	state, err := parseDeltaLink(deltaLink)
-	if err != nil {
-		return nil, "", err
-	}
-
-	var out []provider.Message
-	err = c.withSelectedMailbox(ctx, folder, true, func(sess *imapSession, status mailboxStatus) error {
-		lastUID := state.LastUID
-		if state.UIDValidity != 0 && status.UIDValidity != 0 && state.UIDValidity != status.UIDValidity {
-			lastUID = 0
-		}
-
-		checkpoint := lastUID
-		if status.UIDNext == 0 || lastUID+1 < status.UIDNext {
-			ids, err := sess.uidSearch(fmt.Sprintf("UID %d:*", lastUID+1))
-			if err != nil {
-				return err
-			}
-			if len(ids) > 0 {
-				messages, fetchedThrough, complete, err := sess.fetchHeaderMessagesUntilFailure(folder, ids)
-				if err != nil {
-					return err
-				}
-				out = messages
-				if fetchedThrough > checkpoint {
-					checkpoint = fetchedThrough
-				}
-				if complete && status.UIDNext > 0 && status.UIDNext-1 > checkpoint {
-					checkpoint = status.UIDNext - 1
-				}
-			}
-		}
-
-		deltaLink = buildDeltaLink(deltaState{UIDValidity: status.UIDValidity, LastUID: checkpoint})
-		return nil
-	})
-	if err != nil {
-		return nil, "", err
-	}
-
-	return out, deltaLink, nil
+	return c.deltaCreatedMessagesViaGoIMAP(ctx, folder, deltaLink)
 }
 
 func (c *client) latestMessagesInFolder(ctx context.Context, folder string, skip, limit int) ([]provider.Message, error) {
-	folder = c.mailboxOrDefault(folder)
-	var messages []provider.Message
-
-	err := c.withSelectedMailbox(ctx, folder, true, func(sess *imapSession, _ mailboxStatus) error {
-		ids, err := sess.uidSearch("ALL")
-		if err != nil {
-			return err
-		}
-		if len(ids) == 0 {
-			messages = nil
-			return nil
-		}
-
-		messages, err = sess.fetchHeaderMessagesChunked(folder, ids)
-		if err != nil {
-			return err
-		}
-		sortMessagesByReceived(messages)
-		if skip >= len(messages) {
-			messages = nil
-			return nil
-		}
-		end := skip + limit
-		if end > len(messages) {
-			end = len(messages)
-		}
-		messages = append([]provider.Message(nil), messages[skip:end]...)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return messages, nil
+	return c.latestMessagesInFolderViaGoIMAP(ctx, folder, skip, limit)
 }
 
 func (c *client) writeMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, error) {
@@ -353,35 +255,11 @@ func (c *client) deleteOriginalIfExists(ctx context.Context, source provider.Mes
 }
 
 func (c *client) fetchHeadersByUIDs(ctx context.Context, folder string, uids []uint64) ([]provider.Message, error) {
-	folder = c.mailboxOrDefault(folder)
-	if len(uids) == 0 {
-		return nil, nil
-	}
-
-	var messages []provider.Message
-	err := c.withSelectedMailbox(ctx, folder, true, func(sess *imapSession, _ mailboxStatus) error {
-		var err error
-		messages, err = sess.fetchHeaderMessagesChunked(folder, uids)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return messages, nil
+	return c.fetchHeadersByUIDsViaGoIMAP(ctx, folder, uids)
 }
 
 func (c *client) fetchBodyByUID(ctx context.Context, folder string, uid uint64) (*fetchedMessage, error) {
-	folder = c.mailboxOrDefault(folder)
-	var fetched *fetchedMessage
-	err := c.withSelectedMailbox(ctx, folder, true, func(sess *imapSession, _ mailboxStatus) error {
-		var err error
-		fetched, err = sess.fetchBody(uid)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	return fetched, nil
+	return c.fetchBodyByUIDViaGoIMAP(ctx, folder, uid)
 }
 
 func (c *client) withSelectedMailbox(ctx context.Context, folder string, readOnly bool, fn func(*imapSession, mailboxStatus) error) error {

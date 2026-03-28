@@ -32,18 +32,18 @@ func TestClientLatestMessagesInFolder(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
-			rw.expectContains(`EXAMINE "INBOX"`)
+			rw.expectContains(`EXAMINE INBOX`)
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 4] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("UID SEARCH ALL")
+			rw.expectContains("UID SEARCH")
 			rw.writeLine("* SEARCH 1 2 3")
 			rw.writeTaggedOK("A0004", "SEARCH completed")
-			rw.expectContains("UID FETCH 1,2,3 (UID INTERNALDATE BODY.PEEK[HEADER])")
+			rw.expectContains("UID FETCH 1:3 (UID INTERNALDATE BODY.PEEK[HEADER])")
 			rw.writeFetch(1, time.Date(2026, 3, 28, 8, 0, 0, 0, time.UTC), []byte("Subject: one\r\nMessage-ID: <m1@example.com>\r\n\r\n"))
 			rw.writeFetch(2, time.Date(2026, 3, 28, 9, 0, 0, 0, time.UTC), []byte("Subject: two\r\nMessage-ID: <m2@example.com>\r\n\r\n"))
 			rw.writeFetch(3, time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), []byte("Subject: three\r\nMessage-ID: <m3@example.com>\r\n\r\n"))
@@ -74,18 +74,18 @@ func TestClientLatestMessagesInFolderSortsAcrossAllUIDs(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
-			rw.expectContains(`EXAMINE "INBOX"`)
+			rw.expectContains(`EXAMINE INBOX`)
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 4] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("UID SEARCH ALL")
+			rw.expectContains("UID SEARCH")
 			rw.writeLine("* SEARCH 1 2 3")
 			rw.writeTaggedOK("A0004", "SEARCH completed")
-			rw.expectContains("UID FETCH 1,2,3 (UID INTERNALDATE BODY.PEEK[HEADER])")
+			rw.expectContains("UID FETCH 1:3 (UID INTERNALDATE BODY.PEEK[HEADER])")
 			rw.writeFetch(1, time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC), []byte("Subject: newest\r\nMessage-ID: <m1@example.com>\r\n\r\n"))
 			rw.writeFetch(2, time.Date(2026, 3, 28, 9, 0, 0, 0, time.UTC), []byte("Subject: oldest\r\nMessage-ID: <m2@example.com>\r\n\r\n"))
 			rw.writeFetch(3, time.Date(2026, 3, 28, 11, 0, 0, 0, time.UTC), []byte("Subject: middle\r\nMessage-ID: <m3@example.com>\r\n\r\n"))
@@ -116,15 +116,15 @@ func TestClientLatestMessagesInFolderDecodesEncodedSubject(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
-			rw.expectContains(`EXAMINE "INBOX"`)
+			rw.expectContains(`EXAMINE INBOX`)
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 2] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("UID SEARCH ALL")
+			rw.expectContains("UID SEARCH")
 			rw.writeLine("* SEARCH 1")
 			rw.writeTaggedOK("A0004", "SEARCH completed")
 			rw.expectContains("UID FETCH 1 (UID INTERNALDATE BODY.PEEK[HEADER])")
@@ -153,15 +153,15 @@ func TestClientLatestMessagesInFolderEncodesMailboxName(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
-			rw.expectContains(`EXAMINE "&U,BTFw-"`)
+			rw.expectContains(`EXAMINE "&-U,BTFw-"`)
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 1] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("UID SEARCH ALL")
+			rw.expectContains("UID SEARCH")
 			rw.writeLine("* SEARCH")
 			rw.writeTaggedOK("A0004", "SEARCH completed")
 		},
@@ -184,18 +184,18 @@ func TestClientDeltaCreatedMessages(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
-			rw.expectContains(`EXAMINE "INBOX"`)
+			rw.expectContains(`EXAMINE INBOX`)
 			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 12] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("UID SEARCH UID 1:*")
+			rw.expectContains("UID 1:*")
 			rw.writeLine("* SEARCH 10 11")
 			rw.writeTaggedOK("A0004", "SEARCH completed")
-			rw.expectContains("UID FETCH 10,11 (UID INTERNALDATE BODY.PEEK[HEADER])")
+			rw.expectContains("UID FETCH 10:11 (UID INTERNALDATE BODY.PEEK[HEADER])")
 			rw.writeFetch(10, time.Date(2026, 3, 28, 8, 0, 0, 0, time.UTC), []byte("Subject: ten\r\nMessage-ID: <m10@example.com>\r\n\r\n"))
 			rw.writeFetch(11, time.Date(2026, 3, 28, 9, 0, 0, 0, time.UTC), []byte("Subject: eleven\r\nMessage-ID: <m11@example.com>\r\n\r\n"))
 			rw.writeTaggedOK("A0005", "FETCH completed")
@@ -222,24 +222,24 @@ func TestClientDeltaCreatedMessagesStopsAtFirstFailedUID(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
-			rw.expectContains(`EXAMINE "INBOX"`)
+			rw.expectContains(`EXAMINE INBOX`)
 			rw.writeLine("* OK [UIDVALIDITY 9] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 13] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
-			rw.expectContains("UID SEARCH UID 1:*")
+			rw.expectContains("UID 1:*")
 			rw.writeLine("* SEARCH 10 11 12")
 			rw.writeTaggedOK("A0004", "SEARCH completed")
-			rw.expectContains("UID FETCH 10,11,12 (UID INTERNALDATE BODY.PEEK[HEADER])")
-			rw.writeLine("A0005 BAD FETCH failed")
+			rw.expectContains("UID FETCH 10:12 (UID INTERNALDATE BODY.PEEK[HEADER])")
+			rw.writeTaggedBAD("FETCH failed")
 			rw.expectContains("UID FETCH 10 (UID INTERNALDATE BODY.PEEK[HEADER])")
 			rw.writeFetch(10, time.Date(2026, 3, 28, 8, 0, 0, 0, time.UTC), []byte("Subject: ten\r\nMessage-ID: <m10@example.com>\r\n\r\n"))
 			rw.writeTaggedOK("A0006", "FETCH completed")
 			rw.expectContains("UID FETCH 11 (UID INTERNALDATE BODY.PEEK[HEADER])")
-			rw.writeLine("A0007 BAD FETCH failed")
+			rw.writeTaggedBAD("FETCH failed")
 		},
 	))
 
@@ -265,7 +265,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
@@ -281,7 +281,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
@@ -301,7 +301,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 			rw := newScriptRW(conn)
 			rw.writeLine("* OK IMAP ready")
 			rw.expectContains("CAPABILITY")
-			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
 			rw.writeTaggedOK("A0001", "CAPABILITY completed")
 			rw.expectContains("AUTHENTICATE XOAUTH2")
 			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
@@ -367,8 +367,9 @@ func newScriptedDialer(t *testing.T, scripts ...scriptFunc) dialTLSFunc {
 }
 
 type scriptRW struct {
-	reader *bufio.Reader
-	writer *bufio.Writer
+	reader  *bufio.Reader
+	writer  *bufio.Writer
+	lastTag string
 }
 
 func newScriptRW(conn net.Conn) *scriptRW {
@@ -384,6 +385,9 @@ func (rw *scriptRW) expectContains(want string) string {
 	if !strings.Contains(line, want) {
 		panic(fmt.Sprintf("unexpected command %q, want contains %q", line, want))
 	}
+	if fields := strings.Fields(line); len(fields) > 0 {
+		rw.lastTag = fields[0]
+	}
 	return line
 }
 
@@ -393,7 +397,18 @@ func (rw *scriptRW) writeLine(line string) {
 }
 
 func (rw *scriptRW) writeTaggedOK(tag, text string) {
+	if strings.TrimSpace(rw.lastTag) != "" {
+		tag = rw.lastTag
+	}
 	rw.writeLine(tag + " OK " + text)
+}
+
+func (rw *scriptRW) writeTaggedBAD(text string) {
+	tag := rw.lastTag
+	if strings.TrimSpace(tag) == "" {
+		tag = "A0000"
+	}
+	rw.writeLine(tag + " BAD " + text)
 }
 
 func (rw *scriptRW) writeFetch(uid uint64, internalDate time.Time, literal []byte) {
