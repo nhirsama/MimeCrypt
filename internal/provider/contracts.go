@@ -108,3 +108,10 @@ type Writer interface {
 type Reconciler interface {
 	ReconcileMessage(ctx context.Context, req WriteRequest) (WriteResult, bool, error)
 }
+
+// Clients 表示某个 provider 暴露的一组能力实现。
+type Clients struct {
+	Session Session
+	Reader  Reader
+	Writer  Writer
+}

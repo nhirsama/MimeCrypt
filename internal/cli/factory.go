@@ -31,19 +31,19 @@ func newErrorCommand(use, short string, err error) *cobra.Command {
 	}
 }
 
-func buildProviderClients(cfg appconfig.Config) (provider.Session, provider.Reader, provider.Writer, error) {
+func buildProviderClients(cfg appconfig.Config) (provider.Clients, error) {
 	return providers.Build(cfg)
 }
 
 func buildLoginService(cfg appconfig.Config) (*login.Service, error) {
-	session, reader, _, err := buildProviderClients(cfg)
+	clients, err := buildProviderClients(cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	return &login.Service{
-		Session:  session,
-		Mail:     reader,
+		Session:  clients.Session,
+		Mail:     clients.Reader,
 		StateDir: cfg.Auth.StateDir,
 	}, nil
 }
@@ -53,21 +53,21 @@ func buildLogoutService(cfg appconfig.Config) *logout.Service {
 }
 
 func buildDownloadService(cfg appconfig.Config) (*download.Service, error) {
-	_, reader, _, err := buildProviderClients(cfg)
+	clients, err := buildProviderClients(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	return buildDownloadServiceWithReader(reader), nil
+	return buildDownloadServiceWithReader(clients.Reader), nil
 }
 
 func buildProcessService(cfg appconfig.Config) (*process.Service, error) {
-	_, reader, writer, err := buildProviderClients(cfg)
+	clients, err := buildProviderClients(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	return buildProcessServiceWithProvider(cfg, reader, writer), nil
+	return buildProcessServiceWithProvider(cfg, clients.Reader, clients.Writer), nil
 }
 
 func buildDownloadServiceWithReader(reader provider.Reader) *download.Service {
@@ -100,14 +100,14 @@ func buildProcessRequest(cfg appconfig.Config, source provider.MessageRef, write
 }
 
 func buildDiscoverService(cfg appconfig.Config) (*discover.Service, error) {
-	_, reader, writer, err := buildProviderClients(cfg)
+	clients, err := buildProviderClients(cfg)
 	if err != nil {
 		return nil, err
 	}
 
 	return &discover.Service{
-		Client:    reader,
-		Processor: buildProcessServiceWithProvider(cfg, reader, writer),
+		Client:    clients.Reader,
+		Processor: buildProcessServiceWithProvider(cfg, clients.Reader, clients.Writer),
 	}, nil
 }
 
