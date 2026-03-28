@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/mail"
 	"net/textproto"
@@ -823,7 +824,7 @@ func toProviderMessage(folder string, uid uint64, internalDate time.Time, header
 	header := parseHeader(headerBytes)
 	return provider.Message{
 		ID:                strconv.FormatUint(uid, 10),
-		Subject:           strings.TrimSpace(header.Get("Subject")),
+		Subject:           decodeHeaderValue(header.Get("Subject")),
 		InternetMessageID: strings.TrimSpace(firstNonEmpty(header.Get("Message-ID"), header.Get("Message-Id"))),
 		ParentFolderID:    normalizeMailbox(folder),
 		ReceivedDateTime:  internalDate,
@@ -840,6 +841,19 @@ func parseHeader(headerBytes []byte) textproto.MIMEHeader {
 		return textproto.MIMEHeader{}
 	}
 	return textproto.MIMEHeader(message.Header)
+}
+
+func decodeHeaderValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+
+	decoded, err := new(mime.WordDecoder).DecodeHeader(value)
+	if err != nil {
+		return value
+	}
+	return strings.TrimSpace(decoded)
 }
 
 func parseUID(value string) (uint64, error) {

@@ -65,6 +65,43 @@ func TestClientLatestMessagesInFolder(t *testing.T) {
 	}
 }
 
+func TestClientLatestMessagesInFolderDecodesEncodedSubject(t *testing.T) {
+	t.Parallel()
+
+	client := newTestClient(t, newScriptedDialer(t,
+		func(t *testing.T, conn net.Conn) {
+			rw := newScriptRW(conn)
+			rw.writeLine("* OK IMAP ready")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS")
+			rw.writeTaggedOK("A0001", "CAPABILITY completed")
+			rw.expectContains("AUTHENTICATE XOAUTH2")
+			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
+			rw.expectContains(`EXAMINE "INBOX"`)
+			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
+			rw.writeLine("* OK [UIDNEXT 2] Predicted next UID")
+			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains("UID SEARCH ALL")
+			rw.writeLine("* SEARCH 1")
+			rw.writeTaggedOK("A0004", "SEARCH completed")
+			rw.expectContains("UID FETCH 1 (UID INTERNALDATE BODY.PEEK[HEADER])")
+			rw.writeFetch(1, time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), []byte("Subject: =?UTF-8?B?5rWL6K+V?=\r\nMessage-ID: <m1@example.com>\r\n\r\n"))
+			rw.writeTaggedOK("A0005", "FETCH completed")
+		},
+	))
+
+	messages, err := client.latestMessagesInFolder(context.Background(), "INBOX", 0, 1)
+	if err != nil {
+		t.Fatalf("latestMessagesInFolder() error = %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("len(messages) = %d, want 1", len(messages))
+	}
+	if messages[0].Subject != "测试" {
+		t.Fatalf("Subject = %q, want 测试", messages[0].Subject)
+	}
+}
+
 func TestClientDeltaCreatedMessages(t *testing.T) {
 	t.Parallel()
 
