@@ -70,6 +70,8 @@ var (
 	appendUIDRE    = regexp.MustCompile(`\[APPENDUID ([0-9]+) ([0-9]+)\]`) //nolint:gochecknoglobals
 )
 
+const headerFetchBatchSize = 128
+
 func newClient(cfg appconfig.MailClientConfig, authCfg appconfig.AuthConfig, defaultFolder string, tokenSource scopedAccessTokenSource, dialTLS dialTLSFunc) (*client, error) {
 	if err := cfg.ValidateIMAP(); err != nil {
 		return nil, err
@@ -151,30 +153,28 @@ func (c *client) deltaCreatedMessages(ctx context.Context, folder, deltaLink str
 			lastUID = 0
 		}
 
+		checkpoint := lastUID
 		if status.UIDNext == 0 || lastUID+1 < status.UIDNext {
 			ids, err := sess.uidSearch(fmt.Sprintf("UID %d:*", lastUID+1))
 			if err != nil {
 				return err
 			}
 			if len(ids) > 0 {
-				messages, err := sess.fetchHeaderMessages(folder, ids)
+				messages, fetchedThrough, complete, err := sess.fetchHeaderMessagesUntilFailure(folder, ids)
 				if err != nil {
 					return err
 				}
-				sort.Slice(messages, func(i, j int) bool {
-					left, _ := strconv.ParseUint(messages[i].ID, 10, 64)
-					right, _ := strconv.ParseUint(messages[j].ID, 10, 64)
-					return left < right
-				})
 				out = messages
+				if fetchedThrough > checkpoint {
+					checkpoint = fetchedThrough
+				}
+				if complete && status.UIDNext > 0 && status.UIDNext-1 > checkpoint {
+					checkpoint = status.UIDNext - 1
+				}
 			}
 		}
 
-		nextUID := lastUID
-		if status.UIDNext > 0 && status.UIDNext-1 > nextUID {
-			nextUID = status.UIDNext - 1
-		}
-		deltaLink = buildDeltaLink(deltaState{UIDValidity: status.UIDValidity, LastUID: nextUID})
+		deltaLink = buildDeltaLink(deltaState{UIDValidity: status.UIDValidity, LastUID: checkpoint})
 		return nil
 	})
 	if err != nil {
@@ -198,23 +198,11 @@ func (c *client) latestMessagesInFolder(ctx context.Context, folder string, skip
 			return nil
 		}
 
-		window := skip + limit
-		if window > len(ids) {
-			window = len(ids)
-		}
-		ids = ids[len(ids)-window:]
-		messages, err = sess.fetchHeaderMessages(folder, ids)
+		messages, err = sess.fetchHeaderMessagesChunked(folder, ids)
 		if err != nil {
 			return err
 		}
-		sort.Slice(messages, func(i, j int) bool {
-			if messages[i].ReceivedDateTime.Equal(messages[j].ReceivedDateTime) {
-				left, _ := strconv.ParseUint(messages[i].ID, 10, 64)
-				right, _ := strconv.ParseUint(messages[j].ID, 10, 64)
-				return left > right
-			}
-			return messages[i].ReceivedDateTime.After(messages[j].ReceivedDateTime)
-		})
+		sortMessagesByReceived(messages)
 		if skip >= len(messages) {
 			messages = nil
 			return nil
@@ -407,7 +395,7 @@ func (c *client) fetchHeadersByUIDs(ctx context.Context, folder string, uids []u
 	var messages []provider.Message
 	err := c.withSelectedMailbox(ctx, folder, true, func(sess *imapSession, _ mailboxStatus) error {
 		var err error
-		messages, err = sess.fetchHeaderMessages(folder, uids)
+		messages, err = sess.fetchHeaderMessagesChunked(folder, uids)
 		return err
 	})
 	if err != nil {
@@ -606,6 +594,64 @@ func (s *imapSession) fetchHeaderMessages(folder string, uids []uint64) ([]provi
 		messages = append(messages, toProviderMessage(folder, item.UID, item.InternalDate, item.Literal))
 	}
 	return messages, nil
+}
+
+func (s *imapSession) fetchHeaderMessagesChunked(folder string, uids []uint64) ([]provider.Message, error) {
+	if len(uids) == 0 {
+		return nil, nil
+	}
+
+	messages := make([]provider.Message, 0, len(uids))
+	for start := 0; start < len(uids); start += headerFetchBatchSize {
+		end := start + headerFetchBatchSize
+		if end > len(uids) {
+			end = len(uids)
+		}
+
+		chunkMessages, err := s.fetchHeaderMessages(folder, uids[start:end])
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, chunkMessages...)
+	}
+	return messages, nil
+}
+
+func (s *imapSession) fetchHeaderMessagesUntilFailure(folder string, uids []uint64) ([]provider.Message, uint64, bool, error) {
+	if len(uids) == 0 {
+		return nil, 0, true, nil
+	}
+
+	messages := make([]provider.Message, 0, len(uids))
+	var fetchedThrough uint64
+
+	for start := 0; start < len(uids); start += headerFetchBatchSize {
+		end := start + headerFetchBatchSize
+		if end > len(uids) {
+			end = len(uids)
+		}
+		chunk := uids[start:end]
+
+		chunkMessages, err := s.fetchHeaderMessages(folder, chunk)
+		if err == nil {
+			sortMessagesByUID(chunkMessages)
+			messages = append(messages, chunkMessages...)
+			fetchedThrough = chunk[len(chunk)-1]
+			continue
+		}
+
+		for _, uid := range chunk {
+			singleMessages, singleErr := s.fetchHeaderMessages(folder, []uint64{uid})
+			if singleErr != nil {
+				return messages, fetchedThrough, false, nil
+			}
+			sortMessagesByUID(singleMessages)
+			messages = append(messages, singleMessages...)
+			fetchedThrough = uid
+		}
+	}
+
+	return messages, fetchedThrough, true, nil
 }
 
 func (s *imapSession) fetchBody(uid uint64) (*fetchedMessage, error) {
@@ -829,6 +875,25 @@ func toProviderMessage(folder string, uid uint64, internalDate time.Time, header
 		ParentFolderID:    normalizeMailbox(folder),
 		ReceivedDateTime:  internalDate,
 	}
+}
+
+func sortMessagesByUID(messages []provider.Message) {
+	sort.Slice(messages, func(i, j int) bool {
+		left, _ := strconv.ParseUint(messages[i].ID, 10, 64)
+		right, _ := strconv.ParseUint(messages[j].ID, 10, 64)
+		return left < right
+	})
+}
+
+func sortMessagesByReceived(messages []provider.Message) {
+	sort.Slice(messages, func(i, j int) bool {
+		if messages[i].ReceivedDateTime.Equal(messages[j].ReceivedDateTime) {
+			left, _ := strconv.ParseUint(messages[i].ID, 10, 64)
+			right, _ := strconv.ParseUint(messages[j].ID, 10, 64)
+			return left > right
+		}
+		return messages[i].ReceivedDateTime.After(messages[j].ReceivedDateTime)
+	})
 }
 
 func parseHeader(headerBytes []byte) textproto.MIMEHeader {
