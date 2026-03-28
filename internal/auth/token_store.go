@@ -103,12 +103,9 @@ func (s *tokenStore) load() (Token, error) {
 		return Token{}, fmt.Errorf("token 存储未初始化")
 	}
 
-	token, err := s.primary.load()
-	if err == nil {
+	token, primaryErr := s.primary.load()
+	if primaryErr == nil {
 		return token, nil
-	}
-	if !errors.Is(err, errTokenNotFound) {
-		return Token{}, err
 	}
 
 	var lastErr error
@@ -131,6 +128,9 @@ func (s *tokenStore) load() (Token, error) {
 	if lastErr != nil {
 		return Token{}, lastErr
 	}
+	if primaryErr != nil && !errors.Is(primaryErr, errTokenNotFound) {
+		return Token{}, primaryErr
+	}
 	return Token{}, fmt.Errorf("未找到登录状态，请先执行 login")
 }
 
@@ -143,7 +143,7 @@ func (s *tokenStore) save(token Token) error {
 	}
 	for _, backend := range s.cleanup {
 		if err := backend.delete(); err != nil && !errors.Is(err, errTokenNotFound) {
-			return err
+			continue
 		}
 	}
 	return nil

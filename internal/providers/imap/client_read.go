@@ -5,10 +5,14 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
+	"sort"
+	"sync"
 	"time"
 
 	goimap "github.com/emersion/go-imap"
 	goimapclient "github.com/emersion/go-imap/client"
+	"github.com/emersion/go-imap/responses"
 
 	"mimecrypt/internal/provider"
 )
@@ -100,12 +104,37 @@ func (c *client) latestMessagesInFolderViaGoIMAP(ctx context.Context, folder str
 	var messages []provider.Message
 
 	err := c.withReadOnlyMailbox(ctx, folder, func(cli *goimapclient.Client, _ mailboxStatus) error {
-		ids, err := c.uidSearchWithClient(cli, goimap.NewSearchCriteria())
+		ids, sorted, err := c.uidSortByArrivalWithClient(cli)
 		if err != nil {
 			return err
 		}
+		if !sorted {
+			ids, err = c.uidSearchWithClient(cli, goimap.NewSearchCriteria())
+			if err != nil {
+				return err
+			}
+		}
 		if len(ids) == 0 {
 			messages = nil
+			return nil
+		}
+
+		if sorted {
+			if skip >= len(ids) {
+				messages = nil
+				return nil
+			}
+			end := skip + limit
+			if end > len(ids) {
+				end = len(ids)
+			}
+			selected := append([]uint64(nil), ids[skip:end]...)
+			sort.Slice(selected, func(i, j int) bool { return selected[i] < selected[j] })
+			messages, err = c.fetchHeaderMessagesChunkedWithClient(cli, folder, selected)
+			if err != nil {
+				return err
+			}
+			sortMessagesByReceived(messages)
 			return nil
 		}
 
@@ -173,13 +202,11 @@ func (c *client) withReadWriteMailbox(ctx context.Context, folder string, fn fun
 }
 
 func (c *client) withMailbox(ctx context.Context, folder string, readOnly bool, fn func(*goimapclient.Client, mailboxStatus) error) error {
-	cli, err := c.connectClient(ctx)
+	cli, cleanup, err := c.connectClient(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = cli.Logout()
-	}()
+	defer cleanup()
 
 	mbox, err := cli.Select(folder, readOnly)
 	if err != nil {
@@ -191,40 +218,53 @@ func (c *client) withMailbox(ctx context.Context, folder string, readOnly bool, 
 	})
 }
 
-func (c *client) connectClient(ctx context.Context) (*goimapclient.Client, error) {
+func (c *client) connectClient(ctx context.Context) (*goimapclient.Client, func(), error) {
 	token, err := c.tokenSource.AccessTokenForScopes(ctx, c.scopes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	conn, err := c.dialTLS(ctx, c.addr)
 	if err != nil {
-		return nil, fmt.Errorf("连接 IMAP 服务器失败: %w", err)
+		return nil, nil, fmt.Errorf("连接 IMAP 服务器失败: %w", err)
 	}
+	stopCancel := closeConnOnContextCancel(ctx, conn)
 
 	cli, err := goimapclient.New(conn)
 	if err != nil {
+		stopCancel()
 		_ = conn.Close()
-		return nil, fmt.Errorf("初始化 IMAP 客户端失败: %w", err)
+		return nil, nil, fmt.Errorf("初始化 IMAP 客户端失败: %w", err)
 	}
 	applyContextTimeout(ctx, cli)
 
 	ok, err := cli.SupportAuth("XOAUTH2")
 	if err != nil {
+		stopCancel()
 		_ = cli.Logout()
-		return nil, err
+		return nil, nil, err
 	}
 	if !ok {
+		stopCancel()
 		_ = cli.Logout()
-		return nil, fmt.Errorf("IMAP 服务器不支持 AUTH=XOAUTH2")
+		return nil, nil, fmt.Errorf("IMAP 服务器不支持 AUTH=XOAUTH2")
 	}
 
 	if err := cli.Authenticate(xoauth2Client{username: c.username, token: token}); err != nil {
+		stopCancel()
 		_ = cli.Logout()
-		return nil, fmt.Errorf("IMAP OAuth 认证失败: %w", err)
+		return nil, nil, fmt.Errorf("IMAP OAuth 认证失败: %w", err)
 	}
 
-	return cli, nil
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			stopCancel()
+			_ = cli.Logout()
+		})
+	}
+
+	return cli, cleanup, nil
 }
 
 func applyContextTimeout(ctx context.Context, cli *goimapclient.Client) {
@@ -240,6 +280,84 @@ func applyContextTimeout(ctx context.Context, cli *goimapclient.Client) {
 		return
 	}
 	cli.Timeout = defaultIMAPCommandTimeout
+}
+
+func closeConnOnContextCancel(ctx context.Context, conn net.Conn) func() {
+	if conn == nil {
+		return func() {}
+	}
+	done := ctx.Done()
+	if done == nil {
+		return func() {}
+	}
+
+	stop := make(chan struct{})
+	var once sync.Once
+	go func() {
+		select {
+		case <-done:
+			_ = conn.Close()
+		case <-stop:
+		}
+	}()
+
+	return func() {
+		once.Do(func() {
+			close(stop)
+		})
+	}
+}
+
+type sortResponse struct {
+	UIDs []uint64
+}
+
+func (r *sortResponse) Handle(resp goimap.Resp) error {
+	name, fields, ok := goimap.ParseNamedResp(resp)
+	if !ok || name != "SORT" {
+		return responses.ErrUnhandled
+	}
+
+	r.UIDs = make([]uint64, 0, len(fields))
+	for _, field := range fields {
+		num, err := goimap.ParseNumber(field)
+		if err != nil {
+			return err
+		}
+		if num == 0 {
+			continue
+		}
+		r.UIDs = append(r.UIDs, uint64(num))
+	}
+	return nil
+}
+
+func (c *client) uidSortByArrivalWithClient(cli *goimapclient.Client) ([]uint64, bool, error) {
+	ok, err := cli.Support("SORT")
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return nil, false, nil
+	}
+
+	resp := new(sortResponse)
+	status, err := cli.Execute(&goimap.Command{
+		Name: "UID",
+		Arguments: []interface{}{
+			goimap.RawString("SORT"),
+			[]interface{}{goimap.RawString("REVERSE"), goimap.RawString("ARRIVAL")},
+			goimap.RawString("US-ASCII"),
+			goimap.RawString("ALL"),
+		},
+	}, resp)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := status.Err(); err != nil {
+		return nil, false, err
+	}
+	return resp.UIDs, true, nil
 }
 
 func (c *client) uidSearchWithClient(cli *goimapclient.Client, criteria *goimap.SearchCriteria) ([]uint64, error) {

@@ -40,14 +40,17 @@ func TestClientLatestMessagesInFolder(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 4] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0004", "CAPABILITY completed")
 			rw.expectContains("UID SEARCH")
 			rw.writeLine("* SEARCH 1 2 3")
-			rw.writeTaggedOK("A0004", "SEARCH completed")
+			rw.writeTaggedOK("A0005", "SEARCH completed")
 			rw.expectContains("UID FETCH 1:3 (UID INTERNALDATE BODY.PEEK[HEADER])")
 			rw.writeFetch(1, time.Date(2026, 3, 28, 8, 0, 0, 0, time.UTC), []byte("Subject: one\r\nMessage-ID: <m1@example.com>\r\n\r\n"))
 			rw.writeFetch(2, time.Date(2026, 3, 28, 9, 0, 0, 0, time.UTC), []byte("Subject: two\r\nMessage-ID: <m2@example.com>\r\n\r\n"))
 			rw.writeFetch(3, time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), []byte("Subject: three\r\nMessage-ID: <m3@example.com>\r\n\r\n"))
-			rw.writeTaggedOK("A0005", "FETCH completed")
+			rw.writeTaggedOK("A0006", "FETCH completed")
 		},
 	))
 
@@ -62,6 +65,50 @@ func TestClientLatestMessagesInFolder(t *testing.T) {
 		t.Fatalf("unexpected first message: %+v", messages[0])
 	}
 	if messages[1].ID != "2" || messages[1].Subject != "two" {
+		t.Fatalf("unexpected second message: %+v", messages[1])
+	}
+}
+
+func TestClientLatestMessagesInFolderUsesServerSortWhenAvailable(t *testing.T) {
+	t.Parallel()
+
+	client := newTestClient(t, newScriptedDialer(t,
+		func(t *testing.T, conn net.Conn) {
+			rw := newScriptRW(conn)
+			rw.writeLine("* OK IMAP ready")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SORT SASL-IR")
+			rw.writeTaggedOK("A0001", "CAPABILITY completed")
+			rw.expectContains("AUTHENTICATE XOAUTH2")
+			rw.writeTaggedOK("A0002", "AUTHENTICATE completed")
+			rw.expectContains(`EXAMINE INBOX`)
+			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
+			rw.writeLine("* OK [UIDNEXT 10] Predicted next UID")
+			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SORT SASL-IR")
+			rw.writeTaggedOK("A0004", "CAPABILITY completed")
+			rw.expectContains(`UID SORT (REVERSE ARRIVAL) US-ASCII ALL`)
+			rw.writeLine("* SORT 9 8 7 6")
+			rw.writeTaggedOK("A0005", "SORT completed")
+			rw.expectContains("UID FETCH 7:8 (UID INTERNALDATE BODY.PEEK[HEADER])")
+			rw.writeFetch(7, time.Date(2026, 3, 28, 7, 0, 0, 0, time.UTC), []byte("Subject: seven\r\nMessage-ID: <m7@example.com>\r\n\r\n"))
+			rw.writeFetch(8, time.Date(2026, 3, 28, 8, 0, 0, 0, time.UTC), []byte("Subject: eight\r\nMessage-ID: <m8@example.com>\r\n\r\n"))
+			rw.writeTaggedOK("A0006", "FETCH completed")
+		},
+	))
+
+	messages, err := client.latestMessagesInFolder(context.Background(), "INBOX", 1, 2)
+	if err != nil {
+		t.Fatalf("latestMessagesInFolder() error = %v", err)
+	}
+	if len(messages) != 2 {
+		t.Fatalf("len(messages) = %d, want 2", len(messages))
+	}
+	if messages[0].ID != "8" || messages[0].Subject != "eight" {
+		t.Fatalf("unexpected first message: %+v", messages[0])
+	}
+	if messages[1].ID != "7" || messages[1].Subject != "seven" {
 		t.Fatalf("unexpected second message: %+v", messages[1])
 	}
 }
@@ -82,14 +129,17 @@ func TestClientLatestMessagesInFolderSortsAcrossAllUIDs(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 4] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0004", "CAPABILITY completed")
 			rw.expectContains("UID SEARCH")
 			rw.writeLine("* SEARCH 1 2 3")
-			rw.writeTaggedOK("A0004", "SEARCH completed")
+			rw.writeTaggedOK("A0005", "SEARCH completed")
 			rw.expectContains("UID FETCH 1:3 (UID INTERNALDATE BODY.PEEK[HEADER])")
 			rw.writeFetch(1, time.Date(2026, 3, 28, 12, 0, 0, 0, time.UTC), []byte("Subject: newest\r\nMessage-ID: <m1@example.com>\r\n\r\n"))
 			rw.writeFetch(2, time.Date(2026, 3, 28, 9, 0, 0, 0, time.UTC), []byte("Subject: oldest\r\nMessage-ID: <m2@example.com>\r\n\r\n"))
 			rw.writeFetch(3, time.Date(2026, 3, 28, 11, 0, 0, 0, time.UTC), []byte("Subject: middle\r\nMessage-ID: <m3@example.com>\r\n\r\n"))
-			rw.writeTaggedOK("A0005", "FETCH completed")
+			rw.writeTaggedOK("A0006", "FETCH completed")
 		},
 	))
 
@@ -124,12 +174,15 @@ func TestClientLatestMessagesInFolderDecodesEncodedSubject(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 2] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0004", "CAPABILITY completed")
 			rw.expectContains("UID SEARCH")
 			rw.writeLine("* SEARCH 1")
-			rw.writeTaggedOK("A0004", "SEARCH completed")
+			rw.writeTaggedOK("A0005", "SEARCH completed")
 			rw.expectContains("UID FETCH 1 (UID INTERNALDATE BODY.PEEK[HEADER])")
 			rw.writeFetch(1, time.Date(2026, 3, 28, 10, 0, 0, 0, time.UTC), []byte("Subject: =?UTF-8?B?5rWL6K+V?=\r\nMessage-ID: <m1@example.com>\r\n\r\n"))
-			rw.writeTaggedOK("A0005", "FETCH completed")
+			rw.writeTaggedOK("A0006", "FETCH completed")
 		},
 	))
 
@@ -161,9 +214,12 @@ func TestClientLatestMessagesInFolderEncodesMailboxName(t *testing.T) {
 			rw.writeLine("* OK [UIDVALIDITY 7] UIDs valid")
 			rw.writeLine("* OK [UIDNEXT 1] Predicted next UID")
 			rw.writeTaggedOK("A0003", "EXAMINE completed")
+			rw.expectContains("CAPABILITY")
+			rw.writeLine("* CAPABILITY IMAP4rev1 AUTH=XOAUTH2 UIDPLUS SASL-IR")
+			rw.writeTaggedOK("A0004", "CAPABILITY completed")
 			rw.expectContains("UID SEARCH")
 			rw.writeLine("* SEARCH")
-			rw.writeTaggedOK("A0004", "SEARCH completed")
+			rw.writeTaggedOK("A0005", "SEARCH completed")
 		},
 	))
 
@@ -173,6 +229,25 @@ func TestClientLatestMessagesInFolderEncodesMailboxName(t *testing.T) {
 	}
 	if len(messages) != 0 {
 		t.Fatalf("len(messages) = %d, want 0", len(messages))
+	}
+}
+
+func TestCloseConnOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+
+	stop := closeConnOnContextCancel(ctx, clientConn)
+	defer stop()
+
+	cancel()
+
+	_ = serverConn.SetReadDeadline(time.Now().Add(time.Second))
+	buf := make([]byte, 1)
+	if _, err := serverConn.Read(buf); err == nil {
+		t.Fatalf("serverConn.Read() error = nil, want closed connection")
 	}
 }
 

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,5 +82,84 @@ func TestTokenStoreMigratesFileTokenIntoKeyring(t *testing.T) {
 	}
 	if _, err := os.Stat(fileBackend.path); !os.IsNotExist(err) {
 		t.Fatalf("expected file token to be removed, stat err = %v", err)
+	}
+}
+
+type stubTokenBackend struct {
+	loadFunc   func() (Token, error)
+	saveFunc   func(Token) error
+	deleteFunc func() error
+}
+
+func (b stubTokenBackend) load() (Token, error) {
+	if b.loadFunc == nil {
+		return Token{}, errTokenNotFound
+	}
+	return b.loadFunc()
+}
+
+func (b stubTokenBackend) save(token Token) error {
+	if b.saveFunc == nil {
+		return nil
+	}
+	return b.saveFunc(token)
+}
+
+func (b stubTokenBackend) delete() error {
+	if b.deleteFunc == nil {
+		return nil
+	}
+	return b.deleteFunc()
+}
+
+func TestTokenStoreLoadsFallbackWhenPrimaryKeyringUnavailable(t *testing.T) {
+	t.Parallel()
+
+	want := Token{
+		AccessToken:  "fallback-access",
+		RefreshToken: "fallback-refresh",
+		TokenType:    "Bearer",
+		Scope:        "scope-a",
+		ExpiresAt:    time.Now().Add(time.Hour),
+	}
+
+	store := &tokenStore{
+		primary: stubTokenBackend{
+			loadFunc: func() (Token, error) {
+				return Token{}, errors.New("keyring temporarily unavailable")
+			},
+		},
+		fallbacks: []tokenBackend{
+			stubTokenBackend{
+				loadFunc: func() (Token, error) { return want, nil },
+			},
+		},
+	}
+
+	got, err := store.load()
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	if got.AccessToken != want.AccessToken || got.RefreshToken != want.RefreshToken {
+		t.Fatalf("load() = %+v, want %+v", got, want)
+	}
+}
+
+func TestTokenStoreSaveIgnoresCleanupFailureAfterPrimarySuccess(t *testing.T) {
+	t.Parallel()
+
+	store := &tokenStore{
+		primary: stubTokenBackend{
+			saveFunc: func(Token) error { return nil },
+		},
+		cleanup: []tokenBackend{
+			stubTokenBackend{
+				deleteFunc: func() error { return errors.New("permission denied") },
+			},
+		},
+	}
+
+	if err := store.save(Token{AccessToken: "ok"}); err != nil {
+		t.Fatalf("save() error = %v", err)
 	}
 }
