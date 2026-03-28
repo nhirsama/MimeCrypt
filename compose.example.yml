@@ -13,7 +13,7 @@ services:
       MIMECRYPT_BACKUP_DIR: /backup
       MIMECRYPT_WORK_DIR: /tmp/mimecrypt
       MIMECRYPT_AUDIT_LOG_PATH: ""
-      MIMECRYPT_AUDIT_STDOUT: "true"
+      MIMECRYPT_AUDIT_STDOUT: "false"
       MIMECRYPT_TOKEN_STORE: file
       MIMECRYPT_FOLDER: INBOX
       MIMECRYPT_IMAP_ADDR: outlook.office365.com:993
@@ -24,7 +24,7 @@ services:
       - ./backup:/backup
       - ./gnupg:/gnupg
     tmpfs:
-      - /tmp:size=128m
+      - /tmp
     stop_grace_period: 30s
 
   mimecrypt-token-import:

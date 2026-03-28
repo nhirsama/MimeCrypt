@@ -22,7 +22,7 @@ COPY --from=build /out/mimecrypt /usr/local/bin/mimecrypt
 ENV MIMECRYPT_STATE_DIR=/state \
     MIMECRYPT_BACKUP_DIR=/backup \
     MIMECRYPT_WORK_DIR=/tmp/mimecrypt \
-    MIMECRYPT_AUDIT_STDOUT=true \
+    MIMECRYPT_AUDIT_STDOUT=false \
     MIMECRYPT_TOKEN_STORE=file \
     GNUPGHOME=/gnupg
 

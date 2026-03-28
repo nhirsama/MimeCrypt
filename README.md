@@ -288,7 +288,8 @@ export MIMECRYPT_WORK_DIR=""
 - 如果你之前是在旧版本上登录过，需要重新执行 `logout` 和 `login`，以获取包含 IMAP scope 的新 token
 - `graph` 写回后端仍保留作为可选项，但 Outlook Web 会把导入结果显示为 draft；如果要求“真实收件邮件”语义，应优先使用默认的 `imap`
 - `run` 现在会对 `provider + folder` 维度加单实例锁；同一状态目录下重复启动相同同步任务会直接失败，避免重复加密和重复回写
-- `health` 会检查 `state dir`、`gpg`、缓存 token、token 刷新和 provider 探活；适合挂到 Docker `HEALTHCHECK`
+- `health` 默认只做只读检查：`state dir`、`gpg`、缓存 token；适合挂到 Docker `HEALTHCHECK`
+- `health --deep` 才会主动做 provider / writeback 连通性探测，并可能触发 token 刷新；适合人工排障，不建议作为高频容器探针
 - `token status` 用于查看当前 token 是否存在；`token import` 可从 JSON 文件或 stdin 预置 token，适合容器初始化
 - `logout` 现在会同时清理文件 token 和 keyring token，而不只是删除本地 `token.json`
 
@@ -363,6 +364,8 @@ Docker 部署前提需要明确：
 - 必须挂持久卷保存 `/state` 和 `/gnupg`
 - 生产默认建议 `imap` 读信 + `imap` 回写
 - 容器内建议 `MIMECRYPT_TOKEN_STORE=file`，不要依赖系统 keyring
+- `./state`、`./gnupg` 建议权限至少为 `0700`
+- 导入用的 `token.json` / `./secrets/token.json` 建议权限至少为 `0600`
 
 不建议把当前版本直接部署为多副本服务。原因很直接：
 
@@ -396,9 +399,9 @@ docker compose -f compose.example.yml up -d mimecrypt
 
 推荐的卷布局：
 
-- `./state -> /state`：token、同步状态、可选审计文件
+- `./state -> /state`：token、同步状态、可选审计文件；建议宿主机目录权限 `0700`
 - `./backup -> /backup`：原始 MIME 的加密备份
-- `./gnupg -> /gnupg`：GPG keyring
+- `./gnupg -> /gnupg`：GPG keyring；建议宿主机目录权限 `0700`
 - `/tmp`：临时工件，建议 `tmpfs`
 
 推荐的容器内环境变量：
@@ -410,12 +413,18 @@ MIMECRYPT_STATE_DIR=/state
 MIMECRYPT_BACKUP_DIR=/backup
 MIMECRYPT_WORK_DIR=/tmp/mimecrypt
 MIMECRYPT_AUDIT_LOG_PATH=
-MIMECRYPT_AUDIT_STDOUT=true
+MIMECRYPT_AUDIT_STDOUT=false
 MIMECRYPT_TOKEN_STORE=file
 GNUPGHOME=/gnupg
 ```
 
-在容器里做运行前检查：
+`MIMECRYPT_WORK_DIR` 的容量建议按最大单封邮件体积估算：
+
+- 不启用 catch-all 备份加密时，建议至少按 `最大邮件体积 x3`
+- 启用 `MIMECRYPT_BACKUP_KEY_ID` 时，建议至少按 `最大邮件体积 x4`
+- 如果不想给 `tmpfs` 预留这么大空间，可以把 `WORK_DIR` 单独挂到专用卷
+
+在容器里做默认只读健康检查：
 
 ```bash
 docker run --rm \
@@ -427,10 +436,24 @@ docker run --rm \
   mimecrypt:local health
 ```
 
+需要人工排障时，再执行深度探测：
+
+```bash
+docker run --rm \
+  -e MIMECRYPT_STATE_DIR=/state \
+  -e MIMECRYPT_TOKEN_STORE=file \
+  -e MIMECRYPT_IMAP_USERNAME=your-mailbox@example.com \
+  -v "$(pwd)/state:/state" \
+  -v "$(pwd)/gnupg:/gnupg" \
+  mimecrypt:local health --deep
+```
+
 需要特别说明的边界：
 
 - 现在的 Docker 形态是“单实例、有状态、持久卷”的守护进程，不是可横向扩展的无状态服务
 - Graph/EWS 回写仍然保留，但大附件内存成本高于 IMAP，且 Graph 仍有 draft 语义副作用
+- `health` 默认是只读探针，适合 `HEALTHCHECK`；`health --deep` 会主动探测 provider / writeback 连通性，不适合高频探针
+- 如果开启 `MIMECRYPT_AUDIT_STDOUT=true`，审计日志中的邮件元数据会进入容器日志系统；生产上应把日志当敏感数据处理
 - `compose.example.yml` 只是单机示例，不应直接等价理解为 Swarm/Kubernetes 多副本方案
 
 ## 路线图
