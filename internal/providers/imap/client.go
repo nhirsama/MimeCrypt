@@ -596,7 +596,7 @@ func (s *imapSession) uidSearchHeader(field, value string) ([]uint64, error) {
 }
 
 func (s *imapSession) fetchHeaderMessages(folder string, uids []uint64) ([]provider.Message, error) {
-	fetched, err := s.uidFetch(uidSequenceSet(uids), "(UID INTERNALDATE BODY.PEEK[HEADER] )")
+	fetched, err := s.uidFetch(uidSequenceSet(uids), "(UID INTERNALDATE BODY.PEEK[HEADER])")
 	if err != nil {
 		return nil, err
 	}
