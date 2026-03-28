@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/mimeutil"
 	"mimecrypt/internal/provider"
 )
 
@@ -178,7 +179,7 @@ func (c *client) verifyProcessedMessage(ctx context.Context, folder string, uid 
 	if fetched == nil {
 		return false, nil
 	}
-	return isProcessedEncryptedMIME(fetched.Literal), nil
+	return mimeutil.IsProcessedEncryptedStream(bytes.NewReader(fetched.Literal))
 }
 
 func (c *client) findProcessedUID(ctx context.Context, folder, sourceFolder, internetMessageID, originalID string) (uint64, error) {
@@ -318,23 +319,6 @@ func extractMessageDate(mimeBytes []byte) time.Time {
 
 func (c *client) createdMessageRetainedError(createdMessageID, originalMessageID string, cause error) error {
 	return fmt.Errorf("%w；已保留新加密邮件 %s 和原邮件 %s，后续重试会继续收敛", cause, createdMessageID, originalMessageID)
-}
-
-func isProcessedEncryptedMIME(mimeBytes []byte) bool {
-	header := strings.ToLower(string(extractHeaderBlock(mimeBytes)))
-	return strings.Contains(header, "x-mimecrypt-processed: yes") &&
-		strings.Contains(header, "content-type: multipart/encrypted") &&
-		strings.Contains(header, "application/pgp-encrypted")
-}
-
-func extractHeaderBlock(mimeBytes []byte) []byte {
-	if idx := bytes.Index(mimeBytes, []byte("\r\n\r\n")); idx >= 0 {
-		return mimeBytes[:idx]
-	}
-	if idx := bytes.Index(mimeBytes, []byte("\n\n")); idx >= 0 {
-		return mimeBytes[:idx]
-	}
-	return mimeBytes
 }
 
 func firstNonEmpty(values ...string) string {

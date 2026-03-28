@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/mimeutil"
 	"mimecrypt/internal/provider"
 )
 
@@ -194,19 +195,8 @@ func (w *writer) markUnread(ctx context.Context, messageID string) error {
 }
 
 func (w *writer) verifyMessage(ctx context.Context, messageID, targetFolderID string) error {
-	endpoint := fmt.Sprintf(
-		"%s/me/messages/%s?$select=id,parentFolderId",
-		w.baseURL,
-		url.PathEscape(messageID),
-	)
-
-	req, err := w.newRequest(ctx, http.MethodGet, endpoint, nil)
+	message, err := w.messageMetadata(ctx, messageID)
 	if err != nil {
-		return err
-	}
-
-	var message provider.Message
-	if err := w.doJSON(req, &message, http.StatusOK); err != nil {
 		return fmt.Errorf("校验回写邮件失败: %w", err)
 	}
 	if strings.TrimSpace(message.ID) == "" {
@@ -216,7 +206,45 @@ func (w *writer) verifyMessage(ctx context.Context, messageID, targetFolderID st
 		return fmt.Errorf("校验回写邮件失败: 目标文件夹不匹配，got=%s want=%s", message.ParentFolderID, targetFolderID)
 	}
 
+	ok, err := w.messageHasProcessedEncryptedMIME(ctx, messageID)
+	if err != nil {
+		return fmt.Errorf("校验回写邮件失败: 读取 MIME 失败: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("校验回写邮件失败: 缺少 MimeCrypt 处理标记")
+	}
+
 	return nil
+}
+
+func (w *writer) messageMetadata(ctx context.Context, messageID string) (provider.Message, error) {
+	endpoint := fmt.Sprintf(
+		"%s/me/messages/%s?$select=id,parentFolderId",
+		w.baseURL,
+		url.PathEscape(messageID),
+	)
+
+	req, err := w.newRequest(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return provider.Message{}, err
+	}
+
+	var message provider.Message
+	if err := w.doJSON(req, &message, http.StatusOK); err != nil {
+		return provider.Message{}, err
+	}
+
+	return message, nil
+}
+
+func (w *writer) messageHasProcessedEncryptedMIME(ctx context.Context, messageID string) (bool, error) {
+	stream, err := w.fetchMIMEStream(ctx, messageID)
+	if err != nil {
+		return false, err
+	}
+	defer stream.Close()
+
+	return mimeutil.IsProcessedEncryptedStream(stream)
 }
 
 func (w *writer) deleteMessage(ctx context.Context, messageID string) error {
@@ -288,11 +316,11 @@ func (w *writer) findProcessedMessage(ctx context.Context, folderID, internetMes
 			continue
 		}
 
-		mimeBytes, err := w.fetchMIMEBytes(ctx, message.ID)
+		ok, err := w.messageHasProcessedEncryptedMIME(ctx, message.ID)
 		if err != nil {
 			return provider.Message{}, false, fmt.Errorf("读取候选邮件 %s 的 MIME 失败: %w", message.ID, err)
 		}
-		if isProcessedEncryptedMIME(mimeBytes) {
+		if ok {
 			return message, true, nil
 		}
 	}
@@ -320,21 +348,4 @@ func isGraphNotFound(err error) bool {
 
 func odataStringLiteral(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
-}
-
-func isProcessedEncryptedMIME(mimeBytes []byte) bool {
-	header := strings.ToLower(string(extractHeaderBlock(mimeBytes)))
-	return strings.Contains(header, "x-mimecrypt-processed: yes") &&
-		strings.Contains(header, "content-type: multipart/encrypted") &&
-		strings.Contains(header, "application/pgp-encrypted")
-}
-
-func extractHeaderBlock(mimeBytes []byte) []byte {
-	if idx := bytes.Index(mimeBytes, []byte("\r\n\r\n")); idx >= 0 {
-		return mimeBytes[:idx]
-	}
-	if idx := bytes.Index(mimeBytes, []byte("\n\n")); idx >= 0 {
-		return mimeBytes[:idx]
-	}
-	return mimeBytes
 }

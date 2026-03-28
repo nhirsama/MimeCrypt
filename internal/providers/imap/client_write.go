@@ -15,6 +15,7 @@ import (
 	goimapclient "github.com/emersion/go-imap/client"
 	"github.com/emersion/go-imap/commands"
 
+	"mimecrypt/internal/mimeutil"
 	"mimecrypt/internal/provider"
 )
 
@@ -134,7 +135,7 @@ func (c *client) findProcessedUIDViaGoIMAP(ctx context.Context, folder, sourceFo
 			if err != nil {
 				return err
 			}
-			if fetched != nil && isProcessedEncryptedMIME(fetched.Literal) {
+			if fetched != nil && mimeutil.IsProcessedEncryptedBytes(fetched.Literal) {
 				found = uid
 				return nil
 			}

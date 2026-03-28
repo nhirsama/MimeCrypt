@@ -159,6 +159,9 @@ func TestWriterWriteMessageUsesExplicitDestinationAndVerify(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"new-2","parentFolderId":"folder-archive"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.0/me/messages/new-2/$value":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("X-MimeCrypt-Processed: yes\r\nContent-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"\r\n\r\nbody"))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-2":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -238,6 +241,67 @@ func TestWriterWriteMessageKeepsCreatedMessageWhenDeletingOriginalFails(t *testi
 	}
 	if got := err.Error(); !strings.Contains(got, "已保留新加密邮件 new-keep 和原邮件 original-rollback") {
 		t.Fatalf("expected keep-both hint in error, got %q", got)
+	}
+}
+
+func TestWriterWriteMessageKeepsBothWhenVerifyFails(t *testing.T) {
+	t.Parallel()
+
+	var deleteOriginalCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"draft-verify","parentFolderId":"drafts"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages/draft-verify/move":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"new-verify","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1.0/me/messages/new-verify":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"new-verify","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.0/me/messages/new-verify":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"new-verify","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.0/me/messages/new-verify/$value":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Content-Type: text/plain\r\n\r\nbody"))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-verify":
+			deleteOriginalCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	writer, err := newWriter(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	if err != nil {
+		t.Fatalf("newWriter() error = %v", err)
+	}
+
+	_, err = writer.WriteMessage(context.Background(), provider.WriteRequest{
+		Source: provider.MessageRef{
+			ID:       "original-verify",
+			FolderID: "source-folder",
+		},
+		MIME:   []byte("encrypted"),
+		Verify: true,
+	})
+	if err == nil {
+		t.Fatalf("expected verify failure")
+	}
+	if deleteOriginalCalled {
+		t.Fatalf("unexpected delete of original after verify failure")
+	}
+	if got := err.Error(); !strings.Contains(got, "缺少 MimeCrypt 处理标记") {
+		t.Fatalf("error = %q, want processed marker failure", got)
+	}
+	if got := err.Error(); !strings.Contains(got, "已保留新加密邮件 new-verify 和原邮件 original-verify") {
+		t.Fatalf("error = %q, want keep-both hint", got)
 	}
 }
 

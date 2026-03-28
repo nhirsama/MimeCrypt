@@ -235,3 +235,106 @@ func TestEWSWriterWriteMessageFallsBackToTranslateCreatedItemID(t *testing.T) {
 		t.Fatalf("Verified = true, want false")
 	}
 }
+
+func TestEWSWriterWriteMessageKeepsBothWhenVerifyFails(t *testing.T) {
+	t.Parallel()
+
+	var deleteOriginalCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/translateExchangeIds":
+			var payload struct {
+				InputIDs     []string `json:"inputIds"`
+				SourceIDType string   `json:"sourceIdType"`
+				TargetIDType string   `json:"targetIdType"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			switch {
+			case payload.SourceIDType == "restId" && payload.TargetIDType == "ewsId":
+				_, _ = w.Write([]byte(`{"value":[{"sourceId":"source-folder","targetId":"ews-folder-3"}]}`))
+			case payload.SourceIDType == "ewsId" && payload.TargetIDType == "restId":
+				_, _ = w.Write([]byte(`{"value":[{"sourceId":"ews-item-3","targetId":"graph-item-3"}]}`))
+			default:
+				t.Fatalf("unexpected translate payload: %+v", payload)
+			}
+		case r.Method == http.MethodPost && r.URL.Path == "/EWS/Exchange.asmx":
+			w.Header().Set("Content-Type", "text/xml; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <CreateItemResponse xmlns="http://schemas.microsoft.com/exchange/services/2006/messages">
+      <ResponseMessages>
+        <CreateItemResponseMessage ResponseClass="Success">
+          <ResponseCode>NoError</ResponseCode>
+          <Items>
+            <Message xmlns="http://schemas.microsoft.com/exchange/services/2006/types">
+              <ItemId Id="ews-item-3" />
+            </Message>
+          </Items>
+        </CreateItemResponseMessage>
+      </ResponseMessages>
+    </CreateItemResponse>
+  </soap:Body>
+</soap:Envelope>`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1.0/me/messages/graph-item-3":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"graph-item-3","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.0/me/messages/graph-item-3":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"graph-item-3","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1.0/me/messages/graph-item-3/$value":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("Content-Type: text/plain\r\n\r\nbody"))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-3":
+			deleteOriginalCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	cfg := appconfig.Config{
+		Auth: appconfig.AuthConfig{
+			EWSScopes: []string{"scope-ews"},
+		},
+		Mail: appconfig.MailConfig{
+			Client: appconfig.MailClientConfig{
+				GraphBaseURL: server.URL + "/v1.0",
+				EWSBaseURL:   server.URL + "/EWS/Exchange.asmx",
+			},
+		},
+	}
+	writer, err := newEWSWriter(cfg, fakeTokenSource{}, server.Client())
+	if err != nil {
+		t.Fatalf("newEWSWriter() error = %v", err)
+	}
+
+	_, err = writer.WriteMessage(context.Background(), provider.WriteRequest{
+		Source: provider.MessageRef{
+			ID:       "original-3",
+			FolderID: "source-folder",
+		},
+		MIME:   []byte("encrypted"),
+		Verify: true,
+	})
+	if err == nil {
+		t.Fatalf("expected verify failure")
+	}
+	if deleteOriginalCalled {
+		t.Fatalf("unexpected delete of original after verify failure")
+	}
+	if got := err.Error(); !strings.Contains(got, "缺少 MimeCrypt 处理标记") {
+		t.Fatalf("error = %q, want processed marker failure", got)
+	}
+	if got := err.Error(); !strings.Contains(got, "已保留新加密邮件 graph-item-3 和原邮件 original-3") {
+		t.Fatalf("error = %q, want keep-both hint", got)
+	}
+}
