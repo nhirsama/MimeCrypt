@@ -15,11 +15,7 @@ func newDownloadCmd() *cobra.Command {
 		return newErrorCommand("download", "按邮件 ID 下载原始 MIME", err)
 	}
 
-	clientID := cfg.Auth.ClientID
-	tenant := cfg.Auth.Tenant
-	stateDir := cfg.Auth.StateDir
-	authorityBaseURL := cfg.Auth.AuthorityBaseURL
-	graphBaseURL := cfg.Mail.GraphBaseURL
+	providerFlags := newProviderConfigFlags(cfg)
 	outputDir := cfg.Mail.OutputDir
 
 	cmd := &cobra.Command{
@@ -27,7 +23,7 @@ func newDownloadCmd() *cobra.Command {
 		Short: "按邮件 ID 下载原始 MIME",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = syncConfig(cfg, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL)
+			cfg = providerFlags.apply(cfg)
 			cfg.Mail.OutputDir = outputDir
 
 			if strings.TrimSpace(cfg.Mail.OutputDir) == "" {
@@ -49,11 +45,7 @@ func newDownloadCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&clientID, "client-id", clientID, "Microsoft Entra 应用的 Client ID")
-	cmd.Flags().StringVar(&tenant, "tenant", tenant, "租户标识，默认使用 organizations")
-	cmd.Flags().StringVar(&stateDir, "state-dir", stateDir, "本地状态目录")
-	cmd.Flags().StringVar(&authorityBaseURL, "authority-base-url", authorityBaseURL, "Microsoft Entra 认证基础地址")
-	cmd.Flags().StringVar(&graphBaseURL, "graph-base-url", graphBaseURL, "Microsoft Graph 基础地址")
+	providerFlags.addFlags(cmd)
 	cmd.Flags().StringVar(&outputDir, "output-dir", outputDir, "MIME 文件输出目录")
 
 	return cmd

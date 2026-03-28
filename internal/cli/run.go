@@ -18,45 +18,25 @@ func newRunCmd() *cobra.Command {
 		return newErrorCommand("run", "发现邮件并进行路由处理", err)
 	}
 
-	clientID := cfg.Auth.ClientID
-	tenant := cfg.Auth.Tenant
+	providerFlags := newProviderConfigFlags(cfg)
+	processingFlags := newProcessingConfigFlags(cfg)
+	syncFlags := newSyncConfigFlags(cfg)
 	var once bool
 	var includeExisting bool
 	var debugSaveFirst bool
 	var writeBack bool
 	var verifyWriteBack bool
-	stateDir := cfg.Auth.StateDir
-	authorityBaseURL := cfg.Auth.AuthorityBaseURL
-	graphBaseURL := cfg.Mail.GraphBaseURL
-	outputDir := cfg.Mail.OutputDir
-	saveOutput := cfg.Mail.SaveOutput
-	backupDir := cfg.Mail.BackupDir
-	backupKeyID := cfg.Mail.BackupKeyID
-	auditLogPath := cfg.Mail.AuditLogPath
-	folder := cfg.Mail.Folder
-	writeBackFolder := cfg.Mail.WriteBackFolder
-	pollInterval := cfg.Mail.PollInterval
-	cycleTimeout := cfg.Mail.CycleTimeout
 
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "发现邮件并进行路由处理",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg = syncConfig(cfg, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL)
-			cfg.Mail.OutputDir = outputDir
-			cfg.Mail.SaveOutput = saveOutput
-			cfg.Mail.BackupDir = backupDir
-			cfg.Mail.BackupKeyID = backupKeyID
-			if cmd.Flags().Changed("audit-log-path") {
-				cfg.Mail.AuditLogPath = auditLogPath
-			}
-			cfg.Mail.Folder = folder
-			cfg.Mail.WriteBackFolder = writeBackFolder
-			cfg.Mail.PollInterval = pollInterval
-			cfg.Mail.CycleTimeout = cycleTimeout
+			cfg = providerFlags.apply(cfg)
+			cfg = processingFlags.apply(cfg, cmd)
+			cfg = syncFlags.apply(cfg)
 
-			if err := validateWriteBackFlags(writeBack, verifyWriteBack, writeBackFolder); err != nil {
+			if err := validateWriteBackFlags(writeBack, verifyWriteBack, processingFlags.writeBackFolder); err != nil {
 				return fmt.Errorf("run 失败: %w", err)
 			}
 			if err := cfg.Mail.ValidateSync(); err != nil {
@@ -69,11 +49,11 @@ func newRunCmd() *cobra.Command {
 			}
 
 			if debugSaveFirst {
-				return runDebugSaveFirst(cmd.Context(), cfg, service, writeBack, writeBackFolder, verifyWriteBack)
+				return runDebugSaveFirst(cmd.Context(), cfg, service, writeBack, processingFlags.writeBackFolder, verifyWriteBack)
 			}
 
 			runOnce := func() error {
-				err := runDiscoverCycle(cmd.Context(), cfg, service, includeExisting, writeBack, writeBackFolder, verifyWriteBack)
+				err := runDiscoverCycle(cmd.Context(), cfg, service, includeExisting, writeBack, processingFlags.writeBackFolder, verifyWriteBack)
 				includeExisting = false
 				return err
 			}
@@ -101,20 +81,9 @@ func newRunCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&clientID, "client-id", clientID, "Microsoft Entra 应用的 Client ID")
-	cmd.Flags().StringVar(&tenant, "tenant", tenant, "租户标识，默认使用 organizations")
-	cmd.Flags().StringVar(&stateDir, "state-dir", stateDir, "本地状态目录")
-	cmd.Flags().StringVar(&outputDir, "output-dir", outputDir, "处理结果输出目录")
-	cmd.Flags().BoolVar(&saveOutput, "save-output", saveOutput, "是否将加密后的 PGP/MIME 额外保存到本地 output-dir，默认关闭")
-	cmd.Flags().StringVar(&backupDir, "backup-dir", backupDir, "源邮件加密备份目录；保存 gpg 直接加密后的文件")
-	cmd.Flags().StringVar(&backupKeyID, "backup-key-id", backupKeyID, "备份加密使用的 catch-all GPG key id；设置后所有备份统一用该 key")
-	cmd.Flags().StringVar(&auditLogPath, "audit-log-path", auditLogPath, "审计日志输出路径（JSONL）")
-	cmd.Flags().StringVar(&folder, "folder", folder, "要监听的 Graph 邮件文件夹标识，例如 inbox")
-	cmd.Flags().StringVar(&writeBackFolder, "write-back-folder", writeBackFolder, "回写目标文件夹标识；默认回写到原文件夹")
-	cmd.Flags().StringVar(&authorityBaseURL, "authority-base-url", authorityBaseURL, "Microsoft Entra 认证基础地址")
-	cmd.Flags().StringVar(&graphBaseURL, "graph-base-url", graphBaseURL, "Microsoft Graph 基础地址")
-	cmd.Flags().DurationVar(&pollInterval, "poll-interval", pollInterval, "轮询增量同步的时间间隔")
-	cmd.Flags().DurationVar(&cycleTimeout, "cycle-timeout", cycleTimeout, "单次发现与处理周期的超时时间")
+	providerFlags.addFlags(cmd)
+	processingFlags.addFlags(cmd)
+	syncFlags.addFlags(cmd)
 	cmd.Flags().BoolVar(&once, "once", false, "只执行一次同步后退出")
 	cmd.Flags().BoolVar(&includeExisting, "include-existing", false, "首次启动时也下载现有历史邮件")
 	cmd.Flags().BoolVar(&debugSaveFirst, "debug-save-first", false, "调试模式：直接处理当前文件夹中最新的一封邮件并退出")
