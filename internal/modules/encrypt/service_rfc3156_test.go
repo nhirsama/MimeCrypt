@@ -2,6 +2,7 @@ package encrypt
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -343,6 +344,9 @@ func TestRunProducesRFC3156StructureForThunderbird(t *testing.T) {
 	if msg.Header.Get("Subject") != "thunderbird compatibility" {
 		t.Fatalf("subject lost after wrapping")
 	}
+	if got := msg.Header.Get(processedHeaderKey); got != processedHeaderValue {
+		t.Fatalf("%s = %q, want %q", processedHeaderKey, got, processedHeaderValue)
+	}
 	if len(parts) != 2 {
 		t.Fatalf("expected 2 multipart parts, got %d", len(parts))
 	}
@@ -357,8 +361,8 @@ func TestRunProducesRFC3156StructureForThunderbird(t *testing.T) {
 	if parts[1].ContentType != "application/octet-stream" {
 		t.Fatalf("part2 content-type = %s, want application/octet-stream", parts[1].ContentType)
 	}
-	if strings.ToLower(parts[1].Params["name"]) != "encrypted.asc" {
-		t.Fatalf("part2 name param = %q, want encrypted.asc", parts[1].Params["name"])
+	if strings.ToLower(parts[1].Params["name"]) != "encrypted.pgp" {
+		t.Fatalf("part2 name param = %q, want encrypted.pgp", parts[1].Params["name"])
 	}
 	if !bytes.Contains(parts[1].Body, []byte("-----BEGIN PGP MESSAGE-----")) {
 		t.Fatalf("missing armored pgp payload")
@@ -370,7 +374,7 @@ func TestRunProducesRFC3156StructureForThunderbird(t *testing.T) {
 func TestGPGEncryptorNoRecipients(t *testing.T) {
 	t.Parallel()
 
-	_, err := gpgEncryptor{binary: "gpg"}.Encrypt([]byte("data"), nil)
+	_, err := gpgEncryptor{binary: "gpg"}.Encrypt(context.Background(), []byte("data"), nil)
 	if !errors.Is(err, ErrNoRecipients) {
 		t.Fatalf("expected ErrNoRecipients, got %v", err)
 	}
@@ -379,7 +383,7 @@ func TestGPGEncryptorNoRecipients(t *testing.T) {
 func TestGPGEncryptorMissingBinary(t *testing.T) {
 	t.Parallel()
 
-	_, err := gpgEncryptor{binary: "/definitely/not/found/gpg"}.Encrypt([]byte("data"), []string{"a@example.com"})
+	_, err := gpgEncryptor{binary: "/definitely/not/found/gpg"}.Encrypt(context.Background(), []byte("data"), []string{"a@example.com"})
 	if err == nil || !strings.Contains(err.Error(), "执行 gpg 失败") {
 		t.Fatalf("expected command execution error, got %v", err)
 	}
@@ -391,7 +395,7 @@ func TestGPGEncryptorEmptyOutput(t *testing.T) {
 	}
 
 	script := writeExecutable(t, "#!/bin/sh\nset -eu\ncat >/dev/null\n")
-	_, err := gpgEncryptor{binary: script}.Encrypt([]byte("data"), []string{"a@example.com"})
+	_, err := gpgEncryptor{binary: script}.Encrypt(context.Background(), []byte("data"), []string{"a@example.com"})
 	if err == nil || !strings.Contains(err.Error(), "gpg 输出为空") {
 		t.Fatalf("expected empty output error, got %v", err)
 	}
@@ -409,7 +413,7 @@ func TestGPGEncryptorInvokesBinaryWithExpectedFlags(t *testing.T) {
 	))
 
 	enc := gpgEncryptor{binary: script}
-	out, err := enc.Encrypt([]byte("hello"), []string{"alice@example.com", "bob@example.com"})
+	out, err := enc.Encrypt(context.Background(), []byte("hello"), []string{"alice@example.com", "bob@example.com"})
 	if err != nil {
 		t.Fatalf("Encrypt() error = %v", err)
 	}
@@ -496,6 +500,75 @@ func TestRunWithRealGPGRoundTripDecrypt(t *testing.T) {
 			"Date: Thu, 02 Jan 2026 10:00:00 +0000\r\n" +
 			"\r\n" +
 			"Hello Thunderbird!\r\n",
+	)
+
+	result, err := service.Run(input)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	_, parts := mustParseRFC3156Message(t, result.MIME)
+	if len(parts) != 2 {
+		t.Fatalf("expected 2 parts, got %d", len(parts))
+	}
+
+	decryptCmd := exec.Command(gpgPath, "--batch", "--yes", "--decrypt")
+	decryptCmd.Stdin = bytes.NewReader(parts[1].Body)
+	var decrypted bytes.Buffer
+	var stderr bytes.Buffer
+	decryptCmd.Stdout = &decrypted
+	decryptCmd.Stderr = &stderr
+	if err := decryptCmd.Run(); err != nil {
+		t.Fatalf("decrypt failed: %v, stderr=%s", err, strings.TrimSpace(stderr.String()))
+	}
+
+	if !bytes.Equal(decrypted.Bytes(), input) {
+		t.Fatalf("decrypted payload mismatch\nwant: %q\ngot:  %q", string(input), decrypted.String())
+	}
+}
+
+func TestRunWithEnvCustomGPGBinaryRoundTripDecrypt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("gpg integration test is unix-focused")
+	}
+
+	gpgPath, err := exec.LookPath("gpg")
+	if err != nil {
+		t.Skip("gpg not installed")
+	}
+
+	gnupgHome := t.TempDir()
+	if err := os.Chmod(gnupgHome, 0o700); err != nil {
+		t.Fatalf("chmod gnupghome: %v", err)
+	}
+	t.Setenv("GNUPGHOME", gnupgHome)
+	t.Setenv("MIMECRYPT_GPG_BINARY", gpgPath)
+
+	keyParams := "" +
+		"Key-Type: RSA\n" +
+		"Key-Length: 2048\n" +
+		"Subkey-Type: RSA\n" +
+		"Subkey-Length: 2048\n" +
+		"Name-Real: MimeCrypt Custom GPG Test\n" +
+		"Name-Email: customgpg@example.com\n" +
+		"Expire-Date: 0\n" +
+		"%no-protection\n" +
+		"%commit\n"
+	gen := exec.Command(gpgPath, "--batch", "--generate-key")
+	gen.Stdin = strings.NewReader(keyParams)
+	genOutput, err := gen.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generate test key failed: %v\n%s", err, string(genOutput))
+	}
+
+	// Service 使用默认 encryptor，通过 MIMECRYPT_GPG_BINARY 选择 gpg 路径。
+	service := Service{}
+	input := []byte(
+		"From: sender@example.com\r\n" +
+			"To: customgpg@example.com\r\n" +
+			"Subject: custom gpg round trip\r\n" +
+			"Date: Thu, 02 Jan 2026 10:00:00 +0000\r\n" +
+			"\r\n" +
+			"Hello Custom GPG!\r\n",
 	)
 
 	result, err := service.Run(input)

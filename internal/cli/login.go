@@ -26,6 +26,7 @@ func newLoginCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "login",
 		Short: "通过 device code 登录并缓存 token",
+		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = syncConfig(cfg, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL)
 

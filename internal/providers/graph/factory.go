@@ -1,8 +1,6 @@
 package graph
 
 import (
-	"context"
-
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
 	"mimecrypt/internal/mail"
@@ -21,11 +19,10 @@ func Build(cfg appconfig.Config) (provider.Session, provider.Reader, provider.Wr
 		return nil, nil, nil, err
 	}
 
-	return session, client, writer{}, nil
-}
+	writer, err := newWriter(cfg.Mail, session, nil)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
-type writer struct{}
-
-func (writer) WriteMessage(context.Context, provider.WriteRequest) (provider.WriteResult, error) {
-	return provider.WriteResult{}, provider.ErrNotSupported
+	return session, client, writer, nil
 }

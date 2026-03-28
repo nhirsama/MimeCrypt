@@ -1,6 +1,7 @@
 package encrypt
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,11 +14,13 @@ const (
 )
 
 type Service struct {
-	Encryptor MIMEEncryptor
-	EnvLookup func(string) string
+	Encryptor         MIMEEncryptor
+	EnvLookup         func(string) string
+	RecipientResolver func(mimeBytes []byte) ([]string, error)
 }
 
 type Result struct {
+	Armored          []byte
 	MIME             []byte
 	Encrypted        bool
 	AlreadyEncrypted bool
@@ -43,17 +46,22 @@ func (e AlreadyEncryptedError) Is(target error) bool {
 }
 
 type MIMEEncryptor interface {
-	Encrypt(mimeBytes []byte, recipients []string) ([]byte, error)
+	Encrypt(ctx context.Context, mimeBytes []byte, recipients []string) ([]byte, error)
 }
 
 // Run 对邮件内容进行加密；已加密邮件会直接返回错误，防止重复加密。
 func (s *Service) Run(mimeBytes []byte) (Result, error) {
+	return s.RunContext(context.Background(), mimeBytes)
+}
+
+// RunContext 对邮件内容进行加密，并响应上下文取消。
+func (s *Service) RunContext(ctx context.Context, mimeBytes []byte) (Result, error) {
 	format, encrypted := detectFormat(mimeBytes)
 	if encrypted {
 		return Result{}, AlreadyEncryptedError{Format: format}
 	}
 
-	recipients, err := s.resolveRecipients(mimeBytes)
+	recipients, err := s.recipients(mimeBytes)
 	if err != nil {
 		return Result{}, err
 	}
@@ -61,7 +69,7 @@ func (s *Service) Run(mimeBytes []byte) (Result, error) {
 		return Result{}, ErrNoRecipients
 	}
 
-	armored, err := s.encryptor().Encrypt(mimeBytes, recipients)
+	armored, err := s.encryptor().Encrypt(ctx, mimeBytes, recipients)
 	if err != nil {
 		return Result{}, err
 	}
@@ -72,6 +80,7 @@ func (s *Service) Run(mimeBytes []byte) (Result, error) {
 	}
 
 	return Result{
+		Armored:          armored,
 		MIME:             encryptedMIME,
 		Encrypted:        true,
 		AlreadyEncrypted: false,
@@ -79,11 +88,18 @@ func (s *Service) Run(mimeBytes []byte) (Result, error) {
 	}, nil
 }
 
+func (s *Service) recipients(mimeBytes []byte) ([]string, error) {
+	if s != nil && s.RecipientResolver != nil {
+		return s.RecipientResolver(mimeBytes)
+	}
+	return s.resolveRecipients(mimeBytes)
+}
+
 func (s *Service) encryptor() MIMEEncryptor {
 	if s != nil && s.Encryptor != nil {
 		return s.Encryptor
 	}
-	return gpgEncryptor{binary: defaultGPGBinary()}
+	return gpgEncryptor{binary: s.gpgBinary()}
 }
 
 func (s *Service) getenv(key string) string {
@@ -91,4 +107,11 @@ func (s *Service) getenv(key string) string {
 		return s.EnvLookup(key)
 	}
 	return os.Getenv(key)
+}
+
+func (s *Service) gpgBinary() string {
+	if value := strings.TrimSpace(s.getenv(envGPGBinary)); value != "" {
+		return value
+	}
+	return "gpg"
 }

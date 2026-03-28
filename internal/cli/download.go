@@ -25,7 +25,7 @@ func newDownloadCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "download <message-id>",
 		Short: "按邮件 ID 下载原始 MIME",
-		Args:  cobra.ExactArgs(1),
+		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = syncConfig(cfg, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL)
 			cfg.Mail.OutputDir = outputDir

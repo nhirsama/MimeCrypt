@@ -2,6 +2,7 @@ package encrypt
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,7 +20,7 @@ func defaultGPGBinary() string {
 	return "gpg"
 }
 
-func (g gpgEncryptor) Encrypt(mimeBytes []byte, recipients []string) ([]byte, error) {
+func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients []string) ([]byte, error) {
 	if len(recipients) == 0 {
 		return nil, ErrNoRecipients
 	}
@@ -43,7 +44,11 @@ func (g gpgEncryptor) Encrypt(mimeBytes []byte, recipients []string) ([]byte, er
 		args = append(args, "--recipient", recipient)
 	}
 
-	cmd := exec.Command(binary, args...)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdin = bytes.NewReader(mimeBytes)
 
 	var stdout bytes.Buffer

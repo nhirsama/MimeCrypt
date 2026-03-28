@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"mimecrypt/internal/modules/encrypt"
 	"mimecrypt/internal/modules/process"
 	"mimecrypt/internal/provider"
 )
@@ -42,8 +43,10 @@ type DebugResult struct {
 }
 
 type syncState struct {
-	DeltaLink string    `json:"delta_link"`
-	UpdatedAt time.Time `json:"updated_at"`
+	DeltaLink       string             `json:"delta_link"`
+	NextDeltaLink   string             `json:"next_delta_link,omitempty"`
+	PendingMessages []provider.Message `json:"pending_messages,omitempty"`
+	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
 type syncStateStore struct {
@@ -59,14 +62,23 @@ func (s *Service) RunCycle(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
-	messages, nextDelta, err := s.Client.DeltaCreatedMessages(ctx, req.Folder, state.DeltaLink)
-	if err != nil {
-		return Result{}, err
+	result := Result{
+		Bootstrapped: state.DeltaLink == "" && len(state.PendingMessages) == 0,
 	}
 
-	result := Result{
-		Bootstrapped: state.DeltaLink == "",
-		DeltaLink:    nextDelta,
+	messages := append([]provider.Message(nil), state.PendingMessages...)
+	nextDelta := state.NextDeltaLink
+
+	if len(messages) == 0 {
+		messages, nextDelta, err = s.Client.DeltaCreatedMessages(ctx, req.Folder, state.DeltaLink)
+		if err != nil {
+			return Result{}, err
+		}
+		result.DeltaLink = nextDelta
+	} else if nextDelta == "" {
+		return Result{}, fmt.Errorf("同步状态损坏：存在待处理邮件但缺少 next delta link")
+	} else {
+		result.DeltaLink = nextDelta
 	}
 
 	if result.Bootstrapped && !req.IncludeExisting {
@@ -77,18 +89,47 @@ func (s *Service) RunCycle(ctx context.Context, req Request) (Result, error) {
 		return result, nil
 	}
 
-	for _, message := range messages {
-		processReq := req.Process
-		processReq.MessageID = message.ID
-		if _, err := s.Processor.Run(ctx, processReq); err != nil {
-			return Result{}, fmt.Errorf("处理邮件 %s 失败: %w", message.ID, err)
+	if len(messages) == 0 {
+		if err := store.save(syncState{DeltaLink: nextDelta}); err != nil {
+			return Result{}, err
 		}
-
-		result.Processed++
+		return result, nil
 	}
 
-	if err := store.save(syncState{DeltaLink: nextDelta}); err != nil {
-		return Result{}, err
+	if len(state.PendingMessages) == 0 {
+		if err := store.save(syncState{
+			DeltaLink:       state.DeltaLink,
+			NextDeltaLink:   nextDelta,
+			PendingMessages: messages,
+		}); err != nil {
+			return Result{}, err
+		}
+	}
+
+	for i, message := range messages {
+		processReq := req.Process
+		processReq.Source = message.Ref().WithFallbackFolder(req.Folder)
+		_, procErr := s.Processor.Run(ctx, processReq)
+		if procErr != nil && !errors.Is(procErr, encrypt.ErrAlreadyEncrypted) {
+			return Result{}, fmt.Errorf("处理邮件 %s 失败: %w", message.ID, procErr)
+		}
+
+		remaining := messages[i+1:]
+		nextState := syncState{DeltaLink: nextDelta}
+		if len(remaining) > 0 {
+			nextState = syncState{
+				DeltaLink:       state.DeltaLink,
+				NextDeltaLink:   nextDelta,
+				PendingMessages: remaining,
+			}
+		}
+		if err := store.save(nextState); err != nil {
+			return Result{}, err
+		}
+
+		if !errors.Is(procErr, encrypt.ErrAlreadyEncrypted) {
+			result.Processed++
+		}
 	}
 
 	return result, nil
@@ -105,7 +146,7 @@ func (s *Service) DebugFirst(ctx context.Context, req Request) (DebugResult, err
 	}
 
 	processReq := req.Process
-	processReq.MessageID = message.ID
+	processReq.Source = message.Ref().WithFallbackFolder(req.Folder)
 
 	processResult, err := s.Processor.Run(ctx, processReq)
 	if err != nil {
@@ -149,7 +190,7 @@ func (s syncStateStore) save(state syncState) error {
 }
 
 func writeJSONFile(path string, value any, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("创建状态目录失败: %w", err)
 	}
 

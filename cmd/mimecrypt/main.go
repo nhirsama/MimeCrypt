@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -18,6 +19,15 @@ func main() {
 	defer stop()
 
 	if err := cli.ExecuteContext(ctx); err != nil {
-		log.Fatalf("%v", err)
+		if shouldExitGracefully(err) {
+			return
+		}
+
+		log.Printf("%v", err)
+		os.Exit(1)
 	}
+}
+
+func shouldExitGracefully(err error) bool {
+	return errors.Is(err, context.Canceled)
 }

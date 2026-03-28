@@ -19,6 +19,7 @@ func newLogoutCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logout",
 		Short: "清除本地登录状态",
+		Args:  noArgs(),
 		RunE: func(*cobra.Command, []string) error {
 			cfg.Auth.StateDir = stateDir
 			service := buildLogoutService(cfg)

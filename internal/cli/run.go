@@ -9,7 +9,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/modules/discover"
-	"mimecrypt/internal/modules/process"
+	"mimecrypt/internal/provider"
 )
 
 func newRunCmd() *cobra.Command {
@@ -29,21 +29,34 @@ func newRunCmd() *cobra.Command {
 	authorityBaseURL := cfg.Auth.AuthorityBaseURL
 	graphBaseURL := cfg.Mail.GraphBaseURL
 	outputDir := cfg.Mail.OutputDir
+	saveOutput := cfg.Mail.SaveOutput
+	backupDir := cfg.Mail.BackupDir
+	backupKeyID := cfg.Mail.BackupKeyID
+	auditLogPath := cfg.Mail.AuditLogPath
 	folder := cfg.Mail.Folder
+	writeBackFolder := cfg.Mail.WriteBackFolder
 	pollInterval := cfg.Mail.PollInterval
 	cycleTimeout := cfg.Mail.CycleTimeout
 
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "发现邮件并进行路由处理",
+		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = syncConfig(cfg, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL)
 			cfg.Mail.OutputDir = outputDir
+			cfg.Mail.SaveOutput = saveOutput
+			cfg.Mail.BackupDir = backupDir
+			cfg.Mail.BackupKeyID = backupKeyID
+			if cmd.Flags().Changed("audit-log-path") {
+				cfg.Mail.AuditLogPath = auditLogPath
+			}
 			cfg.Mail.Folder = folder
+			cfg.Mail.WriteBackFolder = writeBackFolder
 			cfg.Mail.PollInterval = pollInterval
 			cfg.Mail.CycleTimeout = cycleTimeout
 
-			if err := validateWriteBackFlags(writeBack, verifyWriteBack); err != nil {
+			if err := validateWriteBackFlags(writeBack, verifyWriteBack, writeBackFolder); err != nil {
 				return fmt.Errorf("run 失败: %w", err)
 			}
 			if err := cfg.Mail.ValidateSync(); err != nil {
@@ -56,11 +69,11 @@ func newRunCmd() *cobra.Command {
 			}
 
 			if debugSaveFirst {
-				return runDebugSaveFirst(cmd.Context(), cfg, service, writeBack, verifyWriteBack)
+				return runDebugSaveFirst(cmd.Context(), cfg, service, writeBack, writeBackFolder, verifyWriteBack)
 			}
 
 			runOnce := func() error {
-				err := runDiscoverCycle(cmd.Context(), cfg, service, includeExisting, writeBack, verifyWriteBack)
+				err := runDiscoverCycle(cmd.Context(), cfg, service, includeExisting, writeBack, writeBackFolder, verifyWriteBack)
 				includeExisting = false
 				return err
 			}
@@ -92,7 +105,12 @@ func newRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&tenant, "tenant", tenant, "租户标识，默认使用 organizations")
 	cmd.Flags().StringVar(&stateDir, "state-dir", stateDir, "本地状态目录")
 	cmd.Flags().StringVar(&outputDir, "output-dir", outputDir, "处理结果输出目录")
+	cmd.Flags().BoolVar(&saveOutput, "save-output", saveOutput, "是否将加密后的 PGP/MIME 额外保存到本地 output-dir，默认关闭")
+	cmd.Flags().StringVar(&backupDir, "backup-dir", backupDir, "源邮件加密备份目录；保存 gpg 直接加密后的文件")
+	cmd.Flags().StringVar(&backupKeyID, "backup-key-id", backupKeyID, "备份加密使用的 catch-all GPG key id；设置后所有备份统一用该 key")
+	cmd.Flags().StringVar(&auditLogPath, "audit-log-path", auditLogPath, "审计日志输出路径（JSONL）")
 	cmd.Flags().StringVar(&folder, "folder", folder, "要监听的 Graph 邮件文件夹标识，例如 inbox")
+	cmd.Flags().StringVar(&writeBackFolder, "write-back-folder", writeBackFolder, "回写目标文件夹标识；默认回写到原文件夹")
 	cmd.Flags().StringVar(&authorityBaseURL, "authority-base-url", authorityBaseURL, "Microsoft Entra 认证基础地址")
 	cmd.Flags().StringVar(&graphBaseURL, "graph-base-url", graphBaseURL, "Microsoft Graph 基础地址")
 	cmd.Flags().DurationVar(&pollInterval, "poll-interval", pollInterval, "轮询增量同步的时间间隔")
@@ -106,17 +124,13 @@ func newRunCmd() *cobra.Command {
 	return cmd
 }
 
-func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, service *discover.Service, writeBack, verifyWriteBack bool) error {
+func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, service *discover.Service, writeBack bool, writeBackFolder string, verifyWriteBack bool) error {
 	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.CycleTimeout)
 	defer cancel()
 
 	result, err := service.DebugFirst(cycleCtx, discover.Request{
-		Folder: cfg.Mail.Folder,
-		Process: process.Request{
-			OutputDir:       cfg.Mail.OutputDir,
-			WriteBack:       writeBack,
-			VerifyWriteBack: verifyWriteBack,
-		},
+		Folder:  cfg.Mail.Folder,
+		Process: buildProcessRequest(cfg, provider.MessageRef{}, writeBack, writeBackFolder, verifyWriteBack),
 	})
 	if err != nil {
 		return err
@@ -127,17 +141,19 @@ func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, service *disco
 	}
 
 	fmt.Printf(
-		"调试模式已处理第一封邮件，message_id=%s format=%s encrypted=%t path=%s bytes=%d\n",
+		"调试模式已处理第一封邮件，message_id=%s format=%s encrypted=%t saved_output=%t backup_path=%s path=%s bytes=%d\n",
 		result.Process.MessageID,
 		result.Process.Format,
 		result.Process.Encrypted,
+		result.Process.SavedOutput,
+		result.Process.BackupPath,
 		result.Process.Path,
 		result.Process.Bytes,
 	)
 	return nil
 }
 
-func runDiscoverCycle(ctx context.Context, cfg appconfig.Config, service *discover.Service, includeExisting, writeBack, verifyWriteBack bool) error {
+func runDiscoverCycle(ctx context.Context, cfg appconfig.Config, service *discover.Service, includeExisting, writeBack bool, writeBackFolder string, verifyWriteBack bool) error {
 	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.CycleTimeout)
 	defer cancel()
 
@@ -145,11 +161,7 @@ func runDiscoverCycle(ctx context.Context, cfg appconfig.Config, service *discov
 		Folder:          cfg.Mail.Folder,
 		StatePath:       cfg.Mail.SyncStatePath(),
 		IncludeExisting: includeExisting,
-		Process: process.Request{
-			OutputDir:       cfg.Mail.OutputDir,
-			WriteBack:       writeBack,
-			VerifyWriteBack: verifyWriteBack,
-		},
+		Process:         buildProcessRequest(cfg, provider.MessageRef{}, writeBack, writeBackFolder, verifyWriteBack),
 	})
 	if err != nil {
 		return err

@@ -78,7 +78,7 @@ func (c *Client) Me(ctx context.Context) (User, error) {
 // Message 返回指定邮件的基础元数据。
 func (c *Client) Message(ctx context.Context, messageID string) (Message, error) {
 	query := url.Values{}
-	query.Set("$select", "id,subject,receivedDateTime,internetMessageId")
+	query.Set("$select", "id,subject,receivedDateTime,internetMessageId,parentFolderId")
 
 	endpoint := fmt.Sprintf(
 		"%s/me/messages/%s?%s",
@@ -108,7 +108,7 @@ func (c *Client) DeltaCreatedMessages(ctx context.Context, folder, deltaLink str
 	if endpoint == "" {
 		query := url.Values{}
 		query.Set("changeType", "created")
-		query.Set("$select", "id,subject,receivedDateTime,internetMessageId")
+		query.Set("$select", "id,subject,receivedDateTime,internetMessageId,parentFolderId")
 
 		endpoint = fmt.Sprintf(
 			"%s/me/mailFolders/%s/messages/delta?%s",
@@ -160,7 +160,7 @@ func (c *Client) FirstMessageInFolder(ctx context.Context, folder string) (Messa
 	query := url.Values{}
 	query.Set("$top", "1")
 	query.Set("$orderby", "receivedDateTime desc")
-	query.Set("$select", "id,subject,receivedDateTime,internetMessageId")
+	query.Set("$select", "id,subject,receivedDateTime,internetMessageId,parentFolderId")
 
 	endpoint := fmt.Sprintf(
 		"%s/me/mailFolders/%s/messages?%s",

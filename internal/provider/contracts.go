@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -40,7 +41,32 @@ type Message struct {
 	ID                string    `json:"id"`
 	Subject           string    `json:"subject"`
 	InternetMessageID string    `json:"internetMessageId"`
+	ParentFolderID    string    `json:"parentFolderId"`
 	ReceivedDateTime  time.Time `json:"receivedDateTime"`
+}
+
+// Ref 返回便于跨模块传递的消息引用，避免每层各自维护一套 ID 字段。
+func (m Message) Ref() MessageRef {
+	return MessageRef{
+		ID:                m.ID,
+		InternetMessageID: m.InternetMessageID,
+		FolderID:          m.ParentFolderID,
+	}
+}
+
+// MessageRef 表示一封消息在系统中的稳定引用。
+type MessageRef struct {
+	ID                string `json:"id,omitempty"`
+	InternetMessageID string `json:"internetMessageId,omitempty"`
+	FolderID          string `json:"folderId,omitempty"`
+}
+
+// WithFallbackFolder 在缺少文件夹信息时补上默认值。
+func (r MessageRef) WithFallbackFolder(folderID string) MessageRef {
+	if strings.TrimSpace(r.FolderID) == "" {
+		r.FolderID = folderID
+	}
+	return r
 }
 
 // Session 抽象认证与令牌缓存能力。
@@ -62,9 +88,10 @@ type Reader interface {
 
 // WriteRequest 表示回写邮件时的统一请求。
 type WriteRequest struct {
-	MessageID string
-	MIME      []byte
-	Verify    bool
+	Source              MessageRef
+	MIME                []byte
+	DestinationFolderID string
+	Verify              bool
 }
 
 // WriteResult 表示回写邮件后的统一结果。
@@ -75,4 +102,9 @@ type WriteResult struct {
 // Writer 抽象发件或回写相关的底层 API。
 type Writer interface {
 	WriteMessage(ctx context.Context, req WriteRequest) (WriteResult, error)
+}
+
+// Reconciler 抽象基于已有邮件状态的幂等对账能力。
+type Reconciler interface {
+	ReconcileMessage(ctx context.Context, req WriteRequest) (WriteResult, bool, error)
 }

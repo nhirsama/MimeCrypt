@@ -14,14 +14,14 @@ import (
 
 // SaveToOutputDir 将抓取到的 MIME 流保存到输出目录。
 func SaveToOutputDir(outputDir string, message provider.Message, src io.Reader) (string, int64, error) {
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o700); err != nil {
 		return "", 0, fmt.Errorf("创建输出目录失败: %w", err)
 	}
 
 	fileName := buildMessageFileName(message)
 	path := filepath.Join(outputDir, fileName)
 
-	file, err := os.Create(path)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return "", 0, fmt.Errorf("创建输出文件失败: %w", err)
 	}
@@ -45,12 +45,16 @@ func SaveBytesToOutputDir(outputDir string, message provider.Message, mimeBytes 
 }
 
 func buildMessageFileName(message provider.Message) string {
+	return BuildMessageFileStem(message) + ".eml"
+}
+
+func BuildMessageFileStem(message provider.Message) string {
 	prefix := "message"
 	if !message.ReceivedDateTime.IsZero() {
 		prefix = message.ReceivedDateTime.UTC().Format("20060102T150405Z")
 	}
 
-	return fmt.Sprintf("%s_%s.eml", prefix, sanitizeFileComponent(message.ID))
+	return fmt.Sprintf("%s_%s", prefix, sanitizeFileComponent(message.ID))
 }
 
 func sanitizeFileComponent(value string) string {

@@ -2,10 +2,14 @@ package cli
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/modules/audit"
+	"mimecrypt/internal/modules/backup"
 	"mimecrypt/internal/modules/discover"
 	"mimecrypt/internal/modules/download"
 	"mimecrypt/internal/modules/encrypt"
@@ -63,18 +67,35 @@ func buildProcessService(cfg appconfig.Config) (*process.Service, error) {
 		return nil, err
 	}
 
-	return buildProcessServiceWithProvider(reader, writer), nil
+	return buildProcessServiceWithProvider(cfg, reader, writer), nil
 }
 
 func buildDownloadServiceWithReader(reader provider.Reader) *download.Service {
 	return &download.Service{Client: reader}
 }
 
-func buildProcessServiceWithProvider(reader provider.Reader, writer provider.Writer) *process.Service {
+func buildProcessServiceWithProvider(cfg appconfig.Config, reader provider.Reader, writer provider.Writer) *process.Service {
 	return &process.Service{
-		Downloader: buildDownloadServiceWithReader(reader),
-		Encryptor:  &encrypt.Service{},
-		WriteBack:  &writeback.Service{Writer: writer},
+		Downloader:      buildDownloadServiceWithReader(reader),
+		Encryptor:       &encrypt.Service{},
+		BackupEncryptor: buildCatchAllBackupEncryptor(cfg),
+		Backupper:       &backup.Service{},
+		WriteBack:       &writeback.Service{Writer: writer},
+		Auditor:         &audit.Service{Path: cfg.Mail.AuditLogPath},
+	}
+}
+
+func buildProcessRequest(cfg appconfig.Config, source provider.MessageRef, writeBack bool, writeBackFolder string, verifyWriteBack bool) process.Request {
+	return process.Request{
+		Source:     source,
+		OutputDir:  cfg.Mail.OutputDir,
+		SaveOutput: cfg.Mail.SaveOutput,
+		BackupDir:  cfg.Mail.BackupDir,
+		WriteBack: process.WriteBackOptions{
+			Enabled:             writeBack,
+			DestinationFolderID: writeBackFolder,
+			Verify:              verifyWriteBack,
+		},
 	}
 }
 
@@ -86,25 +107,43 @@ func buildDiscoverService(cfg appconfig.Config) (*discover.Service, error) {
 
 	return &discover.Service{
 		Client:    reader,
-		Processor: buildProcessServiceWithProvider(reader, writer),
+		Processor: buildProcessServiceWithProvider(cfg, reader, writer),
 	}, nil
 }
 
 func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL string) appconfig.Config {
 	cfg := defaults
+	previousStateDir := cfg.Mail.StateDir
+	previousAuditLogPath := cfg.Mail.AuditLogPath
 	cfg.Auth.ClientID = clientID
 	cfg.Auth.Tenant = tenant
 	cfg.Auth.StateDir = stateDir
 	cfg.Auth.AuthorityBaseURL = authorityBaseURL
 	cfg.Mail.GraphBaseURL = graphBaseURL
 	cfg.Mail.StateDir = stateDir
+	if strings.TrimSpace(previousAuditLogPath) == "" || previousAuditLogPath == appconfig.DefaultAuditLogPath(previousStateDir) {
+		cfg.Mail.AuditLogPath = appconfig.DefaultAuditLogPath(stateDir)
+	} else if !filepath.IsAbs(previousAuditLogPath) && previousAuditLogPath == filepath.Base(appconfig.DefaultAuditLogPath(previousStateDir)) {
+		cfg.Mail.AuditLogPath = filepath.Join(stateDir, previousAuditLogPath)
+	}
 	return cfg
 }
 
-func validateWriteBackFlags(writeBack, verifyWriteBack bool) error {
+func validateWriteBackFlags(writeBack, verifyWriteBack bool, writeBackFolder string) error {
 	if verifyWriteBack && !writeBack {
 		return fmt.Errorf("--verify-write-back 依赖 --write-back")
 	}
+	if strings.TrimSpace(writeBackFolder) != "" && !writeBack {
+		return fmt.Errorf("--write-back-folder 依赖 --write-back")
+	}
 
 	return nil
+}
+
+func buildCatchAllBackupEncryptor(cfg appconfig.Config) *encrypt.Service {
+	recipients := normalizeRecipientSpecs([]string{cfg.Mail.BackupKeyID})
+	if len(recipients) == 0 {
+		return nil
+	}
+	return buildLocalEncryptService(recipients, "")
 }

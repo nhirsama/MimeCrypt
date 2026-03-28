@@ -2,8 +2,11 @@ package encrypt
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -14,7 +17,7 @@ type fakeEncryptor struct {
 	err           error
 }
 
-func (f *fakeEncryptor) Encrypt(mimeBytes []byte, recipients []string) ([]byte, error) {
+func (f *fakeEncryptor) Encrypt(_ context.Context, mimeBytes []byte, recipients []string) ([]byte, error) {
 	f.gotRecipients = append([]string(nil), recipients...)
 	f.gotMIME = append([]byte(nil), mimeBytes...)
 	if f.err != nil {
@@ -91,6 +94,9 @@ func TestRunEncryptsPlainMIMEToPGPMIME(t *testing.T) {
 	if !result.Encrypted || result.AlreadyEncrypted || result.Format != "pgp-mime" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
+	if !bytes.Contains(result.Armored, []byte("-----BEGIN PGP MESSAGE-----")) {
+		t.Fatalf("missing armored payload in result")
+	}
 
 	expectedRecipients := []string{"alice@example.com", "bob@example.com", "ops@example.com"}
 	if !slices.Equal(encryptor.gotRecipients, expectedRecipients) {
@@ -102,6 +108,9 @@ func TestRunEncryptsPlainMIMEToPGPMIME(t *testing.T) {
 
 	if !bytes.Contains(result.MIME, []byte("Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"")) {
 		t.Fatalf("missing pgp-mime content type in output")
+	}
+	if !bytes.Contains(result.MIME, []byte("X-MimeCrypt-Processed: yes")) {
+		t.Fatalf("missing processed marker header in output")
 	}
 	if !bytes.Contains(result.MIME, []byte("Content-Type: application/pgp-encrypted")) {
 		t.Fatalf("missing application/pgp-encrypted part in output")
@@ -130,5 +139,79 @@ func TestRunPlainMIMEWithoutRecipientsReturnsError(t *testing.T) {
 	_, err := service.Run([]byte("From: sender@example.com\r\nSubject: no recipients\r\n\r\nhello"))
 	if !errors.Is(err, ErrNoRecipients) {
 		t.Fatalf("expected ErrNoRecipients, got %v", err)
+	}
+}
+
+func TestRunUsesRecipientResolverOverride(t *testing.T) {
+	t.Parallel()
+
+	encryptor := &fakeEncryptor{
+		output: []byte("-----BEGIN PGP MESSAGE-----\nabc\n-----END PGP MESSAGE-----\n"),
+	}
+	service := Service{
+		Encryptor: encryptor,
+		RecipientResolver: func([]byte) ([]string, error) {
+			return []string{"TESTKEY123"}, nil
+		},
+	}
+
+	input := []byte(
+		"From: sender@example.com\r\n" +
+			"To: alice@example.com\r\n" +
+			"Subject: hello\r\n" +
+			"\r\n" +
+			"hello world\r\n",
+	)
+
+	if _, err := service.Run(input); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	if !slices.Equal(encryptor.gotRecipients, []string{"TESTKEY123"}) {
+		t.Fatalf("unexpected recipients: %v", encryptor.gotRecipients)
+	}
+}
+
+func TestRunRecipientResolverErrorIsPropagated(t *testing.T) {
+	t.Parallel()
+
+	wantErr := fmt.Errorf("resolver failed")
+	service := Service{
+		RecipientResolver: func([]byte) ([]string, error) {
+			return nil, wantErr
+		},
+	}
+
+	_, err := service.Run([]byte("From: sender@example.com\r\nSubject: test\r\n\r\nhello"))
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected resolver error, got %v", err)
+	}
+}
+
+func TestRunContextUsesEnvLookupForGPGBinary(t *testing.T) {
+	t.Parallel()
+
+	service := Service{
+		EnvLookup: func(key string) string {
+			switch key {
+			case envGPGBinary:
+				return "/definitely/not/found/gpg"
+			case envPGPRecipients:
+				return "alice@example.com"
+			default:
+				return ""
+			}
+		},
+	}
+
+	_, err := service.RunContext(context.Background(), []byte(
+		"From: sender@example.com\r\n"+
+			"To: alice@example.com\r\n"+
+			"Subject: hello\r\n"+
+			"\r\n"+
+			"hello world\r\n",
+	))
+	if err == nil || !strings.Contains(err.Error(), "/definitely/not/found/gpg") {
+		t.Fatalf("expected custom gpg binary error, got %v", err)
 	}
 }

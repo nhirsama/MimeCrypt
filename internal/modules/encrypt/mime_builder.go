@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+const (
+	processedHeaderKey   = "X-MimeCrypt-Processed"
+	processedHeaderValue = "yes"
+)
+
 var passThroughHeaderKeys = []string{
 	"From",
 	"To",
@@ -50,8 +55,8 @@ func buildPGPMIMEMessage(originalMIME, armored []byte) ([]byte, error) {
 	out.WriteString("--")
 	out.WriteString(boundary)
 	out.WriteString("\r\n")
-	out.WriteString("Content-Type: application/octet-stream; name=\"encrypted.asc\"\r\n")
-	out.WriteString("Content-Disposition: inline; filename=\"encrypted.asc\"\r\n")
+	out.WriteString("Content-Type: application/octet-stream; name=\"encrypted.pgp\"\r\n")
+	out.WriteString("Content-Disposition: inline; filename=\"encrypted.pgp\"\r\n")
 	out.WriteString("Content-Transfer-Encoding: 7bit\r\n")
 	out.WriteString("\r\n")
 	out.Write(normalizeCRLF(armored))
@@ -84,6 +89,10 @@ func writeHeaders(out *bytes.Buffer, header mail.Header, boundary string) {
 		out.WriteString("\r\n")
 	}
 	out.WriteString("MIME-Version: 1.0\r\n")
+	out.WriteString(processedHeaderKey)
+	out.WriteString(": ")
+	out.WriteString(processedHeaderValue)
+	out.WriteString("\r\n")
 	out.WriteString("Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"")
 	out.WriteString(boundary)
 	out.WriteString("\"\r\n")

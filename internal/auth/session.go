@@ -354,7 +354,7 @@ func (s *tokenStore) delete() error {
 }
 
 func writeJSONFile(path string, value any, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("创建状态目录失败: %w", err)
 	}
 

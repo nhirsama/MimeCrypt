@@ -2,7 +2,7 @@
 
 MimeCrypt 是一个面向服务器场景的自动化邮件加密工具。
 
-它的目标不是单纯“抓取邮件”，而是尽可能自动地完成以下链路：
+它的目标是尽可能自动地完成以下链路：
 
 - 接收新邮件事件
 - 拉取原始 MIME 邮件
@@ -94,10 +94,13 @@ MimeCrypt 的定位是一个自动化邮件加密中间层。
 - 增量同步发现邮件的基础框架
 - 已加密邮件识别与拒绝重复加密（PGP/S-MIME）
 - 基于 `gpg` 的 PGP/MIME（RFC 3156）加密封装
+- Graph 回写、原文件夹保留回写与可选指定文件夹回写
+- 回写后基础校验
+- 关键流程 JSONL 审计日志
+- 本地加密备份目录
 
 当前还没有完成的部分：
 
-- 邮件回写与校验
 - Google Gmail API provider
 - webhook 接收入口
 - 可配置的邮件路由规则
@@ -134,26 +137,42 @@ go run ./cmd/mimecrypt logout
 go run ./cmd/mimecrypt download <message-id> --output-dir ./output
 ```
 
+加密本地 MIME 文件到 RFC 3156 PGP/MIME：
+
+```bash
+go run ./cmd/mimecrypt encrypt ./plain.eml ./encrypted.eml
+go run ./cmd/mimecrypt encrypt ./plain.eml ./encrypted.eml --key 0xDEADBEEF
+go run ./cmd/mimecrypt encrypt ./plain.eml ./encrypted.eml --recipient alice@example.com --recipient bob@example.com
+```
+
 按邮件 ID 执行处理链路：
 
 ```bash
-go run ./cmd/mimecrypt process <message-id> --output-dir ./output
+go run ./cmd/mimecrypt process <message-id> --save-output --output-dir ./output
+go run ./cmd/mimecrypt process <message-id> --backup-dir ./backup --audit-log-path ./audit.jsonl
+go run ./cmd/mimecrypt process <message-id> --backup-key-id 0xDEADBEEF
+go run ./cmd/mimecrypt process <message-id> --write-back
+go run ./cmd/mimecrypt process <message-id> --write-back --write-back-folder archive
 ```
 
 发现邮件并持续处理：
 
 ```bash
 go run ./cmd/mimecrypt run --once
-go run ./cmd/mimecrypt run --poll-interval 1m --output-dir ./output
+go run ./cmd/mimecrypt run --poll-interval 1m --save-output --output-dir ./output
+go run ./cmd/mimecrypt run --once --backup-dir ./backup --audit-log-path ./audit.jsonl
+go run ./cmd/mimecrypt run --once --backup-key-id 0xDEADBEEF
+go run ./cmd/mimecrypt run --once --write-back
+go run ./cmd/mimecrypt run --once --write-back --write-back-folder archive
 ```
 
 调试时直接处理当前文件夹中最新的一封邮件：
 
 ```bash
-go run ./cmd/mimecrypt run --debug-save-first --output-dir ./output
+go run ./cmd/mimecrypt run --debug-save-first --save-output --output-dir ./output
 ```
 
-需要注意的是，`process` 和 `run` 已经接入真实加密；但回写与回写校验逻辑仍在后续开发中。
+需要注意的是，`process` 和 `run` 已经接入真实加密与 Graph 回写；默认回写到原文件夹，也可以通过 `--write-back-folder` 指定目标文件夹。
 
 ## 配置
 
@@ -170,8 +189,13 @@ export MIMECRYPT_PROVIDER="graph"
 export MIMECRYPT_TENANT="organizations"
 export MIMECRYPT_STATE_DIR="$HOME/.config/mimecrypt"
 export MIMECRYPT_OUTPUT_DIR="./output"
+export MIMECRYPT_SAVE_OUTPUT="false"
+export MIMECRYPT_BACKUP_DIR="./backup"
+export MIMECRYPT_BACKUP_KEY_ID=""
+export MIMECRYPT_AUDIT_LOG_PATH="$HOME/.config/mimecrypt/audit.jsonl"
 export MIMECRYPT_FOLDER="inbox"
-export MIMECRYPT_GRAPH_SCOPES="https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/User.Read offline_access openid profile"
+export MIMECRYPT_WRITEBACK_FOLDER=""
+export MIMECRYPT_GRAPH_SCOPES="https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/User.Read offline_access openid profile"
 ```
 
 加密相关配置：
@@ -185,15 +209,29 @@ export MIMECRYPT_GPG_BINARY="gpg"
 
 - `MIMECRYPT_PROVIDER` 当前只支持 `graph`
 - `MIMECRYPT_STATE_DIR` 用来保存 token 和同步状态
-- `MIMECRYPT_OUTPUT_DIR` 当前主要用于调试和开发阶段保存 `.eml`
+- `MIMECRYPT_OUTPUT_DIR` 仅在开启 `MIMECRYPT_SAVE_OUTPUT=true` 或 `--save-output` 时用于保存本地 `PGP/MIME .eml`
+- `MIMECRYPT_SAVE_OUTPUT` 控制是否将加密后的 `PGP/MIME .eml` 额外落盘，默认 `false`
+- `MIMECRYPT_BACKUP_DIR` 保存对原始 MIME 源字节直接执行 `gpg --armor --encrypt` 后得到的密文备份
+- `MIMECRYPT_BACKUP_KEY_ID` 为备份指定 catch-all GPG key id；设置后所有备份都使用这把 key，而不是邮件收件人 key
+- `MIMECRYPT_AUDIT_LOG_PATH` 保存关键流程的追加式 JSONL 审计日志
+- `MIMECRYPT_WRITEBACK_FOLDER` 为空时默认回写到原文件夹；设置后会回写到指定文件夹标识
 - `MIMECRYPT_PGP_RECIPIENTS` 用于补充/覆盖收件人；如果邮件头缺少 `To/Cc/Bcc`，该变量是必需的
 - 未加密邮件会调用本地 `gpg` 生成 `PGP/MIME (RFC 3156)`；请确保对应收件人的公钥已导入 keyring
+- `encrypt` 命令默认会从输入 MIME 的 `To/Cc/Bcc` 推断收件人并匹配同邮箱公钥；传入 `--key` 或 `--recipient` 时会改用显式指定的 key/recipient
+- 加密时进入 `gpg` 的明文载荷始终是原始 MIME 字节；解密后应恢复出与输入一致的原始邮件内容（包括头与正文）
+- `process` / `run` 默认只产出 `backup/*.pgp` 密文备份，不额外本地落盘 `.eml`
+- 开启 `--save-output` 或 `MIMECRYPT_SAVE_OUTPUT=true` 后，才会额外产出 `output/*.eml`，供 Thunderbird 等客户端直接打开
+- `backup/*.pgp` 始终针对原始 MIME 源字节加密；如果设置了 `--backup-key-id` 或 `MIMECRYPT_BACKUP_KEY_ID`，则统一使用该 catch-all key 生成备份
+- 加密输出的外层包装会增加 `X-MimeCrypt-Processed: yes`，用于标记该邮件经过 MimeCrypt 处理；该头不会进入解密后的原始 MIME
+- 开启回写需要 `Mail.ReadWrite` 权限；如果你之前使用 `Mail.Read` 登录过，需要重新执行 `logout` 和 `login` 获取新 token
 
 ## 文件说明
 
 - `graph-token.json`：当前 provider 的 token 缓存
 - `sync-<folder>.json`：文件夹增量同步状态
-- `output/*.eml`：当前调试或处理中落盘的 MIME 文件
+- `audit.jsonl`：关键流程审计日志，按 JSONL 逐行追加
+- `output/*.eml`：仅在开启 `save-output` 时生成的 PGP/MIME 邮件文件
+- `backup/*.pgp`：对原始 MIME 源字节直接加密后的本地备份
 
 从长期目标看，磁盘落盘应尽量只在调试、审计或故障恢复场景下使用，而不是默认主路径。
 
@@ -201,11 +239,10 @@ export MIMECRYPT_GPG_BINARY="gpg"
 
 接下来更符合项目定位的开发顺序是：
 
-1. 在 `writeback` 模块中接入邮件回写和校验
-2. 增加 `google` provider
-3. 增加 webhook 接收与事件路由
-4. 减少默认明文落盘，让“拉取后尽快加密并回写”成为主路径
-5. 增加密钥管理与收件人路由策略（按域名、文件夹或规则选择 key）
+1. 增加 `google` provider
+2. 增加 webhook 接收与事件路由
+3. 减少默认明文落盘，让“拉取后尽快加密并回写”成为主路径
+4. 增加密钥管理与收件人路由策略（按域名、文件夹或规则选择 key）
 
 ## 当前结论
 

@@ -8,34 +8,23 @@
 - Microsoft Graph 登录、token 缓存与自动刷新可用。
 - 增量发现与首次基线跳过逻辑可用。
 - 关键缺口：
-  - `encrypt` 仅做“是否已加密”识别，未执行真实加密。
-  - `writeback` 和 Graph writer 仍为未实现占位。
   - 明文 MIME 默认落盘，和“最少暴露”目标存在偏差。
-  - 测试覆盖集中在 `auth/discover/encrypt`，核心流程与 provider 层覆盖不足。
+  - 目前只有 Graph provider，缺少 Gmail provider 与 webhook 接入。
+  - 测试覆盖仍偏向 `auth/discover/encrypt`，真实 provider 与回写路径覆盖刚起步。
 
 ## 3. 里程碑规划
 
-### M1. 实现真实加密（P0）
+### M1. 强化回写与校验（P0）
 交付内容：
-- 在 `internal/modules/encrypt` 接入 GPG 执行器（可替换接口 + 默认实现）。
-- 生成 RFC 3156 `multipart/encrypted` 输出。
-- 为已加密邮件保持透传。
-
-验收标准：
-- 输入明文 MIME，输出结构可被 Thunderbird/OpenPGP 客户端识别。
-- 单测覆盖：纯文本、含附件、已加密透传、GPG 失败回退。
-
-### M2. 实现回写与校验（P0）
-交付内容：
-- 在 Graph provider 中实现 `WriteMessage`。
-- 打通 `process --write-back --verify-write-back` 行为。
-- 回写后至少完成“可读回校验”（message id 或 hash 校验）。
+- 强化 Graph 回写异常处理与回滚策略。
+- 增加指定文件夹回写、默认原文件夹回写的端到端验证。
+- 补 provider/mock 集成测试，覆盖创建、校验、删除原邮件等路径。
 
 验收标准：
 - 集成测试可验证 `WroteBack=true` 且 `Verified=true`。
 - 回写失败可返回可诊断错误，不污染同步状态。
 
-### M3. 减少明文暴露（P1）
+### M2. 减少明文暴露（P1）
 交付内容：
 - 增加 `--save-plain`（默认 false），仅调试模式落盘明文。
 - 处理链路优先内存传递；必要落盘时强制权限 `0600` 并可选自动清理。
@@ -44,7 +33,7 @@
 - 默认配置下不产生明文 `.eml` 文件。
 - 文档明确审计与调试模式下的数据留存策略。
 
-### M4. 可运维能力（P1）
+### M3. 可运维能力（P1）
 交付内容：
 - 结构化日志字段：`message_id`、`folder`、`format`、`wrote_back`、`verified`。
 - 增加基础指标：处理总数、失败数、重试数、耗时分布。
@@ -61,7 +50,7 @@
   - `go vet ./...`
 
 ## 5. 建议执行顺序
-1. 先完成 M1（不依赖回写实现，风险最低）。
-2. 再完成 M2，形成“真正闭环”。
-3. 完成 M3 降低安全暴露面。
-4. 最后补 M4 提升稳定运营能力。
+1. 先完成 M1，补强真实回写路径和校验。
+2. 再完成 M2，降低明文暴露面。
+3. 完成 M3 提升稳定运营能力。
+4. 然后再扩展 Gmail provider 与 webhook。
