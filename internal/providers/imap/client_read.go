@@ -165,7 +165,15 @@ func (c *client) fetchBodyByUIDViaGoIMAP(ctx context.Context, folder string, uid
 }
 
 func (c *client) withReadOnlyMailbox(ctx context.Context, folder string, fn func(*goimapclient.Client, mailboxStatus) error) error {
-	cli, err := c.connectReader(ctx)
+	return c.withMailbox(ctx, folder, true, fn)
+}
+
+func (c *client) withReadWriteMailbox(ctx context.Context, folder string, fn func(*goimapclient.Client, mailboxStatus) error) error {
+	return c.withMailbox(ctx, folder, false, fn)
+}
+
+func (c *client) withMailbox(ctx context.Context, folder string, readOnly bool, fn func(*goimapclient.Client, mailboxStatus) error) error {
+	cli, err := c.connectClient(ctx)
 	if err != nil {
 		return err
 	}
@@ -173,7 +181,7 @@ func (c *client) withReadOnlyMailbox(ctx context.Context, folder string, fn func
 		_ = cli.Logout()
 	}()
 
-	mbox, err := cli.Select(encodeMailboxName(folder), true)
+	mbox, err := cli.Select(folder, readOnly)
 	if err != nil {
 		return err
 	}
@@ -183,7 +191,7 @@ func (c *client) withReadOnlyMailbox(ctx context.Context, folder string, fn func
 	})
 }
 
-func (c *client) connectReader(ctx context.Context) (*goimapclient.Client, error) {
+func (c *client) connectClient(ctx context.Context) (*goimapclient.Client, error) {
 	token, err := c.tokenSource.AccessTokenForScopes(ctx, c.scopes)
 	if err != nil {
 		return nil, err

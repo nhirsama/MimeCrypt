@@ -103,21 +103,11 @@ func (c *client) writeMessage(ctx context.Context, req provider.WriteRequest) (p
 	if internalDate.IsZero() {
 		internalDate = extractMessageDate(req.MIME)
 	}
-	var createdUID uint64
-	err := c.withSelectedMailbox(ctx, targetFolder, false, func(sess *imapSession, _ mailboxStatus) error {
-		if _, ok := sess.capabilities["UIDPLUS"]; !ok {
-			return fmt.Errorf("IMAP 服务器未声明 UIDPLUS，无法安全删除原邮件")
-		}
-		appended, err := sess.append(targetFolder, nil, internalDate, req.MIME)
-		if err != nil {
-			return err
-		}
-		createdUID = appended.UID
-		return nil
-	})
+	appended, err := c.appendViaGoIMAP(ctx, targetFolder, nil, internalDate, req.MIME)
 	if err != nil {
 		return provider.WriteResult{}, err
 	}
+	createdUID := appended.UID
 
 	if createdUID == 0 {
 		createdUID, err = c.findProcessedUID(ctx, targetFolder, req.Source.FolderID, messageID, req.Source.ID)
@@ -194,64 +184,11 @@ func (c *client) verifyProcessedMessage(ctx context.Context, folder string, uid 
 }
 
 func (c *client) findProcessedUID(ctx context.Context, folder, sourceFolder, internetMessageID, originalID string) (uint64, error) {
-	folder = c.mailboxOrDefault(folder)
-	sourceFolder = c.mailboxOrDefault(sourceFolder)
-	originalUID, _ := parseUID(originalID)
-	var found uint64
-
-	err := c.withSelectedMailbox(ctx, folder, true, func(sess *imapSession, _ mailboxStatus) error {
-		ids, err := sess.uidSearchHeader("Message-ID", internetMessageID)
-		if err != nil {
-			return err
-		}
-		for _, uid := range ids {
-			if folder == sourceFolder && uid == originalUID {
-				continue
-			}
-			fetched, err := sess.fetchBody(uid)
-			if err != nil {
-				return err
-			}
-			if fetched != nil && isProcessedEncryptedMIME(fetched.Literal) {
-				found = uid
-				return nil
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return 0, err
-	}
-
-	return found, nil
+	return c.findProcessedUIDViaGoIMAP(ctx, folder, sourceFolder, internetMessageID, originalID)
 }
 
 func (c *client) deleteOriginalIfExists(ctx context.Context, source provider.MessageRef) error {
-	uid, err := parseUID(source.ID)
-	if err != nil {
-		return err
-	}
-	folder := c.mailboxOrDefault(source.FolderID)
-
-	return c.withSelectedMailbox(ctx, folder, false, func(sess *imapSession, _ mailboxStatus) error {
-		if _, ok := sess.capabilities["UIDPLUS"]; !ok {
-			return fmt.Errorf("IMAP 服务器未声明 UIDPLUS，无法安全删除原邮件")
-		}
-		ids, err := sess.uidSearch(fmt.Sprintf("UID %d", uid))
-		if err != nil {
-			return err
-		}
-		if len(ids) == 0 {
-			return nil
-		}
-		if err := sess.uidStoreDeleted(uid); err != nil {
-			return err
-		}
-		if err := sess.uidExpunge(uid); err != nil {
-			return err
-		}
-		return nil
-	})
+	return c.deleteOriginalIfExistsViaGoIMAP(ctx, source)
 }
 
 func (c *client) fetchHeadersByUIDs(ctx context.Context, folder string, uids []uint64) ([]provider.Message, error) {
