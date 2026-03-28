@@ -191,7 +191,7 @@ go run ./cmd/mimecrypt run --debug-save-first --save-output --output-dir ./outpu
 ```
 
 需要注意的是，`process` 和 `run` 已经接入真实加密与邮箱回写；默认回写到原文件夹，也可以通过 `--write-back-folder` 指定目标文件夹。
-当前实验分支默认 provider 是 `imap`，默认回写后端也是 `imap`。这样读写两侧都基于 RFC 822 / MIME 和 IMAP `APPEND`，不再依赖 Graph draft 语义或 EWS 生命周期。
+当前默认 provider 是 `imap`，默认回写后端也是 `imap`。这样读写两侧都基于 RFC 822 / MIME 和 IMAP `APPEND`，不再依赖 Graph draft 语义或 EWS 生命周期。
 
 ## 配置
 
@@ -233,7 +233,7 @@ export MIMECRYPT_GPG_BINARY="gpg"
 
 说明：
 
-- `MIMECRYPT_PROVIDER` 当前支持 `imap` 和 `graph`；实验分支默认 `imap`
+- `MIMECRYPT_PROVIDER` 当前支持 `imap` 和 `graph`；默认 `imap`
 - `MIMECRYPT_CLIENT_ID` 默认使用项目内置的应用 ID，也可以显式覆盖成你自己的应用注册
 - `MIMECRYPT_STATE_DIR` 用来保存 token 和同步状态
 - `MIMECRYPT_OUTPUT_DIR` 仅在开启 `MIMECRYPT_SAVE_OUTPUT=true` 或 `--save-output` 时用于保存本地 `PGP/MIME .eml`
@@ -261,6 +261,30 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - 使用 `graph` provider 读信时，仍然需要 `Mail.ReadWrite`
 - 如果你之前是在旧版本上登录过，需要重新执行 `logout` 和 `login`，以获取包含 IMAP scope 的新 token
 - `graph` 写回后端仍保留作为可选项，但 Outlook Web 会把导入结果显示为 draft；如果要求“真实收件邮件”语义，应优先使用默认的 `imap`
+
+## 回写行为
+
+MimeCrypt 当前保留两类回写/上传行为：
+
+1. 标准邮箱协议回写
+   - 当前实现：`imap`
+   - 底层方式：`IMAP APPEND`
+   - 结果语义：更接近“邮箱里新增一封真实邮件”，不会走 Graph draft 语义
+   - 主要副作用：
+     - 命令里的 `message-id` 在 IMAP 下是 `UID`
+     - 依赖 `MIMECRYPT_IMAP_USERNAME`
+     - 文件夹标识在 IMAP 下使用 mailbox 名称，不是 Graph folder id
+     - 某些客户端对 PGP/MIME 的 UI 展示仍可能不一致，但不会因为 Graph draft 机制被显示成草稿
+
+2. API 回写
+   - 当前实现：`graph` 和 `ews`
+   - 结果语义：通过服务端 API 导入邮件，而不是标准邮箱协议追加
+   - 主要副作用：
+     - `graph` 写回在 Outlook Web 上可能显示为 draft，这是 Graph 自身语义限制
+     - `ews` 可以更接近真实收件语义，但 Exchange Online 已进入退役周期，不适合作为长期主路径
+     - API 路径通常依赖 provider 自己的消息/文件夹 ID 体系，兼容性和客户端展示行为更依赖服务端实现
+
+如果你启用了 `--protect-subject` 或 `MIMECRYPT_PROTECT_SUBJECT=true`，不论走哪种回写方式，外层 `Subject` 都会写成 `...`；解密后的原始主题保持不变。Thunderbird 这类支持 OpenPGP/MIME 的客户端解密后可以显示真实标题，Outlook 这类主要看外层头的客户端通常会显示 `...`。
 
 ## 回写实现说明
 
