@@ -3,13 +3,10 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -47,11 +44,6 @@ type client struct {
 	now        func() time.Time
 }
 
-type tokenStore struct {
-	path        string
-	legacyPaths []string
-}
-
 type Session struct {
 	client *client
 	store  *tokenStore
@@ -69,16 +61,18 @@ func NewSession(cfg appconfig.AuthConfig, httpClient *http.Client) (*Session, er
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
 
+	store, err := newTokenStore(cfg)
+	if err != nil {
+		return nil, err
+	}
+
 	return &Session{
 		client: &client{
 			httpClient: httpClient,
 			cfg:        cfg,
 			now:        time.Now,
 		},
-		store: &tokenStore{
-			path:        cfg.TokenPath(),
-			legacyPaths: cfg.LegacyTokenPaths(),
-		},
+		store: store,
 	}, nil
 }
 
@@ -320,114 +314,6 @@ func (c *client) toToken(payload tokenResponse) Token {
 		Scope:        payload.Scope,
 		ExpiresAt:    c.now().Add(time.Duration(payload.ExpiresIn) * time.Second),
 	}
-}
-
-func (s *tokenStore) load() (Token, error) {
-	paths := s.paths()
-	if len(paths) == 0 {
-		return Token{}, fmt.Errorf("token 路径不能为空")
-	}
-
-	var lastErr error
-	for _, path := range paths {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			lastErr = fmt.Errorf("读取 token 缓存失败: %w", err)
-			continue
-		}
-
-		var token Token
-		if err := json.Unmarshal(content, &token); err != nil {
-			return Token{}, fmt.Errorf("解析 token 缓存失败: %w", err)
-		}
-
-		return token, nil
-	}
-
-	if lastErr != nil {
-		return Token{}, lastErr
-	}
-
-	return Token{}, fmt.Errorf("未找到登录状态，请先执行 login")
-}
-
-func (s *tokenStore) save(token Token) error {
-	if s.path == "" {
-		return fmt.Errorf("token 路径不能为空")
-	}
-
-	if err := writeJSONFile(s.path, token, 0o600); err != nil {
-		return err
-	}
-	for _, path := range s.legacyPaths {
-		if path == "" || path == s.path {
-			continue
-		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("删除旧 token 缓存失败: %w", err)
-		}
-	}
-	return nil
-}
-
-func (s *tokenStore) delete() error {
-	paths := s.paths()
-	if len(paths) == 0 {
-		return fmt.Errorf("token 路径不能为空")
-	}
-
-	for _, path := range paths {
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("删除 token 缓存失败: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func (s *tokenStore) paths() []string {
-	if s == nil {
-		return nil
-	}
-
-	seen := make(map[string]struct{})
-	paths := make([]string, 0, 1+len(s.legacyPaths))
-	for _, path := range append([]string{s.path}, s.legacyPaths...) {
-		path = strings.TrimSpace(path)
-		if path == "" {
-			continue
-		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		paths = append(paths, path)
-	}
-	return paths
-}
-
-func writeJSONFile(path string, value any, mode os.FileMode) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("创建状态目录失败: %w", err)
-	}
-
-	content, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return fmt.Errorf("序列化状态失败: %w", err)
-	}
-
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, content, mode); err != nil {
-		return fmt.Errorf("写入临时状态文件失败: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("替换状态文件失败: %w", err)
-	}
-
-	return nil
 }
 
 func consentScopes(groups ...[]string) []string {

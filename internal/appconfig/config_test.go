@@ -45,6 +45,12 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.Auth.StateDir != wantStateDir {
 		t.Fatalf("Auth.StateDir = %q, want %q", cfg.Auth.StateDir, wantStateDir)
 	}
+	if cfg.Auth.TokenStore != defaultTokenStore {
+		t.Fatalf("Auth.TokenStore = %q, want %q", cfg.Auth.TokenStore, defaultTokenStore)
+	}
+	if cfg.Auth.KeyringService != defaultKeyringService {
+		t.Fatalf("Auth.KeyringService = %q, want %q", cfg.Auth.KeyringService, defaultKeyringService)
+	}
 	if cfg.Mail.Client.GraphBaseURL != defaultGraphBaseURL {
 		t.Fatalf("Mail.Client.GraphBaseURL = %q, want %q", cfg.Mail.Client.GraphBaseURL, defaultGraphBaseURL)
 	}
@@ -97,6 +103,8 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("MIMECRYPT_EWS_SCOPES", "scope-ews")
 	t.Setenv("MIMECRYPT_IMAP_SCOPES", "scope-imap offline_access")
 	t.Setenv("MIMECRYPT_STATE_DIR", "/state")
+	t.Setenv("MIMECRYPT_TOKEN_STORE", "keyring")
+	t.Setenv("MIMECRYPT_KEYRING_SERVICE", "mimecrypt-test")
 	t.Setenv("MIMECRYPT_GRAPH_BASE_URL", "https://graph.example.com/v1.0")
 	t.Setenv("MIMECRYPT_EWS_BASE_URL", "https://ews.example.com/EWS/Exchange.asmx")
 	t.Setenv("MIMECRYPT_IMAP_ADDR", "imap.example.com:993")
@@ -139,6 +147,12 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	}
 	if cfg.Auth.StateDir != "/state" || cfg.Mail.Sync.StateDir != "/state" {
 		t.Fatalf("unexpected state dirs: auth=%q sync=%q", cfg.Auth.StateDir, cfg.Mail.Sync.StateDir)
+	}
+	if cfg.Auth.TokenStore != "keyring" {
+		t.Fatalf("Auth.TokenStore = %q, want keyring", cfg.Auth.TokenStore)
+	}
+	if cfg.Auth.KeyringService != "mimecrypt-test" {
+		t.Fatalf("Auth.KeyringService = %q, want mimecrypt-test", cfg.Auth.KeyringService)
 	}
 	if cfg.Mail.Client.GraphBaseURL != "https://graph.example.com/v1.0" {
 		t.Fatalf("Mail.Client.GraphBaseURL = %q", cfg.Mail.Client.GraphBaseURL)
@@ -269,6 +283,24 @@ func TestAuthConfigTokenPaths(t *testing.T) {
 	}
 	if got := cfg.TokenPaths(); !reflect.DeepEqual(got, []string{"/state/token.json", "/state/graph-token.json"}) {
 		t.Fatalf("TokenPaths() = %#v", got)
+	}
+}
+
+func TestAuthConfigValidateRejectsInvalidTokenStore(t *testing.T) {
+	t.Parallel()
+
+	cfg := AuthConfig{
+		ClientID:         "client-id",
+		Tenant:           "organizations",
+		AuthorityBaseURL: "https://login.microsoftonline.com",
+		IMAPScopes:       []string{"scope-imap"},
+		StateDir:         "/state",
+		TokenStore:       "invalid",
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "token store 不支持") {
+		t.Fatalf("expected invalid token store error, got %v", err)
 	}
 }
 

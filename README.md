@@ -319,11 +319,16 @@ MimeCrypt 当前保留两类回写/上传行为：
 
 ## 文件说明
 
-- `token.json`：当前 provider 的 token 缓存
+- `token.json`：默认的 token 缓存文件；如果设置 `MIMECRYPT_TOKEN_STORE=keyring`，主存储会改为系统 keyring，旧的 `token.json` / `graph-token.json` 会在成功迁移后被清理
 - `sync-<folder>.json`：文件夹增量同步状态
 - `audit.jsonl`：关键流程审计日志，按 JSONL 逐行追加
 - `output/*.eml`：仅在开启 `save-output` 时生成的 PGP/MIME 邮件文件
 - `backup/*.pgp`：对原始 MIME 源字节直接加密后的本地备份
+
+可选的凭证存储配置：
+
+- `MIMECRYPT_TOKEN_STORE=file|keyring`：默认 `file`
+- `MIMECRYPT_KEYRING_SERVICE=<service-name>`：只在 `keyring` 模式下使用，默认 `mimecrypt`
 
 从长期目标看，磁盘落盘应尽量只在调试、审计或故障恢复场景下使用，而不是默认主路径。
 

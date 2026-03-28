@@ -28,6 +28,8 @@ const (
 	defaultOutputDir         = "output"
 	defaultTokenFileName     = "token.json"
 	legacyTokenFileName      = "graph-token.json"
+	defaultTokenStore        = "file"
+	defaultKeyringService    = "mimecrypt"
 )
 
 type Config struct {
@@ -44,6 +46,8 @@ type AuthConfig struct {
 	EWSScopes        []string
 	IMAPScopes       []string
 	StateDir         string
+	TokenStore       string
+	KeyringService   string
 }
 
 type MailConfig struct {
@@ -111,6 +115,8 @@ func LoadFromEnv() (Config, error) {
 			EWSScopes:        splitScopes(getenvDefault("MIMECRYPT_EWS_SCOPES", defaultEWSScopes)),
 			IMAPScopes:       splitScopes(getenvDefault("MIMECRYPT_IMAP_SCOPES", defaultIMAPScopes)),
 			StateDir:         stateDir,
+			TokenStore:       getenvDefault("MIMECRYPT_TOKEN_STORE", defaultTokenStore),
+			KeyringService:   getenvDefault("MIMECRYPT_KEYRING_SERVICE", defaultKeyringService),
 		},
 		Mail: MailConfig{
 			Client: MailClientConfig{
@@ -158,6 +164,15 @@ func (c AuthConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.StateDir) == "" {
 		return fmt.Errorf("state dir 不能为空")
+	}
+	switch c.TokenStoreMode() {
+	case "file":
+	case "keyring":
+		if strings.TrimSpace(c.KeyringServiceName()) == "" {
+			return fmt.Errorf("keyring service 不能为空")
+		}
+	default:
+		return fmt.Errorf("token store 不支持: %s", c.TokenStore)
 	}
 	if len(c.GraphScopes) == 0 && len(c.EWSScopes) == 0 && len(c.IMAPScopes) == 0 {
 		return fmt.Errorf("至少需要一组 protocol scopes")
@@ -247,6 +262,22 @@ func (c MailConfig) ValidateSync() error {
 
 func (c AuthConfig) TokenPath() string {
 	return filepath.Join(c.StateDir, defaultTokenFileName)
+}
+
+func (c AuthConfig) TokenStoreMode() string {
+	value := strings.ToLower(strings.TrimSpace(c.TokenStore))
+	if value == "" {
+		return defaultTokenStore
+	}
+	return value
+}
+
+func (c AuthConfig) KeyringServiceName() string {
+	value := strings.TrimSpace(c.KeyringService)
+	if value == "" {
+		return defaultKeyringService
+	}
+	return value
 }
 
 func (c AuthConfig) LegacyTokenPaths() []string {
