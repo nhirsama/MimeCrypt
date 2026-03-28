@@ -61,6 +61,19 @@ func TestWriterWriteMessageUsesSourceFolderByDefault(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"new-1","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1.0/me/messages/new-1":
+			var payload struct {
+				IsRead bool `json:"isRead"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			if payload.IsRead {
+				t.Fatalf("isRead = true, want false")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"new-1","parentFolderId":"source-folder"}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-1":
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -122,6 +135,19 @@ func TestWriterWriteMessageUsesExplicitDestinationAndVerify(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":"new-2","parentFolderId":"folder-archive"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1.0/me/messages/new-2":
+			var payload struct {
+				IsRead bool `json:"isRead"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("Decode() error = %v", err)
+			}
+			if payload.IsRead {
+				t.Fatalf("isRead = true, want false")
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"new-2","parentFolderId":"folder-archive"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.0/me/messages/new-2":
 			if got := r.URL.Query().Get("$select"); got != "id,parentFolderId" {
 				t.Fatalf("$select = %q, want id,parentFolderId", got)
@@ -172,6 +198,10 @@ func TestWriterWriteMessageKeepsCreatedMessageWhenDeletingOriginalFails(t *testi
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages/draft-keep/move":
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"new-keep","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1.0/me/messages/new-keep":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"new-keep","parentFolderId":"source-folder"}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-rollback":
 			http.Error(w, "delete failed", http.StatusInternalServerError)

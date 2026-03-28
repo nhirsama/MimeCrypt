@@ -54,6 +54,9 @@ func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (p
 	if err != nil {
 		return provider.WriteResult{}, w.createdMessageRetainedError(createdDraft.ID, req.Source.ID, fmt.Errorf("移动回写邮件到目标文件夹 %s 失败: %w", targetFolderID, err))
 	}
+	if err := w.markUnread(ctx, created.ID); err != nil {
+		return provider.WriteResult{}, w.createdMessageRetainedError(created.ID, req.Source.ID, fmt.Errorf("将回写邮件 %s 标记为未读失败: %w", created.ID, err))
+	}
 
 	if req.Verify {
 		if err := w.verifyMessage(ctx, created.ID, targetFolderID); err != nil {
@@ -161,6 +164,31 @@ func (w *writer) moveMessage(ctx context.Context, messageID, targetFolderID stri
 	}
 
 	return message, nil
+}
+
+func (w *writer) markUnread(ctx context.Context, messageID string) error {
+	endpoint := fmt.Sprintf("%s/me/messages/%s", w.baseURL, url.PathEscape(messageID))
+	body, err := json.Marshal(struct {
+		IsRead bool `json:"isRead"`
+	}{
+		IsRead: false,
+	})
+	if err != nil {
+		return fmt.Errorf("序列化标记未读请求失败: %w", err)
+	}
+
+	req, err := w.newRequest(ctx, http.MethodPatch, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	var message provider.Message
+	if err := w.doJSON(req, &message, http.StatusOK); err != nil {
+		return fmt.Errorf("更新回写邮件未读状态失败: %w", err)
+	}
+
+	return nil
 }
 
 func (w *writer) verifyMessage(ctx context.Context, messageID, targetFolderID string) error {
