@@ -20,7 +20,7 @@ type Result struct {
 	StateDir    string
 }
 
-// Run 执行登录并验证当前账号信息。
+// Run 执行登录流程，并读取登录账号信息用于校验。
 func (s *Service) Run(ctx context.Context, out io.Writer) (Result, error) {
 	if _, err := s.Session.Login(ctx, out); err != nil {
 		return Result{}, err

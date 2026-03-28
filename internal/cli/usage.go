@@ -24,12 +24,12 @@ func exactArgs(n int) cobra.PositionalArgs {
 		case len(args) < n:
 			return &usageError{
 				cmd:     cmd,
-				message: fmt.Sprintf("缺少必需参数，需要 %d 个，实际收到 %d 个", n, len(args)),
+				message: fmt.Sprintf("缺少必需参数，应提供 %d 个，实际收到 %d 个", n, len(args)),
 			}
 		case len(args) > n:
 			return &usageError{
 				cmd:     cmd,
-				message: fmt.Sprintf("参数过多，需要 %d 个，实际收到 %d 个", n, len(args)),
+				message: fmt.Sprintf("位置参数过多，应提供 %d 个，实际收到 %d 个", n, len(args)),
 			}
 		default:
 			return nil
@@ -43,12 +43,12 @@ func argRange(minArgs, maxArgs int) cobra.PositionalArgs {
 		case len(args) < minArgs:
 			return &usageError{
 				cmd:     cmd,
-				message: fmt.Sprintf("缺少必需参数，至少需要 %d 个，实际收到 %d 个", minArgs, len(args)),
+				message: fmt.Sprintf("缺少必需参数，至少应提供 %d 个，实际收到 %d 个", minArgs, len(args)),
 			}
 		case len(args) > maxArgs:
 			return &usageError{
 				cmd:     cmd,
-				message: fmt.Sprintf("参数过多，最多需要 %d 个，实际收到 %d 个", maxArgs, len(args)),
+				message: fmt.Sprintf("位置参数过多，最多应提供 %d 个，实际收到 %d 个", maxArgs, len(args)),
 			}
 		default:
 			return nil
@@ -64,7 +64,7 @@ func noArgs() cobra.PositionalArgs {
 
 		return &usageError{
 			cmd:     cmd,
-			message: fmt.Sprintf("不需要位置参数，实际收到 %d 个", len(args)),
+			message: fmt.Sprintf("该命令不接受位置参数，实际收到 %d 个", len(args)),
 		}
 	}
 }

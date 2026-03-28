@@ -24,7 +24,7 @@ func newHealthCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "health",
-		Short: "检查运行环境和认证状态；使用 --deep 执行活体连通性探测",
+		Short: "检查运行环境、缓存凭据与可选连通性状态",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
@@ -54,7 +54,7 @@ func newHealthCmd() *cobra.Command {
 
 	providerFlags.addFlags(cmd)
 	syncFlags.addFlags(cmd)
-	cmd.Flags().BoolVar(&deep, "deep", deep, "执行需要 token 刷新和 provider 连通性的深度健康检查")
+	cmd.Flags().BoolVar(&deep, "deep", deep, "执行包含 token 刷新与 provider 连通性探测的深度检查")
 	cmd.Flags().DurationVar(&timeout, "timeout", timeout, "健康检查总超时时间")
 
 	return cmd

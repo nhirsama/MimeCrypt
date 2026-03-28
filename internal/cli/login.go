@@ -22,7 +22,7 @@ func newLoginCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "login [imap-username]",
-		Short: "通过 device code 登录并缓存 token",
+		Short: "执行 device code 登录并写入本地 token 缓存",
 		Args:  argRange(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
@@ -46,7 +46,7 @@ func newLoginCmd() *cobra.Command {
 				}
 			}
 
-			fmt.Printf("登录成功，当前账号: %s (%s)\n", result.Account, result.DisplayName)
+			fmt.Printf("登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
 			fmt.Printf("token 已缓存到 %s\n", result.StateDir)
 
 			return nil

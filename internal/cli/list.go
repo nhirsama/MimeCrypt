@@ -24,8 +24,8 @@ func newListCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list <end> | list <start> <end>",
-		Short: "列出指定文件夹中最新一段邮件的摘要",
-		Long:  "列出指定文件夹中按接收时间倒序排列的一段邮件摘要；范围语义使用半开区间 [start,end)。",
+		Short: "列出指定文件夹中最近一段邮件摘要",
+		Long:  "列出指定文件夹中按接收时间倒序排列的一段邮件摘要，范围语义使用半开区间 [start,end)。",
 		Example: strings.Join([]string{
 			"mimecrypt list 10",
 			"mimecrypt list 10 20",
@@ -72,7 +72,7 @@ func newListCmd() *cobra.Command {
 	}
 
 	providerFlags.addFlags(cmd)
-	cmd.Flags().StringVar(&folder, "folder", folder, "要列出的 Graph 邮件文件夹标识，例如 inbox")
+	cmd.Flags().StringVar(&folder, "folder", folder, "待列出的邮件文件夹标识；Graph 使用 folder id，IMAP 使用 mailbox 名称")
 
 	return cmd
 }
@@ -102,7 +102,7 @@ func parseLatestRange(args []string) (int, int, error) {
 		}
 		return start, end, nil
 	default:
-		return 0, 0, fmt.Errorf("需要 1 个或 2 个范围参数")
+		return 0, 0, fmt.Errorf("范围参数数量应为 1 个或 2 个")
 	}
 }
 

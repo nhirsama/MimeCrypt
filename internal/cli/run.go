@@ -29,7 +29,7 @@ func newRunCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "发现邮件并进行路由处理",
+		Short: "执行邮件发现、处理与回写流程",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
@@ -91,9 +91,9 @@ func newRunCmd() *cobra.Command {
 	providerFlags.addFlags(cmd)
 	processingFlags.addFlags(cmd)
 	syncFlags.addFlags(cmd)
-	cmd.Flags().BoolVar(&once, "once", false, "只执行一次同步后退出")
+	cmd.Flags().BoolVar(&once, "once", false, "执行一个同步周期后退出")
 	cmd.Flags().BoolVar(&includeExisting, "include-existing", false, "首次启动时也下载现有历史邮件")
-	cmd.Flags().BoolVar(&debugSaveFirst, "debug-save-first", false, "调试模式：直接处理当前文件夹中最新的一封邮件并退出")
+	cmd.Flags().BoolVar(&debugSaveFirst, "debug-save-first", false, "调试模式下处理当前文件夹中最新的一封邮件并退出")
 	cmd.Flags().BoolVar(&writeBack, "write-back", false, "处理后把邮件回写到邮箱")
 	cmd.Flags().BoolVar(&verifyWriteBack, "verify-write-back", false, "回写后校验邮件是否成功写入")
 

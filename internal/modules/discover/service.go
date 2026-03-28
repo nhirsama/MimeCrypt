@@ -135,7 +135,7 @@ func (s *Service) RunCycle(ctx context.Context, req Request) (Result, error) {
 	return result, nil
 }
 
-// DebugFirst 在调试模式下抓取当前文件夹中的第一封邮件并交给处理模块。
+// DebugFirst 在调试模式下提取当前文件夹中的首封邮件并交由处理模块执行。
 func (s *Service) DebugFirst(ctx context.Context, req Request) (DebugResult, error) {
 	message, found, err := s.Client.FirstMessageInFolder(ctx, req.Folder)
 	if err != nil {

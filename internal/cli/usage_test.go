@@ -20,7 +20,7 @@ func TestExecuteRootCommandShowsHintForMissingArgs(t *testing.T) {
 	}
 
 	output := stderr.String()
-	if !strings.Contains(output, "提示: 缺少必需参数，需要 2 个，实际收到 1 个") {
+	if !strings.Contains(output, "提示: 缺少必需参数，应提供 2 个，实际收到 1 个") {
 		t.Fatalf("expected hint message, got %q", output)
 	}
 	if !strings.Contains(output, "mimecrypt encrypt <input.eml> <output.eml>") {
@@ -75,7 +75,7 @@ func TestNoArgsRejectsUnexpectedPositionals(t *testing.T) {
 
 	cmd := newLoginCmd()
 	err := noArgs()(cmd, []string{"extra"})
-	if err == nil || !strings.Contains(err.Error(), "不需要位置参数") {
+	if err == nil || !strings.Contains(err.Error(), "该命令不接受位置参数") {
 		t.Fatalf("expected noArgs error, got %v", err)
 	}
 }

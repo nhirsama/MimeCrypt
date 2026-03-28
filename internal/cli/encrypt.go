@@ -25,7 +25,7 @@ func newEncryptCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "encrypt <input.eml> <output.eml>",
-		Short: "加密本地 MIME 文件并输出 PGP/MIME",
+		Short: "将本地 MIME 文件转换为 PGP/MIME",
 		Args:  exactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			inputPath := strings.TrimSpace(args[0])
@@ -64,7 +64,7 @@ func newEncryptCmd() *cobra.Command {
 	cmd.Flags().StringArrayVarP(&recipients, "recipient", "r", nil, "指定加密收件人邮箱，可重复")
 	cmd.Flags().StringArrayVar(&keys, "key", nil, "指定 GPG key（指纹、key id 或 user id），可重复")
 	cmd.Flags().StringVar(&gpgBinary, "gpg-binary", "", "gpg 可执行文件路径，覆盖 MIMECRYPT_GPG_BINARY")
-	cmd.Flags().BoolVar(&protectSubject, "protect-subject", false, "是否将外层邮件主题写为 \"...\"，以贴近 Thunderbird 的加密主题展示")
+	cmd.Flags().BoolVar(&protectSubject, "protect-subject", false, "将外层邮件主题写为 \"...\"")
 
 	return cmd
 }

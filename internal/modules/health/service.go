@@ -87,7 +87,7 @@ func (s *Service) checkStateDir() Check {
 		return Check{Name: "state_dir", Detail: fmt.Sprintf("不可访问: %v", err)}
 	}
 	if !info.IsDir() {
-		return Check{Name: "state_dir", Detail: "不是目录"}
+		return Check{Name: "state_dir", Detail: "目录类型无效"}
 	}
 	return Check{Name: "state_dir", OK: true, Detail: stateDir}
 }
@@ -128,7 +128,7 @@ func (s *Service) checkCachedToken() Check {
 			if strings.TrimSpace(token.RefreshToken) == "" {
 				return Check{Name: "cached_token", Detail: detail + "，且无 refresh token"}
 			}
-			detail += "，需要刷新"
+			detail += "，已过期，可执行刷新"
 		}
 	}
 	return Check{Name: "cached_token", OK: true, Detail: detail}
@@ -158,7 +158,7 @@ func (s *Service) checkProvider(ctx context.Context) Check {
 func (s *Service) checkWriteBack(ctx context.Context) Check {
 	probe, ok := s.Writer.(provider.HealthProber)
 	if !ok {
-		return Check{Name: "writeback_probe", Detail: "当前回写实现不支持健康探测"}
+		return Check{Name: "writeback_probe", Detail: "该回写实现未提供健康探测能力"}
 	}
 	detail, err := probe.HealthCheck(ctx)
 	if err != nil {

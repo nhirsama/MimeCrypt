@@ -24,7 +24,7 @@ func executeRootCommand(ctx context.Context, rootCmd *cobra.Command) error {
 func newRootCmd() *cobra.Command {
 	rootCmd := &cobra.Command{
 		Use:           "mimecrypt",
-		Short:         "登录、抓取、处理并回写 MIME 邮件的 CLI 工具",
+		Short:         "MIME 邮件读取、加密与回写命令行工具",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}

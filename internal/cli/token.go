@@ -18,7 +18,7 @@ func newTokenCmd() *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "token",
-		Short: "查看或导入本地 token 状态",
+		Short: "查询或导入本地 token 状态",
 	}
 	root.AddCommand(newTokenStatusCmd(cfg))
 	root.AddCommand(newTokenImportCmd(cfg))
@@ -30,7 +30,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "查看当前本地 token 状态",
+		Short: "查询本地 token 状态",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
@@ -74,7 +74,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "import [path|-]",
-		Short: "从 JSON 文件或 stdin 导入 token",
+		Short: "从 JSON 文件或标准输入导入 token",
 		Args:  argRange(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = providerFlags.apply(cfg, cmd)

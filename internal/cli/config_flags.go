@@ -36,7 +36,7 @@ func newProviderConfigFlags(cfg appconfig.Config) providerConfigFlags {
 
 func (f *providerConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.clientID, "client-id", f.clientID, "Microsoft Entra 应用的 Client ID")
-	cmd.Flags().StringVar(&f.tenant, "tenant", f.tenant, "租户标识，默认使用 organizations")
+	cmd.Flags().StringVar(&f.tenant, "tenant", f.tenant, "租户标识；缺省值为 organizations")
 	cmd.Flags().StringVar(&f.stateDir, "state-dir", f.stateDir, "本地状态目录")
 	cmd.Flags().StringVar(&f.authorityBaseURL, "authority-base-url", f.authorityBaseURL, "Microsoft Entra 认证基础地址")
 	cmd.Flags().StringVar(&f.graphBaseURL, "graph-base-url", f.graphBaseURL, "Microsoft Graph 基础地址")
@@ -93,15 +93,15 @@ func newProcessingConfigFlags(cfg appconfig.Config) processingConfigFlags {
 
 func (f *processingConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.outputDir, "output-dir", f.outputDir, "处理结果输出目录")
-	cmd.Flags().BoolVar(&f.saveOutput, "save-output", f.saveOutput, "是否将加密后的 PGP/MIME 额外保存到本地 output-dir，默认关闭")
+	cmd.Flags().BoolVar(&f.saveOutput, "save-output", f.saveOutput, "将加密后的 PGP/MIME 额外保存到本地 output-dir")
 	cmd.Flags().StringVar(&f.workDir, "work-dir", f.workDir, "处理过程临时目录；为空时使用系统临时目录")
-	cmd.Flags().BoolVar(&f.protectSubject, "protect-subject", f.protectSubject, "是否将外层邮件主题写为 \"...\"，以贴近 Thunderbird 的加密主题展示")
-	cmd.Flags().StringVar(&f.backupDir, "backup-dir", f.backupDir, "源邮件加密备份目录；保存 gpg 直接加密后的文件")
+	cmd.Flags().BoolVar(&f.protectSubject, "protect-subject", f.protectSubject, "将外层邮件主题写为 \"...\"")
+	cmd.Flags().StringVar(&f.backupDir, "backup-dir", f.backupDir, "源邮件加密备份目录；保存 gpg 加密后的文件")
 	cmd.Flags().StringVar(&f.backupKeyID, "backup-key-id", f.backupKeyID, "备份加密使用的 catch-all GPG key id；设置后所有备份统一用该 key")
 	cmd.Flags().StringVar(&f.auditLogPath, "audit-log-path", f.auditLogPath, "审计日志输出路径（JSONL）")
-	cmd.Flags().BoolVar(&f.auditStdout, "audit-stdout", f.auditStdout, "同时将审计日志输出到 stdout（适合容器日志采集）")
+	cmd.Flags().BoolVar(&f.auditStdout, "audit-stdout", f.auditStdout, "将审计日志同步输出到 stdout，便于容器日志采集")
 	cmd.Flags().StringVar(&f.writeBackProvider, "write-back-provider", f.writeBackProvider, "回写后端；可选 graph、ews 或 imap")
-	cmd.Flags().StringVar(&f.writeBackFolder, "write-back-folder", f.writeBackFolder, "回写目标文件夹标识；默认回写到原文件夹")
+	cmd.Flags().StringVar(&f.writeBackFolder, "write-back-folder", f.writeBackFolder, "回写目标文件夹标识；为空时沿用源文件夹")
 }
 
 func (f processingConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
