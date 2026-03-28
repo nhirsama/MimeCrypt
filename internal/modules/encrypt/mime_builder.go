@@ -16,6 +16,7 @@ import (
 const (
 	processedHeaderKey   = "X-MimeCrypt-Processed"
 	processedHeaderValue = "yes"
+	boundaryMaxAttempts  = 8
 )
 
 var passThroughHeaderKeys = []string{
@@ -29,6 +30,8 @@ var passThroughHeaderKeys = []string{
 	"References",
 	"Reply-To",
 }
+
+var boundaryGenerator = randomBoundary
 
 func buildPGPMIMEMessage(originalMIME, armored []byte, protectSubject ...bool) ([]byte, error) {
 	var out bytes.Buffer
@@ -58,11 +61,15 @@ func newPGPMIMEMessageWriter(originalMIME []byte, out io.Writer, protectSubject 
 	if err != nil {
 		return nil, fmt.Errorf("解析原始 MIME 失败: %w", err)
 	}
-	return newPGPMIMEMessageWriterFromHeader(message.Header, out, protectSubject)
+	return newPGPMIMEMessageWriterFromHeaderWithSource(message.Header, originalMIME, out, protectSubject)
 }
 
 func newPGPMIMEMessageWriterFromHeader(header mail.Header, out io.Writer, protectSubject bool) (*pgpMIMEMessageWriter, error) {
-	boundary, err := newBoundary()
+	return newPGPMIMEMessageWriterFromHeaderWithSource(header, nil, out, protectSubject)
+}
+
+func newPGPMIMEMessageWriterFromHeaderWithSource(header mail.Header, originalMIME []byte, out io.Writer, protectSubject bool) (*pgpMIMEMessageWriter, error) {
+	boundary, err := newBoundary(originalMIME)
 	if err != nil {
 		return nil, err
 	}
@@ -241,8 +248,21 @@ func normalizeCRLF(input []byte) []byte {
 	return []byte(strings.ReplaceAll(text, "\n", "\r\n"))
 }
 
-func newBoundary() (string, error) {
-	token := make([]byte, 8)
+func newBoundary(originalMIME []byte) (string, error) {
+	for i := 0; i < boundaryMaxAttempts; i++ {
+		boundary, err := boundaryGenerator()
+		if err != nil {
+			return "", err
+		}
+		if len(originalMIME) == 0 || !bytes.Contains(originalMIME, []byte(boundary)) {
+			return boundary, nil
+		}
+	}
+	return "", fmt.Errorf("生成 MIME boundary 失败: 与原始内容发生冲突")
+}
+
+func randomBoundary() (string, error) {
+	token := make([]byte, 16)
 	if _, err := rand.Read(token); err != nil {
 		return "", fmt.Errorf("生成 MIME boundary 失败: %w", err)
 	}

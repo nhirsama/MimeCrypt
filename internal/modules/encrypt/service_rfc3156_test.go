@@ -267,6 +267,40 @@ func TestBuildPGPMIMEMessageAddsDateIfMissing(t *testing.T) {
 	}
 }
 
+func TestBuildPGPMIMEMessageAvoidsBoundaryCollisionWithOriginalContent(t *testing.T) {
+	previousGenerator := boundaryGenerator
+	attempt := 0
+	boundaryGenerator = func() (string, error) {
+		attempt++
+		if attempt == 1 {
+			return "mimecrypt-collision", nil
+		}
+		return "mimecrypt-safe", nil
+	}
+	defer func() {
+		boundaryGenerator = previousGenerator
+	}()
+
+	input := []byte(
+		"From: sender@example.com\r\n" +
+			"To: test@example.com\r\n" +
+			"Subject: boundary collision\r\n" +
+			"\r\n" +
+			"mimecrypt-collision should not be reused as boundary\r\n",
+	)
+
+	out, err := buildPGPMIMEMessage(input, []byte("cipher"))
+	if err != nil {
+		t.Fatalf("buildPGPMIMEMessage() error = %v", err)
+	}
+	if bytes.Contains(out, []byte("boundary=\"mimecrypt-collision\"")) {
+		t.Fatalf("unexpected reused boundary in output")
+	}
+	if !bytes.Contains(out, []byte("boundary=\"mimecrypt-safe\"")) {
+		t.Fatalf("expected fallback boundary to be used")
+	}
+}
+
 func TestRunUsesBccForEncryptionButDoesNotEmitBccHeader(t *testing.T) {
 	t.Parallel()
 
