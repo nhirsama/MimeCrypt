@@ -87,14 +87,14 @@ MimeCrypt 的定位是一个自动化邮件加密中间层。
 - 基于 `cobra` 的 CLI 结构
 - Microsoft Graph 的 device code 登录
 - token 本地缓存与自动刷新
-- Microsoft Graph 邮件 MIME 拉取
+- IMAP OAuth 收信与 MIME 拉取
 - 统一 provider 抽象
 - 按邮件 ID 下载邮件
 - 调试模式处理第一封邮件
 - 增量同步发现邮件的基础框架
 - 已加密邮件识别与拒绝重复加密（PGP/S-MIME）
 - 基于 `gpg` 的 PGP/MIME（RFC 3156）加密封装
-- EWS 回写、原文件夹保留回写与可选指定文件夹回写
+- IMAP APPEND 回写、原文件夹保留回写与可选指定文件夹回写
 - 回写后基础校验
 - 关键流程 JSONL 审计日志
 - 本地加密备份目录
@@ -111,6 +111,7 @@ MimeCrypt 的定位是一个自动化邮件加密中间层。
 
 当前内置 provider：
 
+- `imap`：IMAP OAuth 收信与回写
 - `graph`：Microsoft Graph
 
 计划中的 provider：
@@ -135,6 +136,7 @@ go run ./cmd/mimecrypt logout
 
 ```bash
 go run ./cmd/mimecrypt download <message-id> --output-dir ./output
+go run ./cmd/mimecrypt download <message-id> --folder INBOX --output-dir ./output
 ```
 
 列出指定文件夹中最新一段邮件摘要：
@@ -159,10 +161,11 @@ go run ./cmd/mimecrypt encrypt ./plain.eml ./encrypted.eml --recipient alice@exa
 
 ```bash
 go run ./cmd/mimecrypt process <message-id> --save-output --output-dir ./output
+go run ./cmd/mimecrypt process <message-id> --folder INBOX --save-output --output-dir ./output
 go run ./cmd/mimecrypt process <message-id> --backup-dir ./backup --audit-log-path ./audit.jsonl
 go run ./cmd/mimecrypt process <message-id> --backup-key-id 0xDEADBEEF
 go run ./cmd/mimecrypt process <message-id> --write-back
-go run ./cmd/mimecrypt process <message-id> --write-back --write-back-provider ews
+go run ./cmd/mimecrypt process <message-id> --write-back --write-back-provider imap
 go run ./cmd/mimecrypt process <message-id> --write-back --write-back-folder archive
 ```
 
@@ -174,7 +177,7 @@ go run ./cmd/mimecrypt run --poll-interval 1m --save-output --output-dir ./outpu
 go run ./cmd/mimecrypt run --once --backup-dir ./backup --audit-log-path ./audit.jsonl
 go run ./cmd/mimecrypt run --once --backup-key-id 0xDEADBEEF
 go run ./cmd/mimecrypt run --once --write-back
-go run ./cmd/mimecrypt run --once --write-back --write-back-provider ews
+go run ./cmd/mimecrypt run --once --write-back --write-back-provider imap
 go run ./cmd/mimecrypt run --once --write-back --write-back-folder archive
 ```
 
@@ -185,7 +188,7 @@ go run ./cmd/mimecrypt run --debug-save-first --save-output --output-dir ./outpu
 ```
 
 需要注意的是，`process` 和 `run` 已经接入真实加密与邮箱回写；默认回写到原文件夹，也可以通过 `--write-back-folder` 指定目标文件夹。
-当前默认回写后端是 `ews`，因为 Graph 的 `create message` 会把导入邮件标记为 draft，不符合“真实收件邮件”的语义要求。
+当前实验分支默认 provider 是 `imap`，默认回写后端也是 `imap`。这样读写两侧都基于 RFC 822 / MIME 和 IMAP `APPEND`，不再依赖 Graph draft 语义或 EWS 生命周期。
 
 ## 配置
 
@@ -198,7 +201,7 @@ export MIMECRYPT_CLIENT_ID="你的应用 Client ID"
 常用配置：
 
 ```bash
-export MIMECRYPT_PROVIDER="graph"
+export MIMECRYPT_PROVIDER="imap"
 export MIMECRYPT_TENANT="organizations"
 export MIMECRYPT_STATE_DIR="$HOME/.config/mimecrypt"
 export MIMECRYPT_OUTPUT_DIR="./output"
@@ -206,10 +209,13 @@ export MIMECRYPT_SAVE_OUTPUT="false"
 export MIMECRYPT_BACKUP_DIR="./backup"
 export MIMECRYPT_BACKUP_KEY_ID=""
 export MIMECRYPT_AUDIT_LOG_PATH="$HOME/.config/mimecrypt/audit.jsonl"
-export MIMECRYPT_FOLDER="inbox"
-export MIMECRYPT_WRITEBACK_PROVIDER="ews"
+export MIMECRYPT_FOLDER="INBOX"
+export MIMECRYPT_WRITEBACK_PROVIDER="imap"
 export MIMECRYPT_WRITEBACK_FOLDER=""
 export MIMECRYPT_GRAPH_SCOPES="https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/User.Read offline_access openid profile"
+export MIMECRYPT_IMAP_SCOPES="https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
+export MIMECRYPT_IMAP_ADDR="outlook.office365.com:993"
+export MIMECRYPT_IMAP_USERNAME="your-mailbox@example.com"
 export MIMECRYPT_EWS_SCOPES="https://outlook.office365.com/EWS.AccessAsUser.All"
 export MIMECRYPT_EWS_BASE_URL="https://outlook.office365.com/EWS/Exchange.asmx"
 ```
@@ -223,7 +229,7 @@ export MIMECRYPT_GPG_BINARY="gpg"
 
 说明：
 
-- `MIMECRYPT_PROVIDER` 当前只支持 `graph`
+- `MIMECRYPT_PROVIDER` 当前支持 `imap` 和 `graph`；实验分支默认 `imap`
 - `MIMECRYPT_CLIENT_ID` 默认使用项目内置的应用 ID，也可以显式覆盖成你自己的应用注册
 - `MIMECRYPT_STATE_DIR` 用来保存 token 和同步状态
 - `MIMECRYPT_OUTPUT_DIR` 仅在开启 `MIMECRYPT_SAVE_OUTPUT=true` 或 `--save-output` 时用于保存本地 `PGP/MIME .eml`
@@ -231,8 +237,11 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - `MIMECRYPT_BACKUP_DIR` 保存对原始 MIME 源字节直接执行 `gpg --armor --encrypt` 后得到的密文备份
 - `MIMECRYPT_BACKUP_KEY_ID` 为备份指定 catch-all GPG key id；设置后所有备份都使用这把 key，而不是邮件收件人 key
 - `MIMECRYPT_AUDIT_LOG_PATH` 保存关键流程的追加式 JSONL 审计日志
-- `MIMECRYPT_WRITEBACK_PROVIDER` 控制回写后端；当前支持 `ews` 和 `graph`，默认 `ews`
-- `MIMECRYPT_WRITEBACK_FOLDER` 为空时默认回写到原文件夹；设置后会回写到指定文件夹标识
+- `MIMECRYPT_WRITEBACK_PROVIDER` 控制回写后端；当前支持 `imap`、`graph` 和 `ews`，默认 `imap`
+- `MIMECRYPT_WRITEBACK_FOLDER` 为空时默认回写到原文件夹；Graph 使用 folder id，IMAP 使用 mailbox 名称
+- `MIMECRYPT_IMAP_SCOPES` 为 IMAP OAuth 申请 scope；默认 `https://outlook.office.com/IMAP.AccessAsUser.All offline_access`
+- `MIMECRYPT_IMAP_ADDR` 为 IMAP 服务地址；默认 `outlook.office365.com:993`
+- `MIMECRYPT_IMAP_USERNAME` 为 IMAP 登录用户名，一般就是邮箱地址；使用 `imap` provider 时必需
 - `MIMECRYPT_EWS_SCOPES` 为 EWS 回写申请 OAuth scope；默认使用 `https://outlook.office365.com/EWS.AccessAsUser.All`
 - `MIMECRYPT_EWS_BASE_URL` 为 EWS SOAP 端点；默认 `https://outlook.office365.com/EWS/Exchange.asmx`
 - `MIMECRYPT_PGP_RECIPIENTS` 用于补充/覆盖收件人；如果邮件头缺少 `To/Cc/Bcc`，该变量是必需的
@@ -243,31 +252,33 @@ export MIMECRYPT_GPG_BINARY="gpg"
 - 开启 `--save-output` 或 `MIMECRYPT_SAVE_OUTPUT=true` 后，才会额外产出 `output/*.eml`，供 Thunderbird 等客户端直接打开
 - `backup/*.pgp` 始终针对原始 MIME 源字节加密；如果设置了 `--backup-key-id` 或 `MIMECRYPT_BACKUP_KEY_ID`，则统一使用该 catch-all key 生成备份
 - 加密输出的外层包装会增加 `X-MimeCrypt-Processed: yes`，用于标记该邮件经过 MimeCrypt 处理；该头不会进入解密后的原始 MIME
-- 开启 Graph 读信与发现需要 `Mail.ReadWrite`；开启 EWS 回写还需要 `https://outlook.office365.com/EWS.AccessAsUser.All`
-- 如果你之前是在旧版本上登录过，需要重新执行 `logout` 和 `login`，以获取包含 EWS scope 的新 token
-- `graph` 写回后端仍保留作为可选项，但 Outlook Web 会把导入结果显示为 draft；如果要求“真实收件邮件”语义，应使用默认的 `ews`
+- 使用 `imap` provider 或 `imap` 回写后端时，需要 `https://outlook.office.com/IMAP.AccessAsUser.All`
+- 使用 `graph` provider 读信时，仍然需要 `Mail.ReadWrite`
+- 如果你之前是在旧版本上登录过，需要重新执行 `logout` 和 `login`，以获取包含 IMAP scope 的新 token
+- `graph` 写回后端仍保留作为可选项，但 Outlook Web 会把导入结果显示为 draft；如果要求“真实收件邮件”语义，应优先使用默认的 `imap`
 
 ## 回写实现说明
 
-当前默认回写链路是：
+当前默认收发链路是：
 
-1. 用 Microsoft Graph 发现和读取原始 MIME
+1. 用 IMAP OAuth 发现和读取原始 MIME
 2. 在本地生成加密后的 `PGP/MIME`
-3. 用 EWS `CreateItem + MimeContent` 把 MIME 导入目标文件夹
-4. 通过 `PidTagMessageFlags (0x0E07)` 清除 draft 语义
-5. 再用 Graph 做未读标记、校验和幂等对账
+3. 用 IMAP `APPEND` 把 MIME 写回目标文件夹
+4. 通过 `UID SEARCH/FETCH` 做校验和幂等对账
+5. 最后再删除原邮件
 
 这样做的原因很直接：
 
-- Microsoft Graph 的 `POST /me/messages` 只能创建 draft，即使请求体是 MIME
-- 这会让 Outlook Web 显示“这是草稿”或“此草稿尚未发送”，破坏邮件语义
-- EWS 支持直接导入 `.eml`/MIME，并允许把导入邮件保存成非 draft 形式
+- IMAP 原生处理 RFC 822 / MIME，不需要把邮件转换成 Graph 的 draft 对象
+- IMAP `APPEND` 没有 `isDraft` 语义包袱，写进去就是普通邮件
+- 在 Microsoft 365 上，IMAP OAuth 属于当前官方持续支持的长期协议路径
 
 需要明确的边界：
 
-- 这条 EWS 路线是为了当前 Exchange Online 的行为现实做的兼容实现
-- Microsoft 已宣布 Exchange Online 的 EWS 将从 `2026-10-01` 开始逐步禁用，并在 `2027-04-01` 完全禁用
-- 所以这是一条务实但有时限的方案；后续需要继续关注 Graph 的导入能力是否出现可替代的正式接口
+- IMAP provider 当前把消息 UID 当作命令行里的 `message-id`
+- 对 `process/download` 这类单封邮件命令，若只给 UID，则默认从 `--folder` 或 `MIMECRYPT_FOLDER` 指定的 mailbox 中读取
+- `graph` provider 仍然保留，适合继续验证 Graph delta、Graph metadata 和其它 provider 兼容路径
+- `ews` 写回仍然保留为兼容选项，但已不再是默认主路径
 
 ## 文件说明
 

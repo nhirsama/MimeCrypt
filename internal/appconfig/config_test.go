@@ -38,6 +38,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Auth.EWSScopes, splitScopes(defaultEWSScopes)) {
 		t.Fatalf("Auth.EWSScopes = %#v, want %#v", cfg.Auth.EWSScopes, splitScopes(defaultEWSScopes))
 	}
+	if !reflect.DeepEqual(cfg.Auth.IMAPScopes, splitScopes(defaultIMAPScopes)) {
+		t.Fatalf("Auth.IMAPScopes = %#v, want %#v", cfg.Auth.IMAPScopes, splitScopes(defaultIMAPScopes))
+	}
 	if cfg.Auth.StateDir != wantStateDir {
 		t.Fatalf("Auth.StateDir = %q, want %q", cfg.Auth.StateDir, wantStateDir)
 	}
@@ -46,6 +49,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	}
 	if cfg.Mail.Client.EWSBaseURL != defaultEWSBaseURL {
 		t.Fatalf("Mail.Client.EWSBaseURL = %q, want %q", cfg.Mail.Client.EWSBaseURL, defaultEWSBaseURL)
+	}
+	if cfg.Mail.Client.IMAPAddr != defaultIMAPAddr {
+		t.Fatalf("Mail.Client.IMAPAddr = %q, want %q", cfg.Mail.Client.IMAPAddr, defaultIMAPAddr)
 	}
 	if cfg.Mail.Pipeline.OutputDir != defaultOutputDir {
 		t.Fatalf("Mail.Pipeline.OutputDir = %q, want %q", cfg.Mail.Pipeline.OutputDir, defaultOutputDir)
@@ -85,9 +91,12 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("MIMECRYPT_AUTHORITY_BASE_URL", "https://authority.example.com")
 	t.Setenv("MIMECRYPT_GRAPH_SCOPES", "scope-a scope-b")
 	t.Setenv("MIMECRYPT_EWS_SCOPES", "scope-ews")
+	t.Setenv("MIMECRYPT_IMAP_SCOPES", "scope-imap offline_access")
 	t.Setenv("MIMECRYPT_STATE_DIR", "/state")
 	t.Setenv("MIMECRYPT_GRAPH_BASE_URL", "https://graph.example.com/v1.0")
 	t.Setenv("MIMECRYPT_EWS_BASE_URL", "https://ews.example.com/EWS/Exchange.asmx")
+	t.Setenv("MIMECRYPT_IMAP_ADDR", "imap.example.com:993")
+	t.Setenv("MIMECRYPT_IMAP_USERNAME", "user@example.com")
 	t.Setenv("MIMECRYPT_OUTPUT_DIR", "/output")
 	t.Setenv("MIMECRYPT_SAVE_OUTPUT", "true")
 	t.Setenv("MIMECRYPT_BACKUP_DIR", "/backup")
@@ -120,6 +129,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	if !reflect.DeepEqual(cfg.Auth.EWSScopes, []string{"scope-ews"}) {
 		t.Fatalf("Auth.EWSScopes = %#v", cfg.Auth.EWSScopes)
 	}
+	if !reflect.DeepEqual(cfg.Auth.IMAPScopes, []string{"scope-imap", "offline_access"}) {
+		t.Fatalf("Auth.IMAPScopes = %#v", cfg.Auth.IMAPScopes)
+	}
 	if cfg.Auth.StateDir != "/state" || cfg.Mail.Sync.StateDir != "/state" {
 		t.Fatalf("unexpected state dirs: auth=%q sync=%q", cfg.Auth.StateDir, cfg.Mail.Sync.StateDir)
 	}
@@ -128,6 +140,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	}
 	if cfg.Mail.Client.EWSBaseURL != "https://ews.example.com/EWS/Exchange.asmx" {
 		t.Fatalf("Mail.Client.EWSBaseURL = %q", cfg.Mail.Client.EWSBaseURL)
+	}
+	if cfg.Mail.Client.IMAPAddr != "imap.example.com:993" || cfg.Mail.Client.IMAPUsername != "user@example.com" {
+		t.Fatalf("unexpected IMAP client config: %+v", cfg.Mail.Client)
 	}
 	if cfg.Mail.Pipeline.OutputDir != "/output" || !cfg.Mail.Pipeline.SaveOutput {
 		t.Fatalf("unexpected pipeline output config: %+v", cfg.Mail.Pipeline)
@@ -166,6 +181,8 @@ func TestMailConfigValidateSync(t *testing.T) {
 		Client: MailClientConfig{
 			GraphBaseURL: "https://graph.example.com/v1.0",
 			EWSBaseURL:   "https://ews.example.com/EWS/Exchange.asmx",
+			IMAPAddr:     "imap.example.com:993",
+			IMAPUsername: "user@example.com",
 		},
 		Pipeline: MailPipelineConfig{
 			OutputDir:         "output",
@@ -200,6 +217,14 @@ func TestMailConfigValidateSync(t *testing.T) {
 				cfg.Client.EWSBaseURL = ""
 			},
 			wantErr: "ews base URL 不能为空",
+		},
+		{
+			name: "missing imap username when imap writeback enabled",
+			mutate: func(cfg *MailConfig) {
+				cfg.Pipeline.WriteBackProvider = "imap"
+				cfg.Client.IMAPUsername = ""
+			},
+			wantErr: "imap username 不能为空",
 		},
 		{
 			name: "missing state dir",
@@ -302,9 +327,12 @@ func resetMimeCryptEnv(t *testing.T) {
 		"MIMECRYPT_AUTHORITY_BASE_URL",
 		"MIMECRYPT_GRAPH_SCOPES",
 		"MIMECRYPT_EWS_SCOPES",
+		"MIMECRYPT_IMAP_SCOPES",
 		"MIMECRYPT_STATE_DIR",
 		"MIMECRYPT_GRAPH_BASE_URL",
 		"MIMECRYPT_EWS_BASE_URL",
+		"MIMECRYPT_IMAP_ADDR",
+		"MIMECRYPT_IMAP_USERNAME",
 		"MIMECRYPT_OUTPUT_DIR",
 		"MIMECRYPT_SAVE_OUTPUT",
 		"MIMECRYPT_BACKUP_DIR",

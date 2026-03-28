@@ -23,6 +23,8 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 			Client: appconfig.MailClientConfig{
 				GraphBaseURL: "https://old-graph",
 				EWSBaseURL:   "https://old-ews",
+				IMAPAddr:     "old-imap:993",
+				IMAPUsername: "old-user@example.com",
 			},
 			Pipeline: appconfig.MailPipelineConfig{
 				AuditLogPath: appconfig.DefaultAuditLogPath("/old-state"),
@@ -40,6 +42,8 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 	flags.authorityBaseURL = "https://new-authority"
 	flags.graphBaseURL = "https://new-graph"
 	flags.ewsBaseURL = "https://new-ews"
+	flags.imapAddr = "new-imap:993"
+	flags.imapUsername = "new-user@example.com"
 
 	got := flags.apply(cfg)
 	if got.Auth.ClientID != "new-client" || got.Auth.Tenant != "new-tenant" {
@@ -53,6 +57,9 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 	}
 	if got.Mail.Client.EWSBaseURL != "https://new-ews" {
 		t.Fatalf("EWSBaseURL = %q, want https://new-ews", got.Mail.Client.EWSBaseURL)
+	}
+	if got.Mail.Client.IMAPAddr != "new-imap:993" || got.Mail.Client.IMAPUsername != "new-user@example.com" {
+		t.Fatalf("unexpected IMAP config: %+v", got.Mail.Client)
 	}
 	if got.Mail.Pipeline.AuditLogPath != appconfig.DefaultAuditLogPath("/new-state") {
 		t.Fatalf("AuditLogPath = %q, want %q", got.Mail.Pipeline.AuditLogPath, appconfig.DefaultAuditLogPath("/new-state"))

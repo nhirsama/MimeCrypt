@@ -6,6 +6,8 @@ import (
 	"mimecrypt/internal/auth"
 	"mimecrypt/internal/provider"
 	"strings"
+
+	imapprovider "mimecrypt/internal/providers/imap"
 )
 
 // Build 构造当前基于 Microsoft Graph 的 provider 实现。
@@ -31,6 +33,8 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 		writer, err = newWriter(cfg.Mail.Client, session, nil)
 	case "ews":
 		writer, err = newEWSWriter(cfg, session, nil)
+	case "imap":
+		writer, err = imapprovider.NewWriter(cfg, session)
 	default:
 		return provider.Clients{}, fmt.Errorf("不支持的回写后端: %s", cfg.Mail.Pipeline.WriteBackProvider)
 	}

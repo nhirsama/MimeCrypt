@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	defaultProvider          = "graph"
+	defaultProvider          = "imap"
 	defaultClientID          = "fff3108f-14f7-4877-9739-1a2766e5ca9a"
 	defaultTenant            = "organizations"
 	defaultAuthorityBaseURL  = "https://login.microsoftonline.com"
@@ -19,8 +19,10 @@ const (
 	defaultGraphScopes       = "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/User.Read offline_access openid profile"
 	defaultEWSBaseURL        = "https://outlook.office365.com/EWS/Exchange.asmx"
 	defaultEWSScopes         = "https://outlook.office365.com/EWS.AccessAsUser.All"
-	defaultWriteBackProvider = "ews"
-	defaultFolder            = "inbox"
+	defaultIMAPAddr          = "outlook.office365.com:993"
+	defaultIMAPScopes        = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
+	defaultWriteBackProvider = "imap"
+	defaultFolder            = "INBOX"
 	defaultPollInterval      = time.Minute
 	defaultCycleTimeout      = 2 * time.Minute
 	defaultOutputDir         = "output"
@@ -38,6 +40,7 @@ type AuthConfig struct {
 	AuthorityBaseURL string
 	GraphScopes      []string
 	EWSScopes        []string
+	IMAPScopes       []string
 	StateDir         string
 }
 
@@ -50,6 +53,8 @@ type MailConfig struct {
 type MailClientConfig struct {
 	GraphBaseURL string
 	EWSBaseURL   string
+	IMAPAddr     string
+	IMAPUsername string
 }
 
 type MailPipelineConfig struct {
@@ -88,12 +93,15 @@ func LoadFromEnv() (Config, error) {
 			AuthorityBaseURL: getenvDefault("MIMECRYPT_AUTHORITY_BASE_URL", defaultAuthorityBaseURL),
 			GraphScopes:      splitScopes(getenvDefault("MIMECRYPT_GRAPH_SCOPES", defaultGraphScopes)),
 			EWSScopes:        splitScopes(getenvDefault("MIMECRYPT_EWS_SCOPES", defaultEWSScopes)),
+			IMAPScopes:       splitScopes(getenvDefault("MIMECRYPT_IMAP_SCOPES", defaultIMAPScopes)),
 			StateDir:         getenvDefault("MIMECRYPT_STATE_DIR", stateDir),
 		},
 		Mail: MailConfig{
 			Client: MailClientConfig{
 				GraphBaseURL: getenvDefault("MIMECRYPT_GRAPH_BASE_URL", defaultGraphBaseURL),
 				EWSBaseURL:   getenvDefault("MIMECRYPT_EWS_BASE_URL", defaultEWSBaseURL),
+				IMAPAddr:     getenvDefault("MIMECRYPT_IMAP_ADDR", defaultIMAPAddr),
+				IMAPUsername: os.Getenv("MIMECRYPT_IMAP_USERNAME"),
 			},
 			Pipeline: MailPipelineConfig{
 				OutputDir:         getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
@@ -131,11 +139,11 @@ func (c AuthConfig) Validate() error {
 	if strings.TrimSpace(c.AuthorityBaseURL) == "" {
 		return fmt.Errorf("authority base URL 不能为空")
 	}
-	if len(c.GraphScopes) == 0 {
-		return fmt.Errorf("graph scopes 不能为空")
-	}
 	if strings.TrimSpace(c.StateDir) == "" {
 		return fmt.Errorf("state dir 不能为空")
+	}
+	if len(c.GraphScopes) == 0 && len(c.EWSScopes) == 0 && len(c.IMAPScopes) == 0 {
+		return fmt.Errorf("至少需要一组 protocol scopes")
 	}
 
 	return nil
@@ -163,11 +171,19 @@ func (c MailClientConfig) ValidateEWS() error {
 	return nil
 }
 
+func (c MailClientConfig) ValidateIMAP() error {
+	if strings.TrimSpace(c.IMAPAddr) == "" {
+		return fmt.Errorf("imap addr 不能为空")
+	}
+	if strings.TrimSpace(c.IMAPUsername) == "" {
+		return fmt.Errorf("imap username 不能为空")
+	}
+
+	return nil
+}
+
 // ValidateSync 校验邮件同步所需配置。
 func (c MailConfig) ValidateSync() error {
-	if err := c.ValidateClient(); err != nil {
-		return err
-	}
 	if strings.TrimSpace(c.Sync.StateDir) == "" {
 		return fmt.Errorf("state dir 不能为空")
 	}
@@ -182,8 +198,18 @@ func (c MailConfig) ValidateSync() error {
 	}
 	switch strings.ToLower(strings.TrimSpace(c.Pipeline.WriteBackProvider)) {
 	case "", "graph":
+		if err := c.ValidateClient(); err != nil {
+			return err
+		}
 	case "ews":
+		if err := c.ValidateClient(); err != nil {
+			return err
+		}
 		if err := c.Client.ValidateEWS(); err != nil {
+			return err
+		}
+	case "imap":
+		if err := c.Client.ValidateIMAP(); err != nil {
 			return err
 		}
 	default:

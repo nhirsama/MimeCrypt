@@ -18,6 +18,7 @@ func newProcessCmd() *cobra.Command {
 
 	providerFlags := newProviderConfigFlags(cfg)
 	processingFlags := newProcessingConfigFlags(cfg)
+	folder := cfg.Mail.Sync.Folder
 	writeBack := false
 	verifyWriteBack := false
 
@@ -28,6 +29,7 @@ func newProcessCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = providerFlags.apply(cfg)
 			cfg = processingFlags.apply(cfg, cmd)
+			cfg.Mail.Sync.Folder = folder
 
 			if err := validateWriteBackFlags(writeBack, verifyWriteBack, processingFlags.writeBackFolder); err != nil {
 				return fmt.Errorf("process 失败: %w", err)
@@ -49,7 +51,7 @@ func newProcessCmd() *cobra.Command {
 
 			result, err := service.Run(cmd.Context(), buildProcessRequest(
 				cfg,
-				provider.MessageRef{ID: args[0]},
+				provider.MessageRef{ID: args[0], FolderID: folder},
 				writeBack,
 				processingFlags.writeBackFolder,
 				verifyWriteBack,
@@ -77,6 +79,7 @@ func newProcessCmd() *cobra.Command {
 
 	providerFlags.addFlags(cmd)
 	processingFlags.addFlags(cmd)
+	cmd.Flags().StringVar(&folder, "folder", folder, "邮件所在文件夹；Graph 用 folder id，IMAP 用 mailbox 名称")
 	cmd.Flags().BoolVar(&writeBack, "write-back", writeBack, "处理后把邮件回写到邮箱")
 	cmd.Flags().BoolVar(&verifyWriteBack, "verify-write-back", verifyWriteBack, "回写后校验邮件是否成功写入")
 

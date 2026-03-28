@@ -15,6 +15,8 @@ type providerConfigFlags struct {
 	authorityBaseURL string
 	graphBaseURL     string
 	ewsBaseURL       string
+	imapAddr         string
+	imapUsername     string
 }
 
 func newProviderConfigFlags(cfg appconfig.Config) providerConfigFlags {
@@ -25,6 +27,8 @@ func newProviderConfigFlags(cfg appconfig.Config) providerConfigFlags {
 		authorityBaseURL: cfg.Auth.AuthorityBaseURL,
 		graphBaseURL:     cfg.Mail.Client.GraphBaseURL,
 		ewsBaseURL:       cfg.Mail.Client.EWSBaseURL,
+		imapAddr:         cfg.Mail.Client.IMAPAddr,
+		imapUsername:     cfg.Mail.Client.IMAPUsername,
 	}
 }
 
@@ -35,10 +39,12 @@ func (f *providerConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.authorityBaseURL, "authority-base-url", f.authorityBaseURL, "Microsoft Entra 认证基础地址")
 	cmd.Flags().StringVar(&f.graphBaseURL, "graph-base-url", f.graphBaseURL, "Microsoft Graph 基础地址")
 	cmd.Flags().StringVar(&f.ewsBaseURL, "ews-base-url", f.ewsBaseURL, "EWS 基础地址")
+	cmd.Flags().StringVar(&f.imapAddr, "imap-addr", f.imapAddr, "IMAP 服务地址，例如 outlook.office365.com:993")
+	cmd.Flags().StringVar(&f.imapUsername, "imap-username", f.imapUsername, "IMAP 登录用户名，一般为邮箱地址")
 }
 
 func (f providerConfigFlags) apply(cfg appconfig.Config) appconfig.Config {
-	return syncConfig(cfg, f.clientID, f.tenant, f.stateDir, f.authorityBaseURL, f.graphBaseURL, f.ewsBaseURL)
+	return syncConfig(cfg, f.clientID, f.tenant, f.stateDir, f.authorityBaseURL, f.graphBaseURL, f.ewsBaseURL, f.imapAddr, f.imapUsername)
 }
 
 type processingConfigFlags struct {
@@ -69,7 +75,7 @@ func (f *processingConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.backupDir, "backup-dir", f.backupDir, "源邮件加密备份目录；保存 gpg 直接加密后的文件")
 	cmd.Flags().StringVar(&f.backupKeyID, "backup-key-id", f.backupKeyID, "备份加密使用的 catch-all GPG key id；设置后所有备份统一用该 key")
 	cmd.Flags().StringVar(&f.auditLogPath, "audit-log-path", f.auditLogPath, "审计日志输出路径（JSONL）")
-	cmd.Flags().StringVar(&f.writeBackProvider, "write-back-provider", f.writeBackProvider, "回写后端；可选 graph 或 ews")
+	cmd.Flags().StringVar(&f.writeBackProvider, "write-back-provider", f.writeBackProvider, "回写后端；可选 graph、ews 或 imap")
 	cmd.Flags().StringVar(&f.writeBackFolder, "write-back-folder", f.writeBackFolder, "回写目标文件夹标识；默认回写到原文件夹")
 }
 
@@ -101,7 +107,7 @@ func newSyncConfigFlags(cfg appconfig.Config) syncConfigFlags {
 }
 
 func (f *syncConfigFlags) addFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.folder, "folder", f.folder, "要监听的 Graph 邮件文件夹标识，例如 inbox")
+	cmd.Flags().StringVar(&f.folder, "folder", f.folder, "要监听的邮件文件夹标识；Graph 用 folder id，IMAP 用 mailbox 名称")
 	cmd.Flags().DurationVar(&f.pollInterval, "poll-interval", f.pollInterval, "轮询增量同步的时间间隔")
 	cmd.Flags().DurationVar(&f.cycleTimeout, "cycle-timeout", f.cycleTimeout, "单次发现与处理周期的超时时间")
 }

@@ -109,7 +109,7 @@ func (s *Session) Login(ctx context.Context, out io.Writer) (Token, error) {
 
 // AccessToken 返回可直接用于 Graph 调用的 access token，必要时会自动刷新。
 func (s *Session) AccessToken(ctx context.Context) (string, error) {
-	return s.AccessTokenForScopes(ctx, s.client.cfg.GraphScopes)
+	return s.AccessTokenForScopes(ctx, defaultAccessScopes(s.client.cfg))
 }
 
 // AccessTokenForScopes 返回满足指定 scopes 的 access token，必要时会自动刷新。
@@ -151,7 +151,7 @@ func (s *Session) Logout() error {
 func (c *client) startDeviceCode(ctx context.Context) (DeviceCode, error) {
 	form := url.Values{}
 	form.Set("client_id", c.cfg.ClientID)
-	form.Set("scope", strings.Join(consentScopes(c.cfg.GraphScopes, c.cfg.EWSScopes), " "))
+	form.Set("scope", strings.Join(consentScopes(c.cfg.GraphScopes, c.cfg.EWSScopes, c.cfg.IMAPScopes), " "))
 
 	endpoint := fmt.Sprintf(
 		"%s/%s/oauth2/v2.0/devicecode",
@@ -398,6 +398,19 @@ func consentScopes(groups ...[]string) []string {
 	}
 	slices.Sort(scopes)
 	return scopes
+}
+
+func defaultAccessScopes(cfg appconfig.AuthConfig) []string {
+	switch {
+	case len(cfg.GraphScopes) > 0:
+		return cfg.GraphScopes
+	case len(cfg.IMAPScopes) > 0:
+		return cfg.IMAPScopes
+	case len(cfg.EWSScopes) > 0:
+		return cfg.EWSScopes
+	default:
+		return nil
+	}
 }
 
 func tokenCoversScopes(granted string, requested []string) bool {
