@@ -669,15 +669,20 @@ func (s *imapSession) parseFetchLine(line string) (*fetchedMessage, error) {
 	if _, err := io.ReadFull(s.reader, literal); err != nil {
 		return nil, fmt.Errorf("读取 IMAP literal 失败: %w", err)
 	}
-	if err := consumeCRLF(s.reader); err != nil {
-		return nil, err
-	}
 	message.Literal = literal
 	closing, err := s.readLine()
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(closing) != ")" {
+	trimmed := strings.TrimSpace(closing)
+	if trimmed == "" {
+		closing, err = s.readLine()
+		if err != nil {
+			return nil, err
+		}
+		trimmed = strings.TrimSpace(closing)
+	}
+	if trimmed != ")" {
 		return nil, fmt.Errorf("IMAP FETCH 响应格式异常: %s", closing)
 	}
 	return message, nil
@@ -875,20 +880,6 @@ func normalizeMailbox(mailbox string) string {
 		return "INBOX"
 	}
 	return mailbox
-}
-
-func consumeCRLF(r *bufio.Reader) error {
-	bytes, err := r.Peek(2)
-	if err != nil {
-		return fmt.Errorf("读取 IMAP literal 尾部失败: %w", err)
-	}
-	if bytes[0] != '\r' || bytes[1] != '\n' {
-		return fmt.Errorf("IMAP literal 后缺少 CRLF")
-	}
-	if _, err := r.Discard(2); err != nil {
-		return fmt.Errorf("丢弃 IMAP literal 尾部失败: %w", err)
-	}
-	return nil
 }
 
 type deltaState struct {

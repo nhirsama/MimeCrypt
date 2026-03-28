@@ -247,9 +247,8 @@ func (rw *scriptRW) writeFetch(uid uint64, internalDate time.Time, literal []byt
 	date := internalDate.Format("2-Jan-2006 15:04:05 -0700")
 	rw.writeLine(fmt.Sprintf("* 1 FETCH (UID %d INTERNALDATE \"%s\" BODY[HEADER] {%d}", uid, date, len(literal)))
 	_, _ = rw.writer.Write(literal)
-	_, _ = rw.writer.WriteString("\r\n")
+	_, _ = rw.writer.WriteString(")\r\n")
 	_ = rw.writer.Flush()
-	rw.writeLine(")")
 }
 
 func (rw *scriptRW) readLiteral(t *testing.T, size int) []byte {
