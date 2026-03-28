@@ -16,6 +16,7 @@ import (
 )
 
 var errTokenNotFound = errors.New("token not found")
+var ErrLoginRequired = errors.New("未找到登录状态")
 
 type tokenBackend interface {
 	load() (Token, error)
@@ -131,7 +132,7 @@ func (s *tokenStore) load() (Token, error) {
 	if primaryErr != nil && !errors.Is(primaryErr, errTokenNotFound) {
 		return Token{}, primaryErr
 	}
-	return Token{}, fmt.Errorf("未找到登录状态，请先执行 login")
+	return Token{}, fmt.Errorf("%w，请先执行 login", ErrLoginRequired)
 }
 
 func (s *tokenStore) save(token Token) error {

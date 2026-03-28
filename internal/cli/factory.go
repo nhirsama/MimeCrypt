@@ -20,6 +20,7 @@ import (
 	"mimecrypt/internal/modules/login"
 	"mimecrypt/internal/modules/logout"
 	"mimecrypt/internal/modules/process"
+	"mimecrypt/internal/modules/tokenstate"
 	"mimecrypt/internal/modules/writeback"
 	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers"
@@ -90,6 +91,20 @@ func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
 		Provider: cfg.Provider,
 		Session:  clients.Session,
 		Reader:   clients.Reader,
+	}, nil
+}
+
+func buildTokenStateService(cfg appconfig.Config) (*tokenstate.Service, error) {
+	session, err := auth.NewSession(cfg.Auth, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tokenstate.Service{
+		Session:        session,
+		StateDir:       cfg.Auth.StateDir,
+		TokenStore:     cfg.Auth.TokenStoreMode(),
+		KeyringService: cfg.Auth.KeyringServiceName(),
 	}, nil
 }
 

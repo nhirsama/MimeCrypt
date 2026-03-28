@@ -141,6 +141,17 @@ func (s *Session) LoadCachedToken() (Token, error) {
 	return s.store.load()
 }
 
+// StoreToken 将外部提供的 token 写入当前配置对应的存储后端。
+func (s *Session) StoreToken(token Token) error {
+	if s == nil || s.store == nil {
+		return fmt.Errorf("token 存储未初始化")
+	}
+	if strings.TrimSpace(token.AccessToken) == "" && strings.TrimSpace(token.RefreshToken) == "" {
+		return fmt.Errorf("导入 token 失败: access token 和 refresh token 不能同时为空")
+	}
+	return s.store.save(token)
+}
+
 // Logout 清除本地 token 缓存。
 func (s *Session) Logout() error {
 	return s.store.delete()
