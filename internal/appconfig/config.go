@@ -12,6 +12,7 @@ import (
 
 const (
 	defaultProvider         = "graph"
+	defaultClientID         = "fff3108f-14f7-4877-9739-1a2766e5ca9a"
 	defaultTenant           = "organizations"
 	defaultAuthorityBaseURL = "https://login.microsoftonline.com"
 	defaultGraphBaseURL     = "https://graph.microsoft.com/v1.0"
@@ -76,7 +77,7 @@ func LoadFromEnv() (Config, error) {
 	return Config{
 		Provider: getenvDefault("MIMECRYPT_PROVIDER", defaultProvider),
 		Auth: AuthConfig{
-			ClientID:         os.Getenv("MIMECRYPT_CLIENT_ID"),
+			ClientID:         getenvDefault("MIMECRYPT_CLIENT_ID", defaultClientID),
 			Tenant:           getenvDefault("MIMECRYPT_TENANT", defaultTenant),
 			AuthorityBaseURL: getenvDefault("MIMECRYPT_AUTHORITY_BASE_URL", defaultAuthorityBaseURL),
 			GraphScopes:      splitScopes(getenvDefault("MIMECRYPT_GRAPH_SCOPES", defaultGraphScopes)),

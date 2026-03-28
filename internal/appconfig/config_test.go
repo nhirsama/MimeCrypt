@@ -23,6 +23,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.Provider != defaultProvider {
 		t.Fatalf("Provider = %q, want %q", cfg.Provider, defaultProvider)
 	}
+	if cfg.Auth.ClientID != defaultClientID {
+		t.Fatalf("Auth.ClientID = %q, want %q", cfg.Auth.ClientID, defaultClientID)
+	}
 	if cfg.Auth.Tenant != defaultTenant {
 		t.Fatalf("Auth.Tenant = %q, want %q", cfg.Auth.Tenant, defaultTenant)
 	}

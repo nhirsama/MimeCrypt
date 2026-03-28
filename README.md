@@ -175,7 +175,7 @@ go run ./cmd/mimecrypt run --debug-save-first --save-output --output-dir ./outpu
 
 ## 配置
 
-当前最少需要：
+默认内置了一个 Microsoft Entra 应用 Client ID；如果你要改成自己的应用，可以用环境变量覆盖：
 
 ```bash
 export MIMECRYPT_CLIENT_ID="你的应用 Client ID"
@@ -207,6 +207,7 @@ export MIMECRYPT_GPG_BINARY="gpg"
 说明：
 
 - `MIMECRYPT_PROVIDER` 当前只支持 `graph`
+- `MIMECRYPT_CLIENT_ID` 默认使用项目内置的应用 ID，也可以显式覆盖成你自己的应用注册
 - `MIMECRYPT_STATE_DIR` 用来保存 token 和同步状态
 - `MIMECRYPT_OUTPUT_DIR` 仅在开启 `MIMECRYPT_SAVE_OUTPUT=true` 或 `--save-output` 时用于保存本地 `PGP/MIME .eml`
 - `MIMECRYPT_SAVE_OUTPUT` 控制是否将加密后的 `PGP/MIME .eml` 额外落盘，默认 `false`
