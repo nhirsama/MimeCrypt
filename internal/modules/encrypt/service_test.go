@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -24,6 +25,27 @@ func (f *fakeEncryptor) Encrypt(_ context.Context, mimeBytes []byte, recipients 
 		return nil, f.err
 	}
 	return append([]byte(nil), f.output...), nil
+}
+
+type fakeStreamingEncryptor struct {
+	gotRecipients []string
+	gotMIME       []byte
+	output        []byte
+	err           error
+}
+
+func (f *fakeStreamingEncryptor) Encrypt(context.Context, []byte, []string) ([]byte, error) {
+	return nil, fmt.Errorf("unexpected non-streaming Encrypt call")
+}
+
+func (f *fakeStreamingEncryptor) EncryptTo(_ context.Context, mimeBytes []byte, recipients []string, out io.Writer) error {
+	f.gotRecipients = append([]string(nil), recipients...)
+	f.gotMIME = append([]byte(nil), mimeBytes...)
+	if f.err != nil {
+		return f.err
+	}
+	_, err := out.Write(f.output)
+	return err
 }
 
 func TestRunReturnsErrAlreadyEncryptedForPGPMIME(t *testing.T) {
@@ -123,6 +145,51 @@ func TestRunEncryptsPlainMIMEToPGPMIME(t *testing.T) {
 	}
 	if !bytes.Contains(result.MIME, []byte("Subject: hello")) {
 		t.Fatalf("expected original mail headers to be preserved")
+	}
+}
+
+func TestRunUsesStreamingEncryptorWhenAvailable(t *testing.T) {
+	t.Parallel()
+
+	encryptor := &fakeStreamingEncryptor{
+		output: []byte("-----BEGIN PGP MESSAGE-----\nabc\n-----END PGP MESSAGE-----\n"),
+	}
+
+	service := Service{
+		Encryptor: encryptor,
+		EnvLookup: func(key string) string {
+			if key == "MIMECRYPT_PGP_RECIPIENTS" {
+				return "ops@example.com"
+			}
+			return ""
+		},
+	}
+
+	input := []byte(
+		"From: sender@example.com\r\n" +
+			"To: alice@example.com\r\n" +
+			"Subject: hello\r\n" +
+			"Date: Thu, 02 Jan 2026 10:00:00 +0000\r\n" +
+			"Message-ID: <m1@example.com>\r\n" +
+			"\r\n" +
+			"hello world\r\n",
+	)
+
+	result, err := service.Run(input)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !bytes.Equal(encryptor.gotMIME, input) {
+		t.Fatalf("streaming encryptor input was changed unexpectedly")
+	}
+	if !slices.Equal(encryptor.gotRecipients, []string{"alice@example.com", "ops@example.com"}) {
+		t.Fatalf("unexpected recipients: %v", encryptor.gotRecipients)
+	}
+	if !bytes.Contains(result.MIME, []byte("-----BEGIN PGP MESSAGE-----")) {
+		t.Fatalf("missing armored payload in MIME output")
+	}
+	if !bytes.Equal(result.Armored, encryptor.output) {
+		t.Fatalf("unexpected armored result: %q", result.Armored)
 	}
 }
 

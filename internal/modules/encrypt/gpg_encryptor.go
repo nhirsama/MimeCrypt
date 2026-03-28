@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -29,8 +30,22 @@ func defaultGPGTrustModel() string {
 }
 
 func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients []string) ([]byte, error) {
+	var out bytes.Buffer
+	if err := g.EncryptTo(ctx, mimeBytes, recipients, &out); err != nil {
+		return nil, err
+	}
+	if out.Len() == 0 {
+		return nil, fmt.Errorf("gpg 输出为空")
+	}
+	return out.Bytes(), nil
+}
+
+func (g gpgEncryptor) EncryptTo(ctx context.Context, mimeBytes []byte, recipients []string, out io.Writer) error {
 	if len(recipients) == 0 {
-		return nil, ErrNoRecipients
+		return ErrNoRecipients
+	}
+	if out == nil {
+		return fmt.Errorf("gpg 输出目标不能为空")
 	}
 
 	binary := strings.TrimSpace(g.binary)
@@ -42,7 +57,7 @@ func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients 
 		trustModel = defaultGPGTrustModel()
 	}
 	if err := validateGPGTrustModel(trustModel); err != nil {
-		return nil, err
+		return err
 	}
 
 	args := []string{
@@ -57,7 +72,7 @@ func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients 
 	}
 	for _, recipient := range recipients {
 		if err := ValidateRecipientSpec(recipient); err != nil {
-			return nil, err
+			return err
 		}
 		args = append(args, "--recipient", recipient)
 	}
@@ -68,24 +83,20 @@ func (g gpgEncryptor) Encrypt(ctx context.Context, mimeBytes []byte, recipients 
 
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdin = bytes.NewReader(mimeBytes)
+	cmd.Stdout = out
 
-	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
 		msg := strings.TrimSpace(stderr.String())
 		if msg == "" {
-			return nil, fmt.Errorf("执行 gpg 失败: %w", err)
+			return fmt.Errorf("执行 gpg 失败: %w", err)
 		}
-		return nil, fmt.Errorf("执行 gpg 失败: %w: %s", err, msg)
-	}
-	if stdout.Len() == 0 {
-		return nil, fmt.Errorf("gpg 输出为空")
+		return fmt.Errorf("执行 gpg 失败: %w: %s", err, msg)
 	}
 
-	return stdout.Bytes(), nil
+	return nil
 }
 
 func validateGPGTrustModel(value string) error {

@@ -1,9 +1,11 @@
 package encrypt
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -51,6 +53,10 @@ type MIMEEncryptor interface {
 	Encrypt(ctx context.Context, mimeBytes []byte, recipients []string) ([]byte, error)
 }
 
+type streamingMIMEEncryptor interface {
+	EncryptTo(ctx context.Context, mimeBytes []byte, recipients []string, out io.Writer) error
+}
+
 // Run 对邮件内容进行加密；已加密邮件会直接返回错误，防止重复加密。
 func (s *Service) Run(mimeBytes []byte) (Result, error) {
 	return s.RunContext(context.Background(), mimeBytes)
@@ -71,7 +77,33 @@ func (s *Service) RunContext(ctx context.Context, mimeBytes []byte) (Result, err
 		return Result{}, ErrNoRecipients
 	}
 
-	armored, err := s.encryptor().Encrypt(ctx, mimeBytes, recipients)
+	encryptor := s.encryptor()
+	if streamer, ok := encryptor.(streamingMIMEEncryptor); ok {
+		var armored bytes.Buffer
+		var encryptedMIME bytes.Buffer
+
+		mimeWriter, err := newPGPMIMEMessageWriter(mimeBytes, &encryptedMIME, s != nil && s.ProtectSubject)
+		if err != nil {
+			return Result{}, err
+		}
+
+		if err := streamer.EncryptTo(ctx, mimeBytes, recipients, io.MultiWriter(&armored, mimeWriter)); err != nil {
+			return Result{}, err
+		}
+		if err := mimeWriter.Close(); err != nil {
+			return Result{}, err
+		}
+
+		return Result{
+			Armored:          armored.Bytes(),
+			MIME:             encryptedMIME.Bytes(),
+			Encrypted:        true,
+			AlreadyEncrypted: false,
+			Format:           "pgp-mime",
+		}, nil
+	}
+
+	armored, err := encryptor.Encrypt(ctx, mimeBytes, recipients)
 	if err != nil {
 		return Result{}, err
 	}
