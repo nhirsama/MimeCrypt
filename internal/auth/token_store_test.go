@@ -163,3 +163,38 @@ func TestTokenStoreSaveIgnoresCleanupFailureAfterPrimarySuccess(t *testing.T) {
 		t.Fatalf("save() error = %v", err)
 	}
 }
+
+func TestTokenStoreDeleteRemovesPrimaryAndFallbacks(t *testing.T) {
+	t.Parallel()
+
+	var deleted []string
+	store := &tokenStore{
+		primary: stubTokenBackend{
+			deleteFunc: func() error {
+				deleted = append(deleted, "primary")
+				return nil
+			},
+		},
+		fallbacks: []tokenBackend{
+			stubTokenBackend{
+				deleteFunc: func() error {
+					deleted = append(deleted, "fallback-1")
+					return nil
+				},
+			},
+			stubTokenBackend{
+				deleteFunc: func() error {
+					deleted = append(deleted, "fallback-2")
+					return errTokenNotFound
+				},
+			},
+		},
+	}
+
+	if err := store.delete(); err != nil {
+		t.Fatalf("delete() error = %v", err)
+	}
+	if len(deleted) != 3 {
+		t.Fatalf("delete() removed %v, want all backends", deleted)
+	}
+}

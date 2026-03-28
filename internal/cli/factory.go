@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/auth"
 	"mimecrypt/internal/modules/audit"
 	"mimecrypt/internal/modules/backup"
 	"mimecrypt/internal/modules/discover"
@@ -49,8 +50,12 @@ func buildLoginService(cfg appconfig.Config) (*login.Service, error) {
 	}, nil
 }
 
-func buildLogoutService(cfg appconfig.Config) *logout.Service {
-	return &logout.Service{TokenPaths: cfg.Auth.TokenPaths()}
+func buildLogoutService(cfg appconfig.Config) (*logout.Service, error) {
+	session, err := auth.NewSession(cfg.Auth, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &logout.Service{Session: session}, nil
 }
 
 func buildDownloadService(cfg appconfig.Config) (*download.Service, error) {

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,13 +22,16 @@ func newLogoutCmd() *cobra.Command {
 		Args:  noArgs(),
 		RunE: func(*cobra.Command, []string) error {
 			cfg.Auth.StateDir = stateDir
-			service := buildLogoutService(cfg)
+			service, err := buildLogoutService(cfg)
+			if err != nil {
+				return fmt.Errorf("logout 失败: %w", err)
+			}
 
 			if err := service.Run(); err != nil {
 				return fmt.Errorf("logout 失败: %w", err)
 			}
 
-			fmt.Printf("已清除本地登录状态: %s\n", strings.Join(cfg.Auth.TokenPaths(), ", "))
+			fmt.Printf("已清除本地登录状态\n")
 			return nil
 		},
 	}

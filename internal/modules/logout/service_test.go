@@ -1,42 +1,64 @@
 package logout
 
 import (
-	"os"
-	"path/filepath"
+	"context"
+	"errors"
+	"io"
 	"testing"
+
+	"mimecrypt/internal/provider"
 )
 
-func TestServiceRunRemovesAllTokenPaths(t *testing.T) {
+type fakeSession struct {
+	logoutCalled bool
+	logoutErr    error
+}
+
+func (f *fakeSession) Login(context.Context, io.Writer) (provider.Token, error) {
+	return provider.Token{}, nil
+}
+
+func (f *fakeSession) AccessToken(context.Context) (string, error) {
+	return "", nil
+}
+
+func (f *fakeSession) LoadCachedToken() (provider.Token, error) {
+	return provider.Token{}, nil
+}
+
+func (f *fakeSession) Logout() error {
+	f.logoutCalled = true
+	return f.logoutErr
+}
+
+func TestServiceRunCallsSessionLogout(t *testing.T) {
 	t.Parallel()
 
-	dir := t.TempDir()
-	paths := []string{
-		filepath.Join(dir, "token.json"),
-		filepath.Join(dir, "graph-token.json"),
-	}
-	for _, path := range paths {
-		if err := os.WriteFile(path, []byte("token"), 0o600); err != nil {
-			t.Fatalf("WriteFile(%q) error = %v", path, err)
-		}
-	}
-
-	service := Service{TokenPaths: paths}
+	session := &fakeSession{}
+	service := Service{Session: session}
 	if err := service.Run(); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-
-	for _, path := range paths {
-		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("expected %q to be removed, stat err = %v", path, err)
-		}
+	if !session.logoutCalled {
+		t.Fatalf("expected Session.Logout() to be called")
 	}
 }
 
-func TestServiceRunRejectsEmptyTokenPaths(t *testing.T) {
+func TestServiceRunRejectsNilSession(t *testing.T) {
 	t.Parallel()
 
 	service := Service{}
 	if err := service.Run(); err == nil {
 		t.Fatalf("Run() error = nil, want validation error")
+	}
+}
+
+func TestServiceRunPropagatesLogoutError(t *testing.T) {
+	t.Parallel()
+
+	session := &fakeSession{logoutErr: errors.New("keyring unavailable")}
+	service := Service{Session: session}
+	if err := service.Run(); err == nil {
+		t.Fatalf("Run() error = nil, want logout error")
 	}
 }

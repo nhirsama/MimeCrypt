@@ -1,48 +1,22 @@
 package logout
 
 import (
-	"errors"
 	"fmt"
-	"os"
-	"strings"
+
+	"mimecrypt/internal/provider"
 )
 
 type Service struct {
-	TokenPaths []string
+	Session provider.Session
 }
 
 // Run 清除本地登录状态。
 func (s *Service) Run() error {
-	tokenPaths := uniqueNonEmpty(s.TokenPaths)
-	if len(tokenPaths) == 0 {
-		return fmt.Errorf("token 路径不能为空")
+	if s == nil || s.Session == nil {
+		return fmt.Errorf("logout session 不能为空")
 	}
-
-	for _, tokenPath := range tokenPaths {
-		if err := os.Remove(tokenPath); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
-			return fmt.Errorf("删除 token 缓存失败: %w", err)
-		}
+	if err := s.Session.Logout(); err != nil {
+		return fmt.Errorf("清除登录状态失败: %w", err)
 	}
-
 	return nil
-}
-
-func uniqueNonEmpty(values []string) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	return out
 }
