@@ -52,7 +52,7 @@ func TestWriterWriteMessageUsesSourceFolderByDefault(t *testing.T) {
 	}))
 	defer server.Close()
 
-	writer, err := newWriter(appconfig.MailConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	writer, err := newWriter(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
 	if err != nil {
 		t.Fatalf("newWriter() error = %v", err)
 	}
@@ -107,7 +107,7 @@ func TestWriterWriteMessageUsesExplicitDestinationAndVerify(t *testing.T) {
 	}))
 	defer server.Close()
 
-	writer, err := newWriter(appconfig.MailConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	writer, err := newWriter(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
 	if err != nil {
 		t.Fatalf("newWriter() error = %v", err)
 	}
@@ -150,7 +150,7 @@ func TestWriterWriteMessageKeepsCreatedMessageWhenDeletingOriginalFails(t *testi
 	}))
 	defer server.Close()
 
-	writer, err := newWriter(appconfig.MailConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	writer, err := newWriter(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
 	if err != nil {
 		t.Fatalf("newWriter() error = %v", err)
 	}
@@ -202,7 +202,7 @@ func TestWriterWriteMessageReusesExistingProcessedMessageBeforeCreatingDuplicate
 	}))
 	defer server.Close()
 
-	writer, err := newWriter(appconfig.MailConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	writer, err := newWriter(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
 	if err != nil {
 		t.Fatalf("newWriter() error = %v", err)
 	}
@@ -256,7 +256,7 @@ func TestWriterReconcileMessageTreatsMissingOriginalAsSuccessWhenProcessedCopyEx
 	}))
 	defer server.Close()
 
-	writer, err := newWriter(appconfig.MailConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	writer, err := newWriter(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
 	if err != nil {
 		t.Fatalf("newWriter() error = %v", err)
 	}

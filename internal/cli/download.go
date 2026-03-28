@@ -16,7 +16,7 @@ func newDownloadCmd() *cobra.Command {
 	}
 
 	providerFlags := newProviderConfigFlags(cfg)
-	outputDir := cfg.Mail.OutputDir
+	outputDir := cfg.Mail.Pipeline.OutputDir
 
 	cmd := &cobra.Command{
 		Use:   "download <message-id>",
@@ -24,9 +24,9 @@ func newDownloadCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = providerFlags.apply(cfg)
-			cfg.Mail.OutputDir = outputDir
+			cfg.Mail.Pipeline.OutputDir = outputDir
 
-			if strings.TrimSpace(cfg.Mail.OutputDir) == "" {
+			if strings.TrimSpace(cfg.Mail.Pipeline.OutputDir) == "" {
 				return fmt.Errorf("download 失败: output-dir 不能为空")
 			}
 
@@ -35,7 +35,7 @@ func newDownloadCmd() *cobra.Command {
 				return fmt.Errorf("download 失败: %w", err)
 			}
 
-			result, err := service.Save(cmd.Context(), args[0], cfg.Mail.OutputDir)
+			result, err := service.Save(cmd.Context(), args[0], cfg.Mail.Pipeline.OutputDir)
 			if err != nil {
 				return fmt.Errorf("download 失败: %w", err)
 			}

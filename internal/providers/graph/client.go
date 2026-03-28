@@ -23,8 +23,8 @@ type graphClient struct {
 	baseURL     string
 }
 
-func newGraphClient(cfg appconfig.MailConfig, tokenSource accessTokenSource, httpClient *http.Client) (*graphClient, error) {
-	if err := cfg.ValidateClient(); err != nil {
+func newGraphClient(cfg appconfig.MailClientConfig, tokenSource accessTokenSource, httpClient *http.Client) (*graphClient, error) {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	if tokenSource == nil {

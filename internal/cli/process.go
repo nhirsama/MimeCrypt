@@ -32,13 +32,13 @@ func newProcessCmd() *cobra.Command {
 			if err := validateWriteBackFlags(writeBack, verifyWriteBack, processingFlags.writeBackFolder); err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
-			if cfg.Mail.SaveOutput && strings.TrimSpace(cfg.Mail.OutputDir) == "" {
+			if cfg.Mail.Pipeline.SaveOutput && strings.TrimSpace(cfg.Mail.Pipeline.OutputDir) == "" {
 				return fmt.Errorf("process 失败: output-dir 不能为空")
 			}
-			if strings.TrimSpace(cfg.Mail.BackupDir) == "" {
+			if strings.TrimSpace(cfg.Mail.Pipeline.BackupDir) == "" {
 				return fmt.Errorf("process 失败: backup-dir 不能为空")
 			}
-			if strings.TrimSpace(cfg.Mail.AuditLogPath) == "" {
+			if strings.TrimSpace(cfg.Mail.Pipeline.AuditLogPath) == "" {
 				return fmt.Errorf("process 失败: audit-log-path 不能为空")
 			}
 

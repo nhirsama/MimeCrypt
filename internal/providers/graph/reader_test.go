@@ -36,7 +36,7 @@ func TestReaderDeltaCreatedMessagesFollowsNextLink(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader, err := newReader(appconfig.MailConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	reader, err := newReader(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
 	if err != nil {
 		t.Fatalf("newReader() error = %v", err)
 	}
@@ -69,7 +69,7 @@ func TestReaderFetchMIMEReturnsStream(t *testing.T) {
 	}))
 	defer server.Close()
 
-	reader, err := newReader(appconfig.MailConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	reader, err := newReader(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
 	if err != nil {
 		t.Fatalf("newReader() error = %v", err)
 	}

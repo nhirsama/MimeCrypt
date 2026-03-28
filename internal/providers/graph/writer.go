@@ -17,7 +17,7 @@ type writer struct {
 	*graphClient
 }
 
-func newWriter(cfg appconfig.MailConfig, tokenSource accessTokenSource, httpClient *http.Client) (*writer, error) {
+func newWriter(cfg appconfig.MailClientConfig, tokenSource accessTokenSource, httpClient *http.Client) (*writer, error) {
 	client, err := newGraphClient(cfg, tokenSource, httpClient)
 	if err != nil {
 		return nil, err

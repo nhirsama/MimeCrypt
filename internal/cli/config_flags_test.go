@@ -20,9 +20,15 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 			StateDir:         "/old-state",
 		},
 		Mail: appconfig.MailConfig{
-			GraphBaseURL: "https://old-graph",
-			StateDir:     "/old-state",
-			AuditLogPath: appconfig.DefaultAuditLogPath("/old-state"),
+			Client: appconfig.MailClientConfig{
+				GraphBaseURL: "https://old-graph",
+			},
+			Pipeline: appconfig.MailPipelineConfig{
+				AuditLogPath: appconfig.DefaultAuditLogPath("/old-state"),
+			},
+			Sync: appconfig.MailSyncConfig{
+				StateDir: "/old-state",
+			},
 		},
 	}
 
@@ -37,14 +43,14 @@ func TestProviderConfigFlagsApplyRebasesDefaultAuditLogPath(t *testing.T) {
 	if got.Auth.ClientID != "new-client" || got.Auth.Tenant != "new-tenant" {
 		t.Fatalf("unexpected auth config: %+v", got.Auth)
 	}
-	if got.Auth.StateDir != "/new-state" || got.Mail.StateDir != "/new-state" {
-		t.Fatalf("unexpected state dir sync: auth=%q mail=%q", got.Auth.StateDir, got.Mail.StateDir)
+	if got.Auth.StateDir != "/new-state" || got.Mail.Sync.StateDir != "/new-state" {
+		t.Fatalf("unexpected state dir sync: auth=%q mail=%q", got.Auth.StateDir, got.Mail.Sync.StateDir)
 	}
-	if got.Mail.GraphBaseURL != "https://new-graph" {
-		t.Fatalf("GraphBaseURL = %q, want https://new-graph", got.Mail.GraphBaseURL)
+	if got.Mail.Client.GraphBaseURL != "https://new-graph" {
+		t.Fatalf("GraphBaseURL = %q, want https://new-graph", got.Mail.Client.GraphBaseURL)
 	}
-	if got.Mail.AuditLogPath != appconfig.DefaultAuditLogPath("/new-state") {
-		t.Fatalf("AuditLogPath = %q, want %q", got.Mail.AuditLogPath, appconfig.DefaultAuditLogPath("/new-state"))
+	if got.Mail.Pipeline.AuditLogPath != appconfig.DefaultAuditLogPath("/new-state") {
+		t.Fatalf("AuditLogPath = %q, want %q", got.Mail.Pipeline.AuditLogPath, appconfig.DefaultAuditLogPath("/new-state"))
 	}
 }
 
@@ -53,11 +59,13 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 
 	cfg := appconfig.Config{
 		Mail: appconfig.MailConfig{
-			OutputDir:    "output",
-			SaveOutput:   false,
-			BackupDir:    "backup",
-			BackupKeyID:  "old-key",
-			AuditLogPath: "/old/audit.jsonl",
+			Pipeline: appconfig.MailPipelineConfig{
+				OutputDir:    "output",
+				SaveOutput:   false,
+				BackupDir:    "backup",
+				BackupKeyID:  "old-key",
+				AuditLogPath: "/old/audit.jsonl",
+			},
 		},
 	}
 
@@ -72,17 +80,17 @@ func TestProcessingConfigFlagsApplyKeepsAuditLogPathWhenFlagNotChanged(t *testin
 	flags.writeBackFolder = "archive"
 
 	got := flags.apply(cfg, cmd)
-	if got.Mail.OutputDir != "new-output" || !got.Mail.SaveOutput {
+	if got.Mail.Pipeline.OutputDir != "new-output" || !got.Mail.Pipeline.SaveOutput {
 		t.Fatalf("unexpected output config: %+v", got.Mail)
 	}
-	if got.Mail.BackupDir != "new-backup" || got.Mail.BackupKeyID != "new-key" {
+	if got.Mail.Pipeline.BackupDir != "new-backup" || got.Mail.Pipeline.BackupKeyID != "new-key" {
 		t.Fatalf("unexpected backup config: %+v", got.Mail)
 	}
-	if got.Mail.WriteBackFolder != "archive" {
-		t.Fatalf("WriteBackFolder = %q, want archive", got.Mail.WriteBackFolder)
+	if got.Mail.Pipeline.WriteBackFolder != "archive" {
+		t.Fatalf("WriteBackFolder = %q, want archive", got.Mail.Pipeline.WriteBackFolder)
 	}
-	if got.Mail.AuditLogPath != "/old/audit.jsonl" {
-		t.Fatalf("AuditLogPath = %q, want /old/audit.jsonl", got.Mail.AuditLogPath)
+	if got.Mail.Pipeline.AuditLogPath != "/old/audit.jsonl" {
+		t.Fatalf("AuditLogPath = %q, want /old/audit.jsonl", got.Mail.Pipeline.AuditLogPath)
 	}
 }
 
@@ -91,7 +99,9 @@ func TestProcessingConfigFlagsApplyOverridesAuditLogPathWhenFlagChanged(t *testi
 
 	cfg := appconfig.Config{
 		Mail: appconfig.MailConfig{
-			AuditLogPath: "/old/audit.jsonl",
+			Pipeline: appconfig.MailPipelineConfig{
+				AuditLogPath: "/old/audit.jsonl",
+			},
 		},
 	}
 
@@ -103,8 +113,8 @@ func TestProcessingConfigFlagsApplyOverridesAuditLogPathWhenFlagChanged(t *testi
 	}
 
 	got := flags.apply(cfg, cmd)
-	if got.Mail.AuditLogPath != "/new/audit.jsonl" {
-		t.Fatalf("AuditLogPath = %q, want /new/audit.jsonl", got.Mail.AuditLogPath)
+	if got.Mail.Pipeline.AuditLogPath != "/new/audit.jsonl" {
+		t.Fatalf("AuditLogPath = %q, want /new/audit.jsonl", got.Mail.Pipeline.AuditLogPath)
 	}
 }
 
@@ -113,9 +123,11 @@ func TestSyncConfigFlagsApply(t *testing.T) {
 
 	cfg := appconfig.Config{
 		Mail: appconfig.MailConfig{
-			Folder:       "inbox",
-			PollInterval: time.Minute,
-			CycleTimeout: 2 * time.Minute,
+			Sync: appconfig.MailSyncConfig{
+				Folder:       "inbox",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
 		},
 	}
 
@@ -125,13 +137,13 @@ func TestSyncConfigFlagsApply(t *testing.T) {
 	flags.cycleTimeout = 5 * time.Minute
 
 	got := flags.apply(cfg)
-	if got.Mail.Folder != "archive" {
-		t.Fatalf("Folder = %q, want archive", got.Mail.Folder)
+	if got.Mail.Sync.Folder != "archive" {
+		t.Fatalf("Folder = %q, want archive", got.Mail.Sync.Folder)
 	}
-	if got.Mail.PollInterval != 30*time.Second {
-		t.Fatalf("PollInterval = %s, want 30s", got.Mail.PollInterval)
+	if got.Mail.Sync.PollInterval != 30*time.Second {
+		t.Fatalf("PollInterval = %s, want 30s", got.Mail.Sync.PollInterval)
 	}
-	if got.Mail.CycleTimeout != 5*time.Minute {
-		t.Fatalf("CycleTimeout = %s, want 5m", got.Mail.CycleTimeout)
+	if got.Mail.Sync.CycleTimeout != 5*time.Minute {
+		t.Fatalf("CycleTimeout = %s, want 5m", got.Mail.Sync.CycleTimeout)
 	}
 }

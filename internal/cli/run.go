@@ -65,7 +65,7 @@ func newRunCmd() *cobra.Command {
 				return nil
 			}
 
-			ticker := time.NewTicker(cfg.Mail.PollInterval)
+			ticker := time.NewTicker(cfg.Mail.Sync.PollInterval)
 			defer ticker.Stop()
 
 			for {
@@ -94,18 +94,18 @@ func newRunCmd() *cobra.Command {
 }
 
 func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, service *discover.Service, writeBack bool, writeBackFolder string, verifyWriteBack bool) error {
-	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.CycleTimeout)
+	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.Sync.CycleTimeout)
 	defer cancel()
 
 	result, err := service.DebugFirst(cycleCtx, discover.Request{
-		Folder:  cfg.Mail.Folder,
+		Folder:  cfg.Mail.Sync.Folder,
 		Process: buildProcessRequest(cfg, provider.MessageRef{}, writeBack, writeBackFolder, verifyWriteBack),
 	})
 	if err != nil {
 		return err
 	}
 	if !result.Found {
-		fmt.Printf("调试模式未找到可处理的邮件，folder=%s\n", cfg.Mail.Folder)
+		fmt.Printf("调试模式未找到可处理的邮件，folder=%s\n", cfg.Mail.Sync.Folder)
 		return nil
 	}
 
@@ -123,11 +123,11 @@ func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, service *disco
 }
 
 func runDiscoverCycle(ctx context.Context, cfg appconfig.Config, service *discover.Service, includeExisting, writeBack bool, writeBackFolder string, verifyWriteBack bool) error {
-	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.CycleTimeout)
+	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.Sync.CycleTimeout)
 	defer cancel()
 
 	result, err := service.RunCycle(cycleCtx, discover.Request{
-		Folder:          cfg.Mail.Folder,
+		Folder:          cfg.Mail.Sync.Folder,
 		StatePath:       cfg.Mail.SyncStatePath(),
 		IncludeExisting: includeExisting,
 		Process:         buildProcessRequest(cfg, provider.MessageRef{}, writeBack, writeBackFolder, verifyWriteBack),

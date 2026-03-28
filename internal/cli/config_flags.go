@@ -22,7 +22,7 @@ func newProviderConfigFlags(cfg appconfig.Config) providerConfigFlags {
 		tenant:           cfg.Auth.Tenant,
 		stateDir:         cfg.Auth.StateDir,
 		authorityBaseURL: cfg.Auth.AuthorityBaseURL,
-		graphBaseURL:     cfg.Mail.GraphBaseURL,
+		graphBaseURL:     cfg.Mail.Client.GraphBaseURL,
 	}
 }
 
@@ -49,12 +49,12 @@ type processingConfigFlags struct {
 
 func newProcessingConfigFlags(cfg appconfig.Config) processingConfigFlags {
 	return processingConfigFlags{
-		outputDir:       cfg.Mail.OutputDir,
-		saveOutput:      cfg.Mail.SaveOutput,
-		backupDir:       cfg.Mail.BackupDir,
-		backupKeyID:     cfg.Mail.BackupKeyID,
-		auditLogPath:    cfg.Mail.AuditLogPath,
-		writeBackFolder: cfg.Mail.WriteBackFolder,
+		outputDir:       cfg.Mail.Pipeline.OutputDir,
+		saveOutput:      cfg.Mail.Pipeline.SaveOutput,
+		backupDir:       cfg.Mail.Pipeline.BackupDir,
+		backupKeyID:     cfg.Mail.Pipeline.BackupKeyID,
+		auditLogPath:    cfg.Mail.Pipeline.AuditLogPath,
+		writeBackFolder: cfg.Mail.Pipeline.WriteBackFolder,
 	}
 }
 
@@ -68,13 +68,13 @@ func (f *processingConfigFlags) addFlags(cmd *cobra.Command) {
 }
 
 func (f processingConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
-	cfg.Mail.OutputDir = f.outputDir
-	cfg.Mail.SaveOutput = f.saveOutput
-	cfg.Mail.BackupDir = f.backupDir
-	cfg.Mail.BackupKeyID = f.backupKeyID
-	cfg.Mail.WriteBackFolder = f.writeBackFolder
+	cfg.Mail.Pipeline.OutputDir = f.outputDir
+	cfg.Mail.Pipeline.SaveOutput = f.saveOutput
+	cfg.Mail.Pipeline.BackupDir = f.backupDir
+	cfg.Mail.Pipeline.BackupKeyID = f.backupKeyID
+	cfg.Mail.Pipeline.WriteBackFolder = f.writeBackFolder
 	if cmd.Flags().Changed("audit-log-path") {
-		cfg.Mail.AuditLogPath = f.auditLogPath
+		cfg.Mail.Pipeline.AuditLogPath = f.auditLogPath
 	}
 	return cfg
 }
@@ -87,9 +87,9 @@ type syncConfigFlags struct {
 
 func newSyncConfigFlags(cfg appconfig.Config) syncConfigFlags {
 	return syncConfigFlags{
-		folder:       cfg.Mail.Folder,
-		pollInterval: cfg.Mail.PollInterval,
-		cycleTimeout: cfg.Mail.CycleTimeout,
+		folder:       cfg.Mail.Sync.Folder,
+		pollInterval: cfg.Mail.Sync.PollInterval,
+		cycleTimeout: cfg.Mail.Sync.CycleTimeout,
 	}
 }
 
@@ -100,8 +100,8 @@ func (f *syncConfigFlags) addFlags(cmd *cobra.Command) {
 }
 
 func (f syncConfigFlags) apply(cfg appconfig.Config) appconfig.Config {
-	cfg.Mail.Folder = f.folder
-	cfg.Mail.PollInterval = f.pollInterval
-	cfg.Mail.CycleTimeout = f.cycleTimeout
+	cfg.Mail.Sync.Folder = f.folder
+	cfg.Mail.Sync.PollInterval = f.pollInterval
+	cfg.Mail.Sync.CycleTimeout = f.cycleTimeout
 	return cfg
 }

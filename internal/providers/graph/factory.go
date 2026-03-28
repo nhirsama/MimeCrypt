@@ -13,12 +13,12 @@ func Build(cfg appconfig.Config) (provider.Session, provider.Reader, provider.Wr
 		return nil, nil, nil, err
 	}
 
-	client, err := newReader(cfg.Mail, session, nil)
+	client, err := newReader(cfg.Mail.Client, session, nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
-	writer, err := newWriter(cfg.Mail, session, nil)
+	writer, err := newWriter(cfg.Mail.Client, session, nil)
 	if err != nil {
 		return nil, nil, nil, err
 	}

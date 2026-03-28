@@ -27,7 +27,7 @@ type listMessagesResponse struct {
 
 var _ provider.Reader = (*reader)(nil)
 
-func newReader(cfg appconfig.MailConfig, tokenSource accessTokenSource, httpClient *http.Client) (*reader, error) {
+func newReader(cfg appconfig.MailClientConfig, tokenSource accessTokenSource, httpClient *http.Client) (*reader, error) {
 	client, err := newGraphClient(cfg, tokenSource, httpClient)
 	if err != nil {
 		return nil, err

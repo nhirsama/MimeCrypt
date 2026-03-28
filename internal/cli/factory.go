@@ -81,16 +81,16 @@ func buildProcessServiceWithProvider(cfg appconfig.Config, reader provider.Reade
 		BackupEncryptor: buildCatchAllBackupEncryptor(cfg),
 		Backupper:       &backup.Service{},
 		WriteBack:       &writeback.Service{Writer: writer},
-		Auditor:         &audit.Service{Path: cfg.Mail.AuditLogPath},
+		Auditor:         &audit.Service{Path: cfg.Mail.Pipeline.AuditLogPath},
 	}
 }
 
 func buildProcessRequest(cfg appconfig.Config, source provider.MessageRef, writeBack bool, writeBackFolder string, verifyWriteBack bool) process.Request {
 	return process.Request{
 		Source:     source,
-		OutputDir:  cfg.Mail.OutputDir,
-		SaveOutput: cfg.Mail.SaveOutput,
-		BackupDir:  cfg.Mail.BackupDir,
+		OutputDir:  cfg.Mail.Pipeline.OutputDir,
+		SaveOutput: cfg.Mail.Pipeline.SaveOutput,
+		BackupDir:  cfg.Mail.Pipeline.BackupDir,
 		WriteBack: process.WriteBackOptions{
 			Enabled:             writeBack,
 			DestinationFolderID: writeBackFolder,
@@ -113,18 +113,18 @@ func buildDiscoverService(cfg appconfig.Config) (*discover.Service, error) {
 
 func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL string) appconfig.Config {
 	cfg := defaults
-	previousStateDir := cfg.Mail.StateDir
-	previousAuditLogPath := cfg.Mail.AuditLogPath
+	previousStateDir := cfg.Mail.Sync.StateDir
+	previousAuditLogPath := cfg.Mail.Pipeline.AuditLogPath
 	cfg.Auth.ClientID = clientID
 	cfg.Auth.Tenant = tenant
 	cfg.Auth.StateDir = stateDir
 	cfg.Auth.AuthorityBaseURL = authorityBaseURL
-	cfg.Mail.GraphBaseURL = graphBaseURL
-	cfg.Mail.StateDir = stateDir
+	cfg.Mail.Client.GraphBaseURL = graphBaseURL
+	cfg.Mail.Sync.StateDir = stateDir
 	if strings.TrimSpace(previousAuditLogPath) == "" || previousAuditLogPath == appconfig.DefaultAuditLogPath(previousStateDir) {
-		cfg.Mail.AuditLogPath = appconfig.DefaultAuditLogPath(stateDir)
+		cfg.Mail.Pipeline.AuditLogPath = appconfig.DefaultAuditLogPath(stateDir)
 	} else if !filepath.IsAbs(previousAuditLogPath) && previousAuditLogPath == filepath.Base(appconfig.DefaultAuditLogPath(previousStateDir)) {
-		cfg.Mail.AuditLogPath = filepath.Join(stateDir, previousAuditLogPath)
+		cfg.Mail.Pipeline.AuditLogPath = filepath.Join(stateDir, previousAuditLogPath)
 	}
 	return cfg
 }
@@ -141,7 +141,7 @@ func validateWriteBackFlags(writeBack, verifyWriteBack bool, writeBackFolder str
 }
 
 func buildCatchAllBackupEncryptor(cfg appconfig.Config) *encrypt.Service {
-	recipients := normalizeRecipientSpecs([]string{cfg.Mail.BackupKeyID})
+	recipients := normalizeRecipientSpecs([]string{cfg.Mail.Pipeline.BackupKeyID})
 	if len(recipients) == 0 {
 		return nil
 	}

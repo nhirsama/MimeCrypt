@@ -37,17 +37,29 @@ type AuthConfig struct {
 }
 
 type MailConfig struct {
-	GraphBaseURL    string
+	Client   MailClientConfig
+	Pipeline MailPipelineConfig
+	Sync     MailSyncConfig
+}
+
+type MailClientConfig struct {
+	GraphBaseURL string
+}
+
+type MailPipelineConfig struct {
 	OutputDir       string
 	SaveOutput      bool
 	BackupDir       string
 	BackupKeyID     string
 	AuditLogPath    string
-	Folder          string
 	WriteBackFolder string
-	StateDir        string
-	PollInterval    time.Duration
-	CycleTimeout    time.Duration
+}
+
+type MailSyncConfig struct {
+	Folder       string
+	StateDir     string
+	PollInterval time.Duration
+	CycleTimeout time.Duration
 }
 
 // LoadFromEnv 从环境变量加载 CLI 所需配置。
@@ -71,17 +83,23 @@ func LoadFromEnv() (Config, error) {
 			StateDir:         getenvDefault("MIMECRYPT_STATE_DIR", stateDir),
 		},
 		Mail: MailConfig{
-			GraphBaseURL:    getenvDefault("MIMECRYPT_GRAPH_BASE_URL", defaultGraphBaseURL),
-			OutputDir:       getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
-			SaveOutput:      saveOutput,
-			BackupDir:       getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
-			BackupKeyID:     os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),
-			AuditLogPath:    getenvDefault("MIMECRYPT_AUDIT_LOG_PATH", DefaultAuditLogPath(stateDir)),
-			Folder:          getenvDefault("MIMECRYPT_FOLDER", defaultFolder),
-			WriteBackFolder: os.Getenv("MIMECRYPT_WRITEBACK_FOLDER"),
-			StateDir:        getenvDefault("MIMECRYPT_STATE_DIR", stateDir),
-			PollInterval:    defaultPollInterval,
-			CycleTimeout:    defaultCycleTimeout,
+			Client: MailClientConfig{
+				GraphBaseURL: getenvDefault("MIMECRYPT_GRAPH_BASE_URL", defaultGraphBaseURL),
+			},
+			Pipeline: MailPipelineConfig{
+				OutputDir:       getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
+				SaveOutput:      saveOutput,
+				BackupDir:       getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
+				BackupKeyID:     os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),
+				AuditLogPath:    getenvDefault("MIMECRYPT_AUDIT_LOG_PATH", DefaultAuditLogPath(stateDir)),
+				WriteBackFolder: os.Getenv("MIMECRYPT_WRITEBACK_FOLDER"),
+			},
+			Sync: MailSyncConfig{
+				Folder:       getenvDefault("MIMECRYPT_FOLDER", defaultFolder),
+				StateDir:     getenvDefault("MIMECRYPT_STATE_DIR", stateDir),
+				PollInterval: defaultPollInterval,
+				CycleTimeout: defaultCycleTimeout,
+			},
 		},
 	}, nil
 }
@@ -115,6 +133,11 @@ func (c AuthConfig) Validate() error {
 
 // ValidateClient 校验 Graph 邮件客户端所需配置。
 func (c MailConfig) ValidateClient() error {
+	return c.Client.Validate()
+}
+
+// Validate 校验 Graph 邮件客户端所需配置。
+func (c MailClientConfig) Validate() error {
 	if strings.TrimSpace(c.GraphBaseURL) == "" {
 		return fmt.Errorf("graph base URL 不能为空")
 	}
@@ -127,25 +150,25 @@ func (c MailConfig) ValidateSync() error {
 	if err := c.ValidateClient(); err != nil {
 		return err
 	}
-	if strings.TrimSpace(c.StateDir) == "" {
+	if strings.TrimSpace(c.Sync.StateDir) == "" {
 		return fmt.Errorf("state dir 不能为空")
 	}
-	if c.SaveOutput && strings.TrimSpace(c.OutputDir) == "" {
+	if c.Pipeline.SaveOutput && strings.TrimSpace(c.Pipeline.OutputDir) == "" {
 		return fmt.Errorf("output dir 不能为空")
 	}
-	if strings.TrimSpace(c.BackupDir) == "" {
+	if strings.TrimSpace(c.Pipeline.BackupDir) == "" {
 		return fmt.Errorf("backup dir 不能为空")
 	}
-	if strings.TrimSpace(c.AuditLogPath) == "" {
+	if strings.TrimSpace(c.Pipeline.AuditLogPath) == "" {
 		return fmt.Errorf("audit log path 不能为空")
 	}
-	if strings.TrimSpace(c.Folder) == "" {
+	if strings.TrimSpace(c.Sync.Folder) == "" {
 		return fmt.Errorf("folder 不能为空")
 	}
-	if c.PollInterval <= 0 {
+	if c.Sync.PollInterval <= 0 {
 		return fmt.Errorf("poll interval 必须大于 0")
 	}
-	if c.CycleTimeout <= 0 {
+	if c.Sync.CycleTimeout <= 0 {
 		return fmt.Errorf("cycle timeout 必须大于 0")
 	}
 
@@ -157,7 +180,7 @@ func (c AuthConfig) TokenPath() string {
 }
 
 func (c MailConfig) SyncStatePath() string {
-	return filepath.Join(c.StateDir, "sync-"+sanitizeFileComponent(c.Folder)+".json")
+	return filepath.Join(c.Sync.StateDir, "sync-"+sanitizeFileComponent(c.Sync.Folder)+".json")
 }
 
 func DefaultAuditLogPath(stateDir string) string {
