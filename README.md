@@ -146,6 +146,8 @@ go run ./cmd/mimecrypt logout --topology-file ./topology.json --credential offic
 
 `login [imap-username]` 用于在当前 credential 上显式指定 IMAP 用户名。若同时设置了 `MIMECRYPT_IMAP_USERNAME`，环境变量优先。
 
+`login`、`logout`、`token status`、`token import` 在没有 topology 文件时会直接使用当前环境配置；只有选择命名 `credential` 时才需要 topology。
+
 ### 读取与检查
 
 ```bash

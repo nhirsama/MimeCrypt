@@ -11,12 +11,50 @@ import (
 	"mimecrypt/internal/appconfig"
 )
 
-func TestResolveCredentialPlanRequiresTopology(t *testing.T) {
+func TestResolveCredentialPlanFallsBackToBaseConfigWithoutTopology(t *testing.T) {
 	t.Parallel()
 
-	_, err := ResolveCredentialPlan(appconfig.Config{}, "")
-	if err == nil || !strings.Contains(err.Error(), "topology path 未配置") {
-		t.Fatalf("ResolveCredentialPlan() error = %v, want topology path error", err)
+	stateDir := t.TempDir()
+	plan, err := ResolveCredentialPlan(appconfig.Config{
+		TopologyPath: appconfig.DefaultTopologyPath(stateDir),
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("ResolveCredentialPlan() error = %v", err)
+	}
+	if plan.CredentialName != "" {
+		t.Fatalf("CredentialName = %q, want empty", plan.CredentialName)
+	}
+	if plan.Config.Auth.StateDir != stateDir {
+		t.Fatalf("Auth.StateDir = %q, want %q", plan.Config.Auth.StateDir, stateDir)
+	}
+}
+
+func TestResolveCredentialPlanPreservesMissingExplicitTopologyError(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	_, err := ResolveCredentialPlan(appconfig.Config{
+		TopologyPath: filepath.Join(stateDir, "custom-topology.json"),
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "")
+	if err == nil || !strings.Contains(err.Error(), "读取 topology 配置失败") {
+		t.Fatalf("ResolveCredentialPlan() error = %v, want missing topology error", err)
+	}
+}
+
+func TestResolveCredentialPlanRejectsNamedCredentialWithoutTopology(t *testing.T) {
+	t.Parallel()
+
+	_, err := ResolveCredentialPlan(appconfig.Config{}, "office-auth")
+	if err == nil || !strings.Contains(err.Error(), "需要 topology 配置") {
+		t.Fatalf("ResolveCredentialPlan() error = %v, want topology requirement", err)
 	}
 }
 
@@ -129,6 +167,72 @@ func TestResolveCredentialPlanAllowsTopologyWithoutNamedCredentials(t *testing.T
 	}
 	if plan.Config.Auth.StateDir != stateDir {
 		t.Fatalf("Auth.StateDir = %q, want %q", plan.Config.Auth.StateDir, stateDir)
+	}
+}
+
+func TestResolveCredentialPlanAllowsExplicitScopeClearFromTopology(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	if err := os.WriteFile(topologyPath, []byte(`{
+  "default_credential": "imap-only",
+  "credentials": {
+    "imap-only": {
+      "name": "imap-only",
+      "kind": "oauth",
+      "graph_scopes": [],
+      "imap_scopes": ["scope-imap"],
+      "imap_username": "imap@example.com"
+    }
+  },
+  "sources": {
+    "default": {
+      "name": "default",
+      "driver": "imap",
+      "mode": "poll",
+      "folder": "INBOX",
+      "poll_interval": 60000000000,
+      "cycle_timeout": 120000000000
+    }
+  },
+  "sinks": {
+    "discard": {"name": "discard", "driver": "discard"}
+  },
+  "routes": {
+    "default": {
+      "name": "default",
+      "source_refs": ["default"],
+      "targets": [{"name": "discard", "sink_ref": "discard", "artifact": "primary", "required": true}]
+    }
+  }
+}`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	plan, err := ResolveCredentialPlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir:       stateDir,
+			TokenStore:     "file",
+			GraphScopes:    []string{"scope-graph"},
+			IMAPScopes:     []string{"scope-imap-base"},
+			ClientID:       "client-id",
+			Tenant:         "organizations",
+			KeyringService: "mimecrypt",
+		},
+	}, "")
+	if err != nil {
+		t.Fatalf("ResolveCredentialPlan() error = %v", err)
+	}
+	if len(plan.Config.Auth.GraphScopes) != 0 {
+		t.Fatalf("GraphScopes = %#v, want empty", plan.Config.Auth.GraphScopes)
+	}
+	if !strings.EqualFold(strings.Join(plan.Config.Auth.IMAPScopes, " "), "scope-imap") {
+		t.Fatalf("IMAPScopes = %#v, want [scope-imap]", plan.Config.Auth.IMAPScopes)
+	}
+	if plan.Config.Mail.Client.IMAPUsername != "imap@example.com" {
+		t.Fatalf("IMAPUsername = %q, want imap@example.com", plan.Config.Mail.Client.IMAPUsername)
 	}
 }
 

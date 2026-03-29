@@ -189,6 +189,48 @@ func TestConfigWithCredentialAppliesCredentialScopedStateAndStoredIMAPUsername(t
 	}
 }
 
+func TestConfigWithCredentialAllowsExplicitScopeClear(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	cfg := Config{
+		Auth: AuthConfig{
+			ClientID:    "client-id",
+			StateDir:    stateDir,
+			TokenStore:  "file",
+			GraphScopes: []string{"scope-graph"},
+			EWSScopes:   []string{"scope-ews"},
+			IMAPScopes:  []string{"scope-imap"},
+		},
+		Mail: MailConfig{
+			Pipeline: MailPipelineConfig{
+				AuditLogPath: DefaultAuditLogPath(stateDir),
+			},
+			Sync: MailSyncConfig{StateDir: stateDir},
+		},
+	}
+
+	got := cfg.WithCredential("imap-only", Credential{
+		Name:           "imap-only",
+		Kind:           "oauth",
+		GraphScopes:    []string{},
+		GraphScopesSet: true,
+		EWSScopes:      []string{},
+		EWSScopesSet:   true,
+		IMAPScopes:     []string{"scope-imap-only"},
+	})
+
+	if len(got.Auth.GraphScopes) != 0 {
+		t.Fatalf("GraphScopes = %#v, want empty", got.Auth.GraphScopes)
+	}
+	if len(got.Auth.EWSScopes) != 0 {
+		t.Fatalf("EWSScopes = %#v, want empty", got.Auth.EWSScopes)
+	}
+	if !reflect.DeepEqual(got.Auth.IMAPScopes, []string{"scope-imap-only"}) {
+		t.Fatalf("IMAPScopes = %#v, want [scope-imap-only]", got.Auth.IMAPScopes)
+	}
+}
+
 func TestMailConfigValidatePipelineBase(t *testing.T) {
 	t.Parallel()
 

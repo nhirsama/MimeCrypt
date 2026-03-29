@@ -1,6 +1,7 @@
 package appconfig
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -35,6 +36,9 @@ type Credential struct {
 	EWSScopes        []string `json:"ews_scopes,omitempty"`
 	IMAPScopes       []string `json:"imap_scopes,omitempty"`
 	IMAPUsername     string   `json:"imap_username,omitempty"`
+	GraphScopesSet   bool     `json:"-"`
+	EWSScopesSet     bool     `json:"-"`
+	IMAPScopesSet    bool     `json:"-"`
 }
 
 type Source struct {
@@ -113,6 +117,26 @@ func (t Topology) Normalize() Topology {
 		}
 	}
 	return t
+}
+
+func (c *Credential) UnmarshalJSON(data []byte) error {
+	type credentialAlias Credential
+
+	var decoded credentialAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	*c = Credential(decoded)
+	_, c.GraphScopesSet = raw["graph_scopes"]
+	_, c.EWSScopesSet = raw["ews_scopes"]
+	_, c.IMAPScopesSet = raw["imap_scopes"]
+	return nil
 }
 
 func (t Topology) ValidateStructure() error {

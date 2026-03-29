@@ -40,13 +40,13 @@ func (c Config) WithCredential(name string, credential Credential) Config {
 	if value := strings.TrimSpace(credential.KeyringService); value != "" {
 		cfg.Auth.KeyringService = value
 	}
-	if len(credential.GraphScopes) > 0 {
+	if credential.GraphScopesSet || len(credential.GraphScopes) > 0 {
 		cfg.Auth.GraphScopes = append([]string(nil), credential.GraphScopes...)
 	}
-	if len(credential.EWSScopes) > 0 {
+	if credential.EWSScopesSet || len(credential.EWSScopes) > 0 {
 		cfg.Auth.EWSScopes = append([]string(nil), credential.EWSScopes...)
 	}
-	if len(credential.IMAPScopes) > 0 {
+	if credential.IMAPScopesSet || len(credential.IMAPScopes) > 0 {
 		cfg.Auth.IMAPScopes = append([]string(nil), credential.IMAPScopes...)
 	}
 	if value := strings.TrimSpace(credential.IMAPUsername); value != "" {
