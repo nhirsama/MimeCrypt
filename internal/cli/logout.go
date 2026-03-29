@@ -14,14 +14,25 @@ func newLogoutCmd() *cobra.Command {
 		return newErrorCommand("logout", "清除本地登录状态", err)
 	}
 
+	credentialFlags := newCredentialConfigFlags(cfg)
 	stateDir := cfg.Auth.StateDir
 
 	cmd := &cobra.Command{
 		Use:   "logout",
 		Short: "清理本地认证状态与缓存 token",
 		Args:  noArgs(),
-		RunE: func(*cobra.Command, []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg.Auth.StateDir = stateDir
+			cfg = credentialFlags.apply(cfg)
+
+			resolved, err := resolveCredentialConfig(cfg, credentialFlags)
+			if err != nil {
+				return fmt.Errorf("logout 失败: %w", err)
+			}
+			if err := validateCustomCredentialFlags(cmd, resolved, "state-dir"); err != nil {
+				return fmt.Errorf("logout 失败: %w", err)
+			}
+			cfg = resolved.Config
 			service, err := buildLogoutService(cfg)
 			if err != nil {
 				return fmt.Errorf("logout 失败: %w", err)
@@ -37,6 +48,7 @@ func newLogoutCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&stateDir, "state-dir", stateDir, "本地状态目录")
+	credentialFlags.addFlags(cmd)
 
 	return cmd
 }

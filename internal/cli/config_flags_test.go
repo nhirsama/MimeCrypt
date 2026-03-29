@@ -256,3 +256,20 @@ func TestTopologyConfigFlagsApply(t *testing.T) {
 		t.Fatalf("unexpected topology selection flags: %+v", flags)
 	}
 }
+
+func TestCredentialConfigFlagsApply(t *testing.T) {
+	t.Parallel()
+
+	cfg := appconfig.Config{TopologyPath: "/old/topology.json"}
+	flags := newCredentialConfigFlags(cfg)
+	flags.topologyFile = "/new/topology.json"
+	flags.credentialName = "archive-auth"
+
+	got := flags.apply(cfg)
+	if got.TopologyPath != "/new/topology.json" {
+		t.Fatalf("TopologyPath = %q, want /new/topology.json", got.TopologyPath)
+	}
+	if flags.credentialName != "archive-auth" {
+		t.Fatalf("unexpected credential selection flags: %+v", flags)
+	}
+}

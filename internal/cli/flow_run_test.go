@@ -81,6 +81,39 @@ func TestHealthCommandExposesTopologyFlags(t *testing.T) {
 	}
 }
 
+func TestLoginCommandExposesCredentialFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd := newLoginCmd()
+	for _, name := range []string{"topology-file", "credential"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Fatalf("expected %s flag on login command", name)
+		}
+	}
+}
+
+func TestTokenStatusCommandExposesCredentialFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd := newTokenStatusCmd(appconfig.Config{})
+	for _, name := range []string{"topology-file", "credential"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Fatalf("expected %s flag on token status command", name)
+		}
+	}
+}
+
+func TestLogoutCommandExposesCredentialFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd := newLogoutCmd()
+	for _, name := range []string{"topology-file", "credential"} {
+		if cmd.Flags().Lookup(name) == nil {
+			t.Fatalf("expected %s flag on logout command", name)
+		}
+	}
+}
+
 func TestFlowRunCommandIsHiddenDeprecatedAlias(t *testing.T) {
 	t.Parallel()
 
@@ -328,6 +361,87 @@ func TestResolveTopologySourceRejectsRouteSelection(t *testing.T) {
 	}
 }
 
+func TestResolveCredentialConfigLoadsConfiguredCredential(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	content, err := json.Marshal(appconfig.Topology{
+		DefaultCredential: "archive-auth",
+		DefaultSource:     "default",
+		DefaultRoute:      "default",
+		Credentials: map[string]appconfig.Credential{
+			"archive-auth": {
+				Name:           "archive-auth",
+				Kind:           "oauth",
+				TokenStore:     "keyring",
+				KeyringService: "archive-keyring",
+			},
+		},
+		Sources: map[string]appconfig.Source{
+			"default": {
+				Name:         "default",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "INBOX",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {
+				Name:   "discard",
+				Driver: "discard",
+			},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"default"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	resolved, err := resolveCredentialConfig(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir:       stateDir,
+			TokenStore:     "file",
+			KeyringService: "mimecrypt",
+		},
+	}, credentialConfigFlags{topologyFile: topologyPath})
+	if err != nil {
+		t.Fatalf("resolveCredentialConfig() error = %v", err)
+	}
+	if !resolved.Custom || resolved.CredentialName != "archive-auth" {
+		t.Fatalf("unexpected resolved credential config: %+v", resolved)
+	}
+	if got, want := resolved.Config.Auth.StateDir, filepath.Join(stateDir, "credentials", "archive-auth"); got != want {
+		t.Fatalf("Auth.StateDir = %q, want %q", got, want)
+	}
+	if resolved.Config.Auth.TokenStore != "keyring" || resolved.Config.Auth.KeyringService != "archive-keyring" {
+		t.Fatalf("unexpected auth config: %+v", resolved.Config.Auth)
+	}
+}
+
+func TestResolveCredentialConfigRejectsNonDefaultSelectionInLegacyMode(t *testing.T) {
+	t.Parallel()
+
+	_, err := resolveCredentialConfig(appconfig.Config{}, credentialConfigFlags{credentialName: "archive-auth"})
+	if err == nil || !strings.Contains(err.Error(), "legacy 模式只支持 credential=default") {
+		t.Fatalf("resolveCredentialConfig() error = %v, want legacy selection error", err)
+	}
+}
+
 func TestBuildMailflowSinkStoreFallsBackToSourceFolder(t *testing.T) {
 	t.Parallel()
 
@@ -344,6 +458,43 @@ func TestBuildMailflowSinkStoreFallsBackToSourceFolder(t *testing.T) {
 	}
 	if got, want := store.Mailbox, "archive-2026"; got != want {
 		t.Fatalf("Mailbox = %q, want %q", got, want)
+	}
+}
+
+func TestApplyTopologyCredentialUsesNamedStateDir(t *testing.T) {
+	t.Parallel()
+
+	cfg := appconfig.Config{
+		Auth: appconfig.AuthConfig{
+			StateDir:       "/state",
+			TokenStore:     "file",
+			ClientID:       "client-id",
+			Tenant:         "organizations",
+			GraphScopes:    []string{"graph.read"},
+			EWSScopes:      []string{"ews.read"},
+			IMAPScopes:     []string{"imap.read"},
+			KeyringService: "mimecrypt",
+		},
+	}
+	topology := appconfig.Topology{
+		Credentials: map[string]appconfig.Credential{
+			"archive-auth": {
+				Name:       "archive-auth",
+				Kind:       "oauth",
+				TokenStore: "keyring",
+			},
+		},
+	}
+
+	got, err := applyTopologyCredential(cfg, topology, "archive-auth")
+	if err != nil {
+		t.Fatalf("applyTopologyCredential() error = %v", err)
+	}
+	if got.Auth.StateDir != filepath.Join("/state", "credentials", "archive-auth") {
+		t.Fatalf("Auth.StateDir = %q", got.Auth.StateDir)
+	}
+	if got.Auth.TokenStore != "keyring" {
+		t.Fatalf("TokenStore = %q, want keyring", got.Auth.TokenStore)
 	}
 }
 

@@ -302,6 +302,86 @@ func TestSaveAndLoadLocalConfig(t *testing.T) {
 	}
 }
 
+func TestResolveStoredIMAPUsernameUsesSavedValueWhenFallbackEmpty(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	if err := SaveLocalConfig(stateDir, LocalConfig{IMAPUsername: "saved@example.com"}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	if got, want := ResolveStoredIMAPUsername(stateDir, ""), "saved@example.com"; got != want {
+		t.Fatalf("ResolveStoredIMAPUsername() = %q, want %q", got, want)
+	}
+}
+
+func TestConfigWithCredentialUsesDerivedStateDirAndStoredIMAPUsername(t *testing.T) {
+	t.Parallel()
+
+	baseStateDir := t.TempDir()
+	credentialStateDir := DefaultCredentialStateDir(baseStateDir, "archive")
+	if err := SaveLocalConfig(credentialStateDir, LocalConfig{IMAPUsername: "archive@example.com"}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	cfg := Config{
+		Auth: AuthConfig{
+			ClientID:         "base-client",
+			Tenant:           "base-tenant",
+			AuthorityBaseURL: "https://authority.example.com",
+			GraphScopes:      []string{"graph.read"},
+			EWSScopes:        []string{"ews.read"},
+			IMAPScopes:       []string{"imap.read"},
+			StateDir:         baseStateDir,
+			TokenStore:       "file",
+			KeyringService:   "mimecrypt",
+		},
+		Mail: MailConfig{
+			Client: MailClientConfig{
+				IMAPUsername: "",
+			},
+		},
+	}
+
+	got := cfg.WithCredential("archive", Credential{
+		Name:           "archive",
+		Kind:           "oauth",
+		ClientID:       "credential-client",
+		TokenStore:     "keyring",
+		KeyringService: "archive-keyring",
+		GraphScopes:    []string{"graph.archive"},
+	})
+
+	if got.Auth.StateDir != credentialStateDir {
+		t.Fatalf("Auth.StateDir = %q, want %q", got.Auth.StateDir, credentialStateDir)
+	}
+	if got.Auth.ClientID != "credential-client" {
+		t.Fatalf("Auth.ClientID = %q, want credential-client", got.Auth.ClientID)
+	}
+	if got.Auth.TokenStore != "keyring" || got.Auth.KeyringService != "archive-keyring" {
+		t.Fatalf("unexpected token store config: %+v", got.Auth)
+	}
+	if !reflect.DeepEqual(got.Auth.GraphScopes, []string{"graph.archive"}) {
+		t.Fatalf("Auth.GraphScopes = %#v", got.Auth.GraphScopes)
+	}
+	if got.Mail.Client.IMAPUsername != "archive@example.com" {
+		t.Fatalf("IMAPUsername = %q, want archive@example.com", got.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestCredentialResolvedStateDirUsesExplicitStateDir(t *testing.T) {
+	t.Parallel()
+
+	credential := Credential{
+		Name:     "archive",
+		Kind:     "oauth",
+		StateDir: "/custom/state",
+	}
+	if got, want := credential.ResolvedStateDir("/base", "archive"), "/custom/state"; got != want {
+		t.Fatalf("ResolvedStateDir() = %q, want %q", got, want)
+	}
+}
+
 func TestAuthConfigTokenPaths(t *testing.T) {
 	t.Parallel()
 
@@ -536,6 +616,16 @@ func TestConfigBuildTopologyDefaultsToDiscardRoute(t *testing.T) {
 
 	if topology.DefaultSource != "default" || topology.DefaultRoute != "default" {
 		t.Fatalf("unexpected defaults: %+v", topology)
+	}
+	if topology.DefaultCredential != "default" {
+		t.Fatalf("DefaultCredential = %q, want default", topology.DefaultCredential)
+	}
+	credential, err := topology.DefaultCredentialConfig()
+	if err != nil {
+		t.Fatalf("DefaultCredentialConfig() error = %v", err)
+	}
+	if credential.Kind != "shared-session" {
+		t.Fatalf("unexpected credential config: %+v", credential)
 	}
 	source, err := topology.DefaultSourceConfig()
 	if err != nil {

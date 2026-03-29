@@ -22,18 +22,29 @@ type TopologyOptions struct {
 // Topology 表示命名 source / sink / route / credential 的配置拓扑。
 // 当前仍由单 provider 环境变量编译出一个默认 topology，后续再扩展到多来源多出口。
 type Topology struct {
-	Credentials   map[string]Credential `json:"credentials,omitempty"`
-	Sources       map[string]Source     `json:"sources,omitempty"`
-	Sinks         map[string]Sink       `json:"sinks,omitempty"`
-	Routes        map[string]Route      `json:"routes,omitempty"`
-	DefaultSource string                `json:"default_source,omitempty"`
-	DefaultRoute  string                `json:"default_route,omitempty"`
+	Credentials       map[string]Credential `json:"credentials,omitempty"`
+	Sources           map[string]Source     `json:"sources,omitempty"`
+	Sinks             map[string]Sink       `json:"sinks,omitempty"`
+	Routes            map[string]Route      `json:"routes,omitempty"`
+	DefaultCredential string                `json:"default_credential,omitempty"`
+	DefaultSource     string                `json:"default_source,omitempty"`
+	DefaultRoute      string                `json:"default_route,omitempty"`
 }
 
 type Credential struct {
-	Name    string            `json:"name,omitempty"`
-	Kind    string            `json:"kind,omitempty"`
-	Options map[string]string `json:"options,omitempty"`
+	Name             string            `json:"name,omitempty"`
+	Kind             string            `json:"kind,omitempty"`
+	StateDir         string            `json:"state_dir,omitempty"`
+	ClientID         string            `json:"client_id,omitempty"`
+	Tenant           string            `json:"tenant,omitempty"`
+	AuthorityBaseURL string            `json:"authority_base_url,omitempty"`
+	TokenStore       string            `json:"token_store,omitempty"`
+	KeyringService   string            `json:"keyring_service,omitempty"`
+	GraphScopes      []string          `json:"graph_scopes,omitempty"`
+	EWSScopes        []string          `json:"ews_scopes,omitempty"`
+	IMAPScopes       []string          `json:"imap_scopes,omitempty"`
+	IMAPUsername     string            `json:"imap_username,omitempty"`
+	Options          map[string]string `json:"options,omitempty"`
 }
 
 type Source struct {
@@ -152,8 +163,9 @@ func (c Config) BuildTopology(options TopologyOptions) (Topology, error) {
 				SourceRefs: []string{defaultTopologySourceName},
 			},
 		},
-		DefaultSource: defaultTopologySourceName,
-		DefaultRoute:  defaultTopologyRouteName,
+		DefaultSource:     defaultTopologySourceName,
+		DefaultRoute:      defaultTopologyRouteName,
+		DefaultCredential: defaultTopologyCredentialName,
 	}
 	source := topology.Sources[defaultTopologySourceName]
 	source.StatePath = c.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)
@@ -224,6 +236,11 @@ func (t Topology) Validate() error {
 	if len(t.Routes) == 0 {
 		return fmt.Errorf("至少需要一个 route")
 	}
+	if strings.TrimSpace(t.DefaultCredential) != "" {
+		if _, err := t.DefaultCredentialConfig(); err != nil {
+			return err
+		}
+	}
 	if _, err := t.DefaultSourceConfig(); err != nil {
 		return err
 	}
@@ -251,6 +268,18 @@ func (t Topology) Validate() error {
 		}
 	}
 	return nil
+}
+
+func (t Topology) DefaultCredentialConfig() (Credential, error) {
+	name := strings.TrimSpace(t.DefaultCredential)
+	if name == "" {
+		return Credential{}, fmt.Errorf("default credential 未配置")
+	}
+	credential, ok := t.Credentials[name]
+	if !ok {
+		return Credential{}, fmt.Errorf("default credential 不存在: %s", name)
+	}
+	return credential, nil
 }
 
 func (t Topology) DefaultSourceConfig() (Source, error) {

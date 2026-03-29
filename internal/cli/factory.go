@@ -99,13 +99,17 @@ func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
 }
 
 func buildTopologyHealthService(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*health.Service, error) {
-	sourceClients, err := buildSourceProviderClients(cfg, resolved.Source)
+	sourceCfg, err := configForSource(cfg, resolved.Topology, resolved.Source)
+	if err != nil {
+		return nil, err
+	}
+	sourceClients, err := providers.BuildSourceClients(sourceCfg)
 	if err != nil {
 		return nil, err
 	}
 
 	service := &health.Service{
-		StateDir: cfg.Auth.StateDir,
+		StateDir: sourceCfg.Auth.StateDir,
 		Folder:   resolved.Source.Folder,
 		Provider: normalizeDriver(resolved.Source.Driver, cfg.Provider),
 		Session:  sourceClients.Session,
@@ -133,7 +137,7 @@ func buildTopologyHealthService(ctx context.Context, cfg appconfig.Config, resol
 			continue
 		}
 
-		sinkClients, err := buildSinkProviderClients(cfg, resolved.Source, sink)
+		sinkClients, err := buildSinkProviderClients(cfg, resolved.Topology, resolved.Source, sink)
 		if err != nil {
 			return nil, err
 		}
@@ -180,7 +184,11 @@ func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, resolved res
 	if !strings.EqualFold(source.Mode, "poll") {
 		return nil, fmt.Errorf("run 仅支持 polling source，当前 source=%s mode=%s", source.Name, source.Mode)
 	}
-	sourceClients, err := buildSourceProviderClients(cfg, source)
+	sourceCfg, err := configForSource(cfg, resolved.Topology, source)
+	if err != nil {
+		return nil, err
+	}
+	sourceClients, err := providers.BuildSourceClients(sourceCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +196,7 @@ func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, resolved res
 	if err != nil {
 		return nil, err
 	}
-	sourceStore, err := buildMailflowSourceStore(ctx, cfg, sourceClients.Reader, source, resolved.Route.DeleteSource.Enabled)
+	sourceStore, err := buildMailflowSourceStore(ctx, sourceCfg, sourceClients.Reader, source, resolved.Route.DeleteSource.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -273,11 +281,15 @@ func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, topology 
 				OutputDir: sink.OutputDir,
 			}
 		default:
-			sinkClients, err := buildSinkProviderClients(cfg, source, sink)
+			sinkCfg, err := configForSink(cfg, topology, source, sink)
 			if err != nil {
 				return nil, err
 			}
-			sinkStore, err := buildMailflowSinkStore(ctx, cfg, sinkClients.Reader, sink, source.Folder, route.DeleteSource.Enabled)
+			sinkClients, err := buildProviderClients(sinkCfg)
+			if err != nil {
+				return nil, err
+			}
+			sinkStore, err := buildMailflowSinkStore(ctx, sinkCfg, sinkClients.Reader, sink, source.Folder, route.DeleteSource.Enabled)
 			if err != nil {
 				return nil, err
 			}
@@ -292,15 +304,37 @@ func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, topology 
 	return consumers, nil
 }
 
-func buildSourceProviderClients(cfg appconfig.Config, source appconfig.Source) (provider.Clients, error) {
-	sourceCfg := cfg
-	sourceCfg.Provider = normalizeDriver(source.Driver, "imap")
-	sourceCfg.Mail.Sync.Folder = source.Folder
+func buildSourceProviderClients(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source) (provider.Clients, error) {
+	sourceCfg, err := configForSource(cfg, topology, source)
+	if err != nil {
+		return provider.Clients{}, err
+	}
 	return providers.BuildSourceClients(sourceCfg)
 }
 
-func buildSinkProviderClients(cfg appconfig.Config, source appconfig.Source, sink appconfig.Sink) (provider.Clients, error) {
-	sinkCfg := cfg
+func buildSinkProviderClients(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source, sink appconfig.Sink) (provider.Clients, error) {
+	sinkCfg, err := configForSink(cfg, topology, source, sink)
+	if err != nil {
+		return provider.Clients{}, err
+	}
+	return buildProviderClients(sinkCfg)
+}
+
+func configForSource(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source) (appconfig.Config, error) {
+	sourceCfg, err := applyTopologyCredential(cfg, topology, source.CredentialRef)
+	if err != nil {
+		return appconfig.Config{}, err
+	}
+	sourceCfg.Provider = normalizeDriver(source.Driver, "imap")
+	sourceCfg.Mail.Sync.Folder = source.Folder
+	return sourceCfg, nil
+}
+
+func configForSink(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source, sink appconfig.Sink) (appconfig.Config, error) {
+	sinkCfg, err := applyTopologyCredential(cfg, topology, sink.CredentialRef)
+	if err != nil {
+		return appconfig.Config{}, err
+	}
 	sinkDriver := normalizeDriver(sink.Driver, "imap")
 	sinkCfg.Provider = sourceProviderForSinkDriver(sinkDriver)
 	sinkCfg.Mail.Pipeline.WriteBackProvider = sinkDriver
@@ -308,7 +342,19 @@ func buildSinkProviderClients(cfg appconfig.Config, source appconfig.Source, sin
 	if folder := strings.TrimSpace(sink.Folder); folder != "" {
 		sinkCfg.Mail.Sync.Folder = folder
 	}
-	return buildProviderClients(sinkCfg)
+	return sinkCfg, nil
+}
+
+func applyTopologyCredential(cfg appconfig.Config, topology appconfig.Topology, credentialRef string) (appconfig.Config, error) {
+	credentialRef = strings.TrimSpace(credentialRef)
+	if credentialRef == "" {
+		return cfg, nil
+	}
+	credential, ok := topology.Credentials[credentialRef]
+	if !ok {
+		return appconfig.Config{}, fmt.Errorf("credential 不存在: %s", credentialRef)
+	}
+	return cfg.WithCredential(credential.Name, credential), nil
 }
 
 func buildMailflowSourceStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, source appconfig.Source, resolveAccount bool) (mailflow.StoreRef, error) {

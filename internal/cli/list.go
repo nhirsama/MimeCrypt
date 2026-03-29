@@ -66,7 +66,7 @@ func newListCmd() *cobra.Command {
 					return fmt.Errorf("list 失败: --folder 与 --topology-file 不能同时覆盖 source 文件夹")
 				}
 
-				sourceClients, err := buildSourceProviderClients(cfg, resolved.Source)
+				sourceClients, err := buildSourceProviderClients(cfg, resolved.Topology, resolved.Source)
 				if err != nil {
 					return fmt.Errorf("list 失败: %w", err)
 				}

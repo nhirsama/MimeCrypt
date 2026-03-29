@@ -98,7 +98,7 @@ MimeCrypt 的核心职责如下：
 
 也就是说，未来会以“命名 source / sink driver”而不是单一全局 provider 作为主要配置单位。这样同一个实例可以同时接入多个来源和多个出口。
 
-当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及共享认证上下文。当前 `run` 与 `process` 已经共用 `mailflow` 编排，`flow-run` 仅保留为兼容别名；`download`、`list`、`health` 也已经支持基于 JSON topology 文件选择命名 `source`，其中 `health` 在 topology 模式下还可以结合命名 `route` 逐个探测远端 sink。
+当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及共享认证上下文。当前 `run` 与 `process` 已经共用 `mailflow` 编排，`flow-run` 仅保留为兼容别名；`download`、`list`、`health` 已支持基于 JSON topology 文件选择命名 `source`，其中 `health` 在 topology 模式下还可以结合命名 `route` 逐个探测远端 sink；`login`、`token`、`logout` 也已经支持基于 topology 文件选择命名 `credential`。
 
 ## 当前能力范围
 
@@ -121,6 +121,7 @@ MimeCrypt 的核心职责如下：
 - `mailflow` 事务骨架、文件状态存储以及 producer / processor / consumer 适配层
 - 单 provider 环境变量配置编译为默认 `source / sink / route / credential` topology
 - `run` / `process` / `download` / `list` / `health` 可通过 topology 文件选择命名 `source`；其中 `run` / `process` / `health` 还支持命名 `route`
+- `login` / `token` / `logout` 可通过 topology 文件选择命名 `credential`
 - `run` / `process` 共用 `mailflow` 协调器，`flow-run` 为兼容别名
 
 后续规划方向包括：
@@ -128,7 +129,7 @@ MimeCrypt 的核心职责如下：
 - 继续收敛 CLI / 配置层中的单 provider 假设，向命名 source / sink / route 模型推进
 - `google` / `gmail` 来源驱动
 - HTTP webhook 与 SMTP ingress 等 push 型来源
-- 继续把登录、token 管理等辅助命令迁到真正的命名 topology / credential 模型
+- 把命名 credential 从当前的共享 OAuth 配置继续扩展到真正的多后端凭据注册
 - 更细粒度的邮件路由与密钥选择策略
 
 ## Provider 与回写后端
@@ -153,12 +154,14 @@ MimeCrypt 的核心职责如下：
 ```bash
 go run ./cmd/mimecrypt login
 go run ./cmd/mimecrypt login your-mailbox@example.com
+go run ./cmd/mimecrypt login --topology-file ./topology.json --credential office-auth
 ```
 
 清理本地认证状态：
 
 ```bash
 go run ./cmd/mimecrypt logout
+go run ./cmd/mimecrypt logout --topology-file ./topology.json --credential office-auth
 ```
 
 检查运行环境、缓存 token 与连通性状态：
@@ -175,6 +178,7 @@ go run ./cmd/mimecrypt health --deep
 go run ./cmd/mimecrypt token status
 go run ./cmd/mimecrypt token import ./token.json
 cat ./token.json | go run ./cmd/mimecrypt token import -
+go run ./cmd/mimecrypt token status --topology-file ./topology.json --credential office-auth
 ```
 
 按邮件标识下载原始 MIME：
@@ -290,19 +294,28 @@ export MIMECRYPT_KEYRING_SERVICE="mimecrypt"
 - `default` route：把单封邮件路由到当前启用的 sink 集合
 - `default` credential：表示当前共享的认证上下文，而不是最终形态的多凭据注册表
 
-也就是说，现阶段已经有了 `source / sink / route / credential` 的内部边界，并且 `run` / `process` / `download` / `list` / `health` 已支持实验性的 topology 文件；但多凭据注册、登录与 token 命令的 topology 化以及真正的驱动注册表仍未完成。
+也就是说，现阶段已经有了 `source / sink / route / credential` 的内部边界，并且 `run` / `process` / `download` / `list` / `health` 与 `login` / `token` / `logout` 已支持实验性的 topology 文件；但真正的多凭据注册和驱动注册表仍未完成。
 
-如果设置了 `MIMECRYPT_TOPOLOGY_PATH` 或命令行 `--topology-file`，`run` / `process` / `download` / `list` / `health` 会改用显式 topology 文件，而不是继续根据 `MIMECRYPT_PROVIDER`、`MIMECRYPT_WRITEBACK_PROVIDER`、`--write-back`、`--save-output` 这些 legacy 路由参数现场编译默认 topology。
+如果设置了 `MIMECRYPT_TOPOLOGY_PATH` 或命令行 `--topology-file`，`run` / `process` / `download` / `list` / `health` / `login` / `token` / `logout` 会改用显式 topology 文件，而不是继续根据 `MIMECRYPT_PROVIDER`、`MIMECRYPT_WRITEBACK_PROVIDER`、`--write-back`、`--save-output` 这些 legacy 路由参数现场编译默认 topology。
 
 一个最小 topology 文件示例如下：
 
 ```json
 {
+  "default_credential": "office-auth",
   "default_source": "office-inbox",
   "default_route": "default",
+  "credentials": {
+    "office-auth": {
+      "kind": "oauth",
+      "token_store": "keyring",
+      "imap_username": "user@example.com"
+    }
+  },
   "sources": {
     "office-inbox": {
       "driver": "imap",
+      "credential_ref": "office-auth",
       "mode": "poll",
       "folder": "INBOX",
       "poll_interval": 60000000000,
@@ -342,7 +355,7 @@ export MIMECRYPT_WORK_DIR=""
 各项配置含义如下：
 
 - `MIMECRYPT_PROVIDER`：收信 provider。可选 `imap`、`graph`；缺省值 `imap`。
-- `MIMECRYPT_TOPOLOGY_PATH`：命名 topology 配置文件路径；设置后 `run`、`process`、`download`、`list`、`health` 会优先使用 topology 文件。
+- `MIMECRYPT_TOPOLOGY_PATH`：命名 topology 配置文件路径；设置后 `run`、`process`、`download`、`list`、`health`、`login`、`token`、`logout` 会优先使用 topology 文件。
 - `MIMECRYPT_CLIENT_ID`：Microsoft Entra 应用 Client ID。缺省值为项目内置应用 ID。
 - `MIMECRYPT_STATE_DIR`：状态目录，保存 token、本地配置与同步状态。
 - `MIMECRYPT_OUTPUT_DIR`：加密后 `.eml` 的本地输出目录，仅在启用 `save-output` 时生效。
@@ -381,8 +394,10 @@ export MIMECRYPT_WORK_DIR=""
 - 早期版本生成的 token 可能不包含 IMAP scopes；升级后可执行 `logout` 与 `login` 以重新获取令牌。
 - token 默认存储在状态目录下的 `token.json`；只有显式设置 `MIMECRYPT_TOKEN_STORE=keyring` 时，系统 keyring 才会成为主存储。
 - 文件 token 写入当前采用“临时文件 + rename”落盘，不等同于统一经过 `internal/fileutil.WriteFileAtomic`。
+- topology credential 可以覆盖 `state_dir`、`client_id`、`tenant`、`token_store`、`keyring_service`、各协议 scopes 和 `imap_username`。当命名 credential 未显式声明 `state_dir` 时，默认会落到 `<state_dir>/credentials/<credential-name>`。
 - `run` 的运行锁、producer 状态和事务状态会按作用域文件名隔离。legacy 单 source 配置下作用域主要体现为 `provider + folder`；topology 模式会额外纳入 `source + driver + folder`。
 - topology 模式下，`run` 与 `process` 不再混用 `--write-back`、`--save-output`、`--write-back-provider`、`--folder` 这类 legacy 路由参数；`download` / `list` 也不会再允许 `--folder` 覆盖 topology source。
+- topology 模式下，`login` / `token` / `logout` 不再允许 `--client-id`、`--tenant`、`--state-dir`、`--authority-base-url` 这类 legacy 认证参数覆盖已选 credential。
 - `health` 缺省执行只读检查；`health --deep` 追加来源连通性探测，并在 topology 模式下按选定 route 的远端 sink 逐个执行 writeback 健康探测。
 - `token status` 用于读取当前 token 状态；`token import` 用于从 JSON 文件或标准输入导入 token。
 - `logout` 会同时清理文件 token 与 keyring token。

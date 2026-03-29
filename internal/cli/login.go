@@ -19,6 +19,7 @@ func newLoginCmd() *cobra.Command {
 	}
 
 	providerFlags := newProviderConfigFlags(cfg)
+	credentialFlags := newCredentialConfigFlags(cfg)
 
 	cmd := &cobra.Command{
 		Use:   "login [imap-username]",
@@ -26,7 +27,17 @@ func newLoginCmd() *cobra.Command {
 		Args:  argRange(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
+			cfg = credentialFlags.apply(cfg)
 			cfg = applyLoginIMAPUsernameArg(cfg, cmd, args)
+
+			resolved, err := resolveCredentialConfig(cfg, credentialFlags)
+			if err != nil {
+				return fmt.Errorf("login 失败: %w", err)
+			}
+			if err := validateCustomCredentialFlags(cmd, resolved, "client-id", "tenant", "state-dir", "authority-base-url"); err != nil {
+				return fmt.Errorf("login 失败: %w", err)
+			}
+			cfg = resolved.Config
 
 			loginCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
 			defer cancel()
@@ -47,6 +58,9 @@ func newLoginCmd() *cobra.Command {
 			}
 
 			fmt.Printf("登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
+			if resolved.Custom {
+				fmt.Printf("credential=%s\n", resolved.CredentialName)
+			}
 			fmt.Printf("token 已缓存到 %s\n", result.StateDir)
 
 			return nil
@@ -54,6 +68,7 @@ func newLoginCmd() *cobra.Command {
 	}
 
 	providerFlags.addFlags(cmd)
+	credentialFlags.addFlags(cmd)
 
 	return cmd
 }

@@ -7,14 +7,19 @@ import (
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/mailflow/adapters"
+	"mimecrypt/internal/providers"
 )
 
 func buildMailflowEnvelopeBuilder(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*adapters.ReaderEnvelopeBuilder, error) {
-	sourceClients, err := buildSourceProviderClients(cfg, resolved.Source)
+	sourceCfg, err := configForSource(cfg, resolved.Topology, resolved.Source)
 	if err != nil {
 		return nil, err
 	}
-	sourceStore, err := buildMailflowSourceStore(ctx, cfg, sourceClients.Reader, resolved.Source, resolved.Route.DeleteSource.Enabled)
+	sourceClients, err := providers.BuildSourceClients(sourceCfg)
+	if err != nil {
+		return nil, err
+	}
+	sourceStore, err := buildMailflowSourceStore(ctx, sourceCfg, sourceClients.Reader, resolved.Source, resolved.Route.DeleteSource.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +46,7 @@ func runMailflowMessageByID(ctx context.Context, cfg appconfig.Config, resolved 
 }
 
 func runMailflowFirstMessage(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (mailflowSummary, bool, error) {
-	sourceClients, err := buildSourceProviderClients(cfg, resolved.Source)
+	sourceClients, err := buildSourceProviderClients(cfg, resolved.Topology, resolved.Source)
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
