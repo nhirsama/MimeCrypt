@@ -285,6 +285,7 @@ func (r *runState) writeBack(ctx context.Context) error {
 		MIMEOpener:          r.openEncryptedMIME,
 		DestinationFolderID: r.request.WriteBack.DestinationFolderID,
 		Verify:              r.request.WriteBack.Verify,
+		DeleteSource:        true,
 	})
 	if err != nil {
 		return r.fail("writeback_failed", err)
@@ -313,6 +314,7 @@ func (r *runState) reconcileFetchFailure(ctx context.Context) (bool, error) {
 		Source:              r.source,
 		DestinationFolderID: r.request.WriteBack.DestinationFolderID,
 		Verify:              r.request.WriteBack.Verify,
+		DeleteSource:        true,
 	})
 	if err != nil {
 		if errors.Is(err, writeback.ErrNotImplemented) {

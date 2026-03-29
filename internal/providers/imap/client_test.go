@@ -420,6 +420,7 @@ func TestClientWriteMessageAppendsAndDeletesOriginal(t *testing.T) {
 		MIMEOpener: func() (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(mimeBytes)), nil
 		},
+		DeleteSource: true,
 	})
 	if err != nil {
 		t.Fatalf("writeMessage() error = %v", err)
@@ -510,8 +511,9 @@ func TestClientWriteMessageFallsBackWithoutAppendUID(t *testing.T) {
 	))
 
 	result, err := client.writeMessage(context.Background(), provider.WriteRequest{
-		Source: provider.MessageRef{ID: "1", InternetMessageID: "<m2@example.com>", FolderID: "INBOX"},
-		MIME:   mimeBytes,
+		Source:       provider.MessageRef{ID: "1", InternetMessageID: "<m2@example.com>", FolderID: "INBOX"},
+		MIME:         mimeBytes,
+		DeleteSource: true,
 	})
 	if err != nil {
 		t.Fatalf("writeMessage() error = %v", err)

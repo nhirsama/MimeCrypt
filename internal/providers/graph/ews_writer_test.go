@@ -123,8 +123,9 @@ func TestEWSWriterWriteMessageCreatesNonDraftMessage(t *testing.T) {
 			InternetMessageID: "<m1@example.com>",
 			FolderID:          "source-folder",
 		},
-		MIME:   mimeBytes,
-		Verify: true,
+		MIME:         mimeBytes,
+		Verify:       true,
+		DeleteSource: true,
 	})
 	if err != nil {
 		t.Fatalf("WriteMessage() error = %v", err)
@@ -226,7 +227,8 @@ func TestEWSWriterWriteMessageFallsBackToTranslateCreatedItemID(t *testing.T) {
 			ID:       "original-2",
 			FolderID: "source-folder",
 		},
-		MIME: []byte("encrypted"),
+		MIME:         []byte("encrypted"),
+		DeleteSource: true,
 	})
 	if err != nil {
 		t.Fatalf("WriteMessage() error = %v", err)
@@ -322,8 +324,9 @@ func TestEWSWriterWriteMessageKeepsBothWhenVerifyFails(t *testing.T) {
 			ID:       "original-3",
 			FolderID: "source-folder",
 		},
-		MIME:   []byte("encrypted"),
-		Verify: true,
+		MIME:         []byte("encrypted"),
+		Verify:       true,
+		DeleteSource: true,
 	})
 	if err == nil {
 		t.Fatalf("expected verify failure")

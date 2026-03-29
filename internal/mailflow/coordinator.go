@@ -43,65 +43,67 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 		return c.result(state), nil
 	}
 
-	processed, err := c.Processor.Process(ctx, envelope)
-	if err != nil {
-		return Result{}, err
-	}
-	if err := processed.Validate(); err != nil {
-		return Result{}, err
-	}
-	if processed.Trace.TransactionKey != key {
-		return Result{}, fmt.Errorf("processor 返回的 transaction key 与入口不一致")
-	}
-
-	if len(state.Plan.Targets) == 0 {
-		state.Trace = processed.Trace
-		state.Plan = processed.Plan
-		if err := c.Store.Save(ctx, state); err != nil {
-			return Result{}, err
-		}
-	} else {
-		if !reflect.DeepEqual(state.Plan, processed.Plan) {
-			return Result{}, fmt.Errorf("processor 返回的 execution plan 与已持久化计划不一致")
-		}
-	}
-
-	for _, target := range state.Plan.Targets {
-		targetKey := target.Key()
-		if _, committed := state.Deliveries[targetKey]; committed {
-			continue
-		}
-
-		consumer, err := c.consumer(target.Consumer)
+	if len(state.Plan.Targets) == 0 || !hasRequiredDeliveries(state, state.Plan) {
+		processed, err := c.Processor.Process(ctx, envelope)
 		if err != nil {
 			return Result{}, err
 		}
-		artifact, err := processed.Artifact(target.Artifact)
-		if err != nil {
+		if err := processed.Validate(); err != nil {
 			return Result{}, err
 		}
+		if processed.Trace.TransactionKey != key {
+			return Result{}, fmt.Errorf("processor 返回的 transaction key 与入口不一致")
+		}
 
-		receipt, err := consumer.Consume(ctx, ConsumeRequest{
-			Trace:    processed.Trace,
-			Target:   target,
-			Artifact: artifact,
-		})
-		if err != nil {
-			if target.Required {
-				return Result{}, fmt.Errorf("提交目标 %s 失败: %w", targetKey, err)
+		if len(state.Plan.Targets) == 0 {
+			state.Trace = processed.Trace
+			state.Plan = processed.Plan
+			if err := c.Store.Save(ctx, state); err != nil {
+				return Result{}, err
 			}
-			continue
+		} else {
+			if !reflect.DeepEqual(state.Plan, processed.Plan) {
+				return Result{}, fmt.Errorf("processor 返回的 execution plan 与已持久化计划不一致")
+			}
 		}
 
-		if strings.TrimSpace(receipt.Target) == "" {
-			receipt.Target = targetKey
-		}
-		if strings.TrimSpace(receipt.Consumer) == "" {
-			receipt.Consumer = target.Consumer
-		}
-		state.Deliveries[targetKey] = receipt
-		if err := c.Store.Save(ctx, state); err != nil {
-			return Result{}, err
+		for _, target := range state.Plan.Targets {
+			targetKey := target.Key()
+			if _, committed := state.Deliveries[targetKey]; committed {
+				continue
+			}
+
+			consumer, err := c.consumer(target.Consumer)
+			if err != nil {
+				return Result{}, err
+			}
+			artifact, err := processed.Artifact(target.Artifact)
+			if err != nil {
+				return Result{}, err
+			}
+
+			receipt, err := consumer.Consume(ctx, ConsumeRequest{
+				Trace:    processed.Trace,
+				Target:   target,
+				Artifact: artifact,
+			})
+			if err != nil {
+				if target.Required {
+					return Result{}, fmt.Errorf("提交目标 %s 失败: %w", targetKey, err)
+				}
+				continue
+			}
+
+			if strings.TrimSpace(receipt.Target) == "" {
+				receipt.Target = targetKey
+			}
+			if strings.TrimSpace(receipt.Consumer) == "" {
+				receipt.Consumer = target.Consumer
+			}
+			state.Deliveries[targetKey] = receipt
+			if err := c.Store.Save(ctx, state); err != nil {
+				return Result{}, err
+			}
 		}
 	}
 
@@ -110,13 +112,26 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 	}
 
 	if !state.SourceDeleted && shouldDeleteSource(state, state.Plan.DeleteSource) {
-		if envelope.Source == nil {
+		deletable, ok := envelope.Source.(DeletableSource)
+		if envelope.Source == nil || !ok {
 			return Result{}, fmt.Errorf("删除源邮件已启用，但来源不支持删除")
 		}
-		if err := envelope.Source.Delete(ctx); err != nil {
+		if err := deletable.Delete(ctx); err != nil {
 			return Result{}, fmt.Errorf("删除源邮件失败: %w", err)
 		}
 		state.SourceDeleted = true
+		if err := c.Store.Save(ctx, state); err != nil {
+			return Result{}, err
+		}
+	}
+
+	if !state.SourceAcked {
+		if envelope.Source != nil {
+			if err := envelope.Source.Acknowledge(ctx); err != nil {
+				return Result{}, fmt.Errorf("确认来源邮件完成失败: %w", err)
+			}
+		}
+		state.SourceAcked = true
 		if err := c.Store.Save(ctx, state); err != nil {
 			return Result{}, err
 		}
@@ -151,6 +166,7 @@ func (c *Coordinator) result(state TxState) Result {
 		Plan:          state.Plan,
 		Deliveries:    deliveries,
 		SourceDeleted: state.SourceDeleted,
+		SourceAcked:   state.SourceAcked,
 		Completed:     state.Completed,
 	}
 }

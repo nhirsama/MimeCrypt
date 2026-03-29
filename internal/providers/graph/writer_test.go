@@ -96,7 +96,8 @@ func TestWriterWriteMessageUsesSourceFolderByDefault(t *testing.T) {
 			ID:       "original-1",
 			FolderID: "source-folder",
 		},
-		MIME: mimeBytes,
+		MIME:         mimeBytes,
+		DeleteSource: true,
 	})
 	if err != nil {
 		t.Fatalf("WriteMessage() error = %v", err)
@@ -183,6 +184,7 @@ func TestWriterWriteMessageUsesExplicitDestinationAndVerify(t *testing.T) {
 		MIME:                []byte("encrypted"),
 		DestinationFolderID: "archive",
 		Verify:              true,
+		DeleteSource:        true,
 	})
 	if err != nil {
 		t.Fatalf("WriteMessage() error = %v", err)
@@ -231,7 +233,8 @@ func TestWriterWriteMessageKeepsCreatedMessageWhenDeletingOriginalFails(t *testi
 			ID:       "original-rollback",
 			FolderID: "source-folder",
 		},
-		MIME: []byte("encrypted"),
+		MIME:         []byte("encrypted"),
+		DeleteSource: true,
 	})
 	if err == nil {
 		t.Fatalf("expected delete failure")
@@ -288,8 +291,9 @@ func TestWriterWriteMessageKeepsBothWhenVerifyFails(t *testing.T) {
 			ID:       "original-verify",
 			FolderID: "source-folder",
 		},
-		MIME:   []byte("encrypted"),
-		Verify: true,
+		MIME:         []byte("encrypted"),
+		Verify:       true,
+		DeleteSource: true,
 	})
 	if err == nil {
 		t.Fatalf("expected verify failure")
@@ -345,7 +349,8 @@ func TestWriterWriteMessageReusesExistingProcessedMessageBeforeCreatingDuplicate
 			InternetMessageID: "<m3@example.com>",
 			FolderID:          "source-folder",
 		},
-		MIME: []byte("encrypted"),
+		MIME:         []byte("encrypted"),
+		DeleteSource: true,
 	})
 	if err != nil {
 		t.Fatalf("WriteMessage() error = %v", err)
@@ -399,7 +404,8 @@ func TestWriterReconcileMessageTreatsMissingOriginalAsSuccessWhenProcessedCopyEx
 			InternetMessageID: "<m4@example.com>",
 			FolderID:          "source-folder",
 		},
-		Verify: true,
+		Verify:       true,
+		DeleteSource: true,
 	})
 	if err != nil {
 		t.Fatalf("ReconcileMessage() error = %v", err)
@@ -409,5 +415,51 @@ func TestWriterReconcileMessageTreatsMissingOriginalAsSuccessWhenProcessedCopyEx
 	}
 	if !result.Verified {
 		t.Fatalf("Verified = false, want true")
+	}
+}
+
+func TestWriterWriteMessageSkipsDeletingOriginalWhenDeleteDisabled(t *testing.T) {
+	t.Parallel()
+
+	var deleteOriginalCalled bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"draft-no-delete","parentFolderId":"drafts"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/messages/draft-no-delete/move":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"new-no-delete","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodPatch && r.URL.Path == "/v1.0/me/messages/new-no-delete":
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"id":"new-no-delete","parentFolderId":"source-folder"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-no-delete":
+			deleteOriginalCalled = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	writer, err := newWriter(appconfig.MailClientConfig{GraphBaseURL: server.URL + "/v1.0"}, fakeTokenSource{}, server.Client())
+	if err != nil {
+		t.Fatalf("newWriter() error = %v", err)
+	}
+
+	if _, err := writer.WriteMessage(context.Background(), provider.WriteRequest{
+		Source: provider.MessageRef{
+			ID:       "original-no-delete",
+			FolderID: "source-folder",
+		},
+		MIME: []byte("encrypted"),
+	}); err != nil {
+		t.Fatalf("WriteMessage() error = %v", err)
+	}
+	if deleteOriginalCalled {
+		t.Fatalf("unexpected delete of original message")
 	}
 }

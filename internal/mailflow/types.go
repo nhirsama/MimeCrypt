@@ -2,11 +2,14 @@ package mailflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"time"
 )
+
+var ErrNoMessages = errors.New("暂无待处理邮件")
 
 // MIMEOpener 以流的形式提供一封邮件或产物的 MIME 内容。
 type MIMEOpener func() (io.ReadCloser, error)
@@ -34,6 +37,7 @@ type MailTrace struct {
 	SourceName        string            `json:"source_name,omitempty"`
 	SourceDriver      string            `json:"source_driver,omitempty"`
 	SourceMessageID   string            `json:"source_message_id,omitempty"`
+	SourceFolderID    string            `json:"source_folder_id,omitempty"`
 	InternetMessageID string            `json:"internet_message_id,omitempty"`
 	ReceivedAt        time.Time         `json:"received_at,omitempty"`
 	SourceStore       StoreRef          `json:"source_store,omitempty"`
@@ -48,8 +52,13 @@ func (t MailTrace) Validate() error {
 	return nil
 }
 
-// SourceHandle 提供可选的源端删除能力。
+// SourceHandle 表示邮件来源侧的可确认句柄。
 type SourceHandle interface {
+	Acknowledge(ctx context.Context) error
+}
+
+// DeletableSource 表示来源支持显式删除原邮件。
+type DeletableSource interface {
 	Delete(ctx context.Context) error
 }
 
@@ -216,6 +225,7 @@ type TxState struct {
 	Plan          ExecutionPlan              `json:"plan"`
 	Deliveries    map[string]DeliveryReceipt `json:"deliveries,omitempty"`
 	SourceDeleted bool                       `json:"source_deleted,omitempty"`
+	SourceAcked   bool                       `json:"source_acked,omitempty"`
 	Completed     bool                       `json:"completed,omitempty"`
 }
 
@@ -229,5 +239,6 @@ type Result struct {
 	Plan          ExecutionPlan
 	Deliveries    map[string]DeliveryReceipt
 	SourceDeleted bool
+	SourceAcked   bool
 	Completed     bool
 }

@@ -55,9 +55,23 @@ func TestRunRejectsMissingMessageID(t *testing.T) {
 	t.Parallel()
 
 	service := Service{}
-	_, err := service.Run(context.Background(), Request{MIME: []byte("encrypted")})
+	_, err := service.Run(context.Background(), Request{MIME: []byte("encrypted"), DeleteSource: true})
 	if err == nil || !strings.Contains(err.Error(), "message id 不能为空") {
 		t.Fatalf("Run() error = %v, want message id validation", err)
+	}
+}
+
+func TestRunAllowsMissingMessageIDWhenDeleteDisabled(t *testing.T) {
+	t.Parallel()
+
+	writer := &fakeProviderWriter{}
+	service := Service{Writer: writer}
+
+	if _, err := service.Run(context.Background(), Request{MIME: []byte("encrypted")}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if writer.writeReq.DeleteSource {
+		t.Fatalf("DeleteSource = true, want false")
 	}
 }
 
@@ -129,6 +143,7 @@ func TestRunForwardsRequestAndResult(t *testing.T) {
 		MIME:                []byte("encrypted"),
 		DestinationFolderID: "target-folder",
 		Verify:              true,
+		DeleteSource:        true,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -144,6 +159,9 @@ func TestRunForwardsRequestAndResult(t *testing.T) {
 	}
 	if !writer.writeReq.Verify {
 		t.Fatalf("Verify = false, want true")
+	}
+	if !writer.writeReq.DeleteSource {
+		t.Fatalf("DeleteSource = false, want true")
 	}
 	if string(writer.writeReq.MIME) != "encrypted" {
 		t.Fatalf("MIME = %q, want encrypted", string(writer.writeReq.MIME))
@@ -201,7 +219,7 @@ func TestReconcileRejectsMissingMessageID(t *testing.T) {
 	t.Parallel()
 
 	service := Service{Writer: &fakeProviderWriter{}}
-	_, _, err := service.Reconcile(context.Background(), Request{})
+	_, _, err := service.Reconcile(context.Background(), Request{DeleteSource: true})
 	if err == nil || !strings.Contains(err.Error(), "message id 不能为空") {
 		t.Fatalf("Reconcile() error = %v, want message id validation", err)
 	}

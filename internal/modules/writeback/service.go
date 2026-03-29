@@ -21,6 +21,7 @@ type Request struct {
 	MIMEOpener          provider.MIMEOpener
 	DestinationFolderID string
 	Verify              bool
+	DeleteSource        bool
 }
 
 type Result struct {
@@ -45,6 +46,7 @@ func (s *Service) Run(ctx context.Context, req Request) (Result, error) {
 		MIMEOpener:          req.MIMEOpener,
 		DestinationFolderID: req.DestinationFolderID,
 		Verify:              req.Verify,
+		DeleteSource:        req.DeleteSource,
 	})
 	if err != nil {
 		if errors.Is(err, provider.ErrNotSupported) {
@@ -76,6 +78,7 @@ func (s *Service) Reconcile(ctx context.Context, req Request) (Result, bool, err
 		MIMEOpener:          req.MIMEOpener,
 		DestinationFolderID: req.DestinationFolderID,
 		Verify:              req.Verify,
+		DeleteSource:        req.DeleteSource,
 	})
 	if err != nil {
 		if errors.Is(err, provider.ErrNotSupported) {
@@ -88,7 +91,7 @@ func (s *Service) Reconcile(ctx context.Context, req Request) (Result, bool, err
 }
 
 func (r Request) validate() error {
-	if strings.TrimSpace(r.Source.ID) == "" {
+	if r.DeleteSource && strings.TrimSpace(r.Source.ID) == "" {
 		return fmt.Errorf("message id 不能为空")
 	}
 	return nil

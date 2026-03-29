@@ -18,6 +18,8 @@ type writer struct {
 	*graphClient
 }
 
+var _ provider.Deleter = (*writer)(nil)
+
 func newWriter(cfg appconfig.MailClientConfig, tokenSource accessTokenSource, httpClient *http.Client) (*writer, error) {
 	client, err := newGraphClient(cfg, tokenSource, httpClient)
 	if err != nil {
@@ -28,7 +30,7 @@ func newWriter(cfg appconfig.MailClientConfig, tokenSource accessTokenSource, ht
 }
 
 func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, error) {
-	if strings.TrimSpace(req.Source.ID) == "" {
+	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
 		return provider.WriteResult{}, fmt.Errorf("原邮件 ID 不能为空")
 	}
 
@@ -61,15 +63,17 @@ func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (p
 		}
 	}
 
-	if err := w.deleteOriginalIfExists(ctx, req.Source.ID); err != nil {
-		return provider.WriteResult{}, w.createdMessageRetainedError(created.ID, req.Source.ID, fmt.Errorf("删除原邮件 %s 失败: %w", req.Source.ID, err))
+	if req.DeleteSource {
+		if err := w.deleteOriginalIfExists(ctx, req.Source.ID); err != nil {
+			return provider.WriteResult{}, w.createdMessageRetainedError(created.ID, req.Source.ID, fmt.Errorf("删除原邮件 %s 失败: %w", req.Source.ID, err))
+		}
 	}
 
 	return provider.WriteResult{Verified: req.Verify}, nil
 }
 
 func (w *writer) ReconcileMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, bool, error) {
-	if strings.TrimSpace(req.Source.ID) == "" {
+	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
 		return provider.WriteResult{}, false, fmt.Errorf("原邮件 ID 不能为空")
 	}
 
@@ -273,8 +277,10 @@ func (w *writer) reconcileInTarget(ctx context.Context, req provider.WriteReques
 		}
 	}
 
-	if err := w.deleteOriginalIfExists(ctx, req.Source.ID); err != nil {
-		return provider.WriteResult{}, false, fmt.Errorf("发现已有加密邮件 %s，但删除原邮件 %s 失败: %w", existing.ID, req.Source.ID, err)
+	if req.DeleteSource {
+		if err := w.deleteOriginalIfExists(ctx, req.Source.ID); err != nil {
+			return provider.WriteResult{}, false, fmt.Errorf("发现已有加密邮件 %s，但删除原邮件 %s 失败: %w", existing.ID, req.Source.ID, err)
+		}
 	}
 
 	return provider.WriteResult{Verified: req.Verify}, true, nil
@@ -340,6 +346,13 @@ func (w *writer) deleteOriginalIfExists(ctx context.Context, messageID string) e
 
 func (w *writer) createdMessageRetainedError(createdMessageID, originalMessageID string, cause error) error {
 	return fmt.Errorf("%w；已保留新加密邮件 %s 和原邮件 %s，后续重试会继续收敛", cause, createdMessageID, originalMessageID)
+}
+
+func (w *writer) DeleteMessage(ctx context.Context, source provider.MessageRef) error {
+	if strings.TrimSpace(source.ID) == "" {
+		return fmt.Errorf("原邮件 ID 不能为空")
+	}
+	return w.deleteOriginalIfExists(ctx, source.ID)
 }
 
 func isGraphNotFound(err error) bool {

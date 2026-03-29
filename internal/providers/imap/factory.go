@@ -22,6 +22,7 @@ type writer struct {
 var _ provider.Reader = (*reader)(nil)
 var _ provider.Writer = (*writer)(nil)
 var _ provider.Reconciler = (*writer)(nil)
+var _ provider.Deleter = (*writer)(nil)
 
 func Build(cfg appconfig.Config) (provider.Clients, error) {
 	authCfg := cfg.Auth
@@ -42,6 +43,7 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 		Session: session,
 		Reader:  &reader{client: imapClient},
 		Writer:  &writer{client: imapClient},
+		Deleter: &writer{client: imapClient},
 	}, nil
 }
 
@@ -96,7 +98,7 @@ func (r *reader) LatestMessagesInFolder(ctx context.Context, folder string, skip
 }
 
 func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, error) {
-	if strings.TrimSpace(req.Source.ID) == "" {
+	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
 		return provider.WriteResult{}, fmt.Errorf("原邮件 ID 不能为空")
 	}
 	if len(req.MIME) == 0 && req.MIMEOpener == nil {
@@ -106,10 +108,17 @@ func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (p
 }
 
 func (w *writer) ReconcileMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, bool, error) {
-	if strings.TrimSpace(req.Source.ID) == "" {
+	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
 		return provider.WriteResult{}, false, fmt.Errorf("原邮件 ID 不能为空")
 	}
 	return w.client.reconcileMessage(ctx, req)
+}
+
+func (w *writer) DeleteMessage(ctx context.Context, source provider.MessageRef) error {
+	if strings.TrimSpace(source.ID) == "" {
+		return fmt.Errorf("原邮件 ID 不能为空")
+	}
+	return w.client.deleteOriginalIfExists(ctx, source)
 }
 
 // Keep compiler honest about the auth session interface used by the IMAP client.

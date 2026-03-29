@@ -26,11 +26,15 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 	if err != nil {
 		return provider.Clients{}, err
 	}
+	sourceWriter, err := newWriter(cfg.Mail.Client, session, nil)
+	if err != nil {
+		return provider.Clients{}, err
+	}
 
 	var writer provider.Writer
 	switch strings.ToLower(strings.TrimSpace(cfg.Mail.Pipeline.WriteBackProvider)) {
 	case "", "graph":
-		writer, err = newWriter(cfg.Mail.Client, session, nil)
+		writer = sourceWriter
 	case "ews":
 		writer, err = newEWSWriter(cfg, session, nil)
 	case "imap":
@@ -46,5 +50,6 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 		Session: session,
 		Reader:  client,
 		Writer:  writer,
+		Deleter: sourceWriter,
 	}, nil
 }

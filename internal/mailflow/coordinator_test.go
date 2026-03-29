@@ -70,7 +70,14 @@ func (c *fakeConsumer) Consume(context.Context, ConsumeRequest) (DeliveryReceipt
 
 type fakeSource struct {
 	deleteCalls int
+	ackCalls    int
 	err         error
+	ackErr      error
+}
+
+func (s *fakeSource) Acknowledge(context.Context) error {
+	s.ackCalls++
+	return s.ackErr
 }
 
 func (s *fakeSource) Delete(context.Context) error {
@@ -147,8 +154,14 @@ func TestCoordinatorDeletesSourceWhenSameStoreReceiptCommitted(t *testing.T) {
 	if !result.SourceDeleted {
 		t.Fatalf("SourceDeleted = false, want true")
 	}
+	if !result.SourceAcked {
+		t.Fatalf("SourceAcked = false, want true")
+	}
 	if source.deleteCalls != 1 {
 		t.Fatalf("deleteCalls = %d, want 1", source.deleteCalls)
+	}
+	if source.ackCalls != 1 {
+		t.Fatalf("ackCalls = %d, want 1", source.ackCalls)
 	}
 	if consumer.calls != 1 {
 		t.Fatalf("consumer calls = %d, want 1", consumer.calls)
@@ -222,8 +235,14 @@ func TestCoordinatorKeepsSourceWhenStoreDiffers(t *testing.T) {
 	if result.SourceDeleted {
 		t.Fatalf("SourceDeleted = true, want false")
 	}
+	if !result.SourceAcked {
+		t.Fatalf("SourceAcked = false, want true")
+	}
 	if source.deleteCalls != 0 {
 		t.Fatalf("deleteCalls = %d, want 0", source.deleteCalls)
+	}
+	if source.ackCalls != 1 {
+		t.Fatalf("ackCalls = %d, want 1", source.ackCalls)
 	}
 }
 
@@ -295,6 +314,9 @@ func TestCoordinatorSkipsCommittedDeliveriesOnRetry(t *testing.T) {
 	if source.deleteCalls != 1 {
 		t.Fatalf("deleteCalls = %d, want 1", source.deleteCalls)
 	}
+	if source.ackCalls != 1 {
+		t.Fatalf("ackCalls = %d, want 1", source.ackCalls)
+	}
 }
 
 func TestCoordinatorReturnsErrorWhenRequiredDeliveryFails(t *testing.T) {
@@ -338,6 +360,104 @@ func TestCoordinatorReturnsErrorWhenRequiredDeliveryFails(t *testing.T) {
 	}
 	if source.deleteCalls != 0 {
 		t.Fatalf("deleteCalls = %d, want 0", source.deleteCalls)
+	}
+}
+
+func TestCoordinatorFailsWhenSourceAcknowledgeFails(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{}
+	source := &fakeSource{ackErr: errors.New("ack failed")}
+	processor := &fakeProcessor{
+		result: ProcessedMail{
+			Trace: MailTrace{TransactionKey: "tx-7"},
+			Plan: ExecutionPlan{
+				Targets: []DeliveryTarget{{
+					Name:     "archive-main",
+					Consumer: "archive",
+					Artifact: "primary",
+					Required: true,
+				}},
+			},
+			Artifacts: map[string]MailArtifact{
+				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
+			},
+		},
+	}
+	coordinator := &Coordinator{
+		Processor: processor,
+		Store:     store,
+		Consumers: map[string]Consumer{"archive": &fakeConsumer{}},
+	}
+
+	_, err := coordinator.Run(context.Background(), MailEnvelope{
+		MIME: bytesOpener("source"),
+		Trace: MailTrace{
+			TransactionKey: "tx-7",
+		},
+		Source: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), "ack failed") {
+		t.Fatalf("Run() error = %v, want ack failed", err)
+	}
+}
+
+func TestCoordinatorFinalizesCommittedStateWithoutReprocessing(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		states: map[string]TxState{
+			"tx-8": {
+				Key: "tx-8",
+				Trace: MailTrace{
+					TransactionKey: "tx-8",
+				},
+				Plan: ExecutionPlan{
+					Targets: []DeliveryTarget{{
+						Name:     "archive-main",
+						Consumer: "archive",
+						Artifact: "primary",
+						Required: true,
+					}},
+				},
+				Deliveries: map[string]DeliveryReceipt{
+					"archive-main": {
+						Target:   "archive-main",
+						Consumer: "archive",
+						ID:       "msg-8",
+					},
+				},
+			},
+		},
+	}
+	source := &fakeSource{}
+	processor := &fakeProcessor{
+		err: errors.New("processor should not run"),
+	}
+	coordinator := &Coordinator{
+		Processor: processor,
+		Store:     store,
+		Consumers: map[string]Consumer{"archive": &fakeConsumer{}},
+	}
+
+	result, err := coordinator.Run(context.Background(), MailEnvelope{
+		MIME: bytesOpener("source"),
+		Trace: MailTrace{
+			TransactionKey: "tx-8",
+		},
+		Source: source,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !result.Completed || !result.SourceAcked {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if processor.calls != 0 {
+		t.Fatalf("processor calls = %d, want 0", processor.calls)
+	}
+	if source.ackCalls != 1 {
+		t.Fatalf("ackCalls = %d, want 1", source.ackCalls)
 	}
 }
 

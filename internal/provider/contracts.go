@@ -101,6 +101,7 @@ type WriteRequest struct {
 	MIMEOpener          MIMEOpener
 	DestinationFolderID string
 	Verify              bool
+	DeleteSource        bool
 }
 
 // OpenMIME 以流的形式打开待回写的 MIME。
@@ -159,6 +160,11 @@ type Reconciler interface {
 	ReconcileMessage(ctx context.Context, req WriteRequest) (WriteResult, bool, error)
 }
 
+// Deleter 抽象来源侧对原邮件的显式删除能力。
+type Deleter interface {
+	DeleteMessage(ctx context.Context, source MessageRef) error
+}
+
 // HealthProber 抽象 provider 侧的最小活体探测，供显式深度健康检查使用。
 type HealthProber interface {
 	HealthCheck(ctx context.Context) (string, error)
@@ -169,4 +175,5 @@ type Clients struct {
 	Session Session
 	Reader  Reader
 	Writer  Writer
+	Deleter Deleter
 }
