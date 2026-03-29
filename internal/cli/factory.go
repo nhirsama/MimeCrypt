@@ -16,14 +16,12 @@ import (
 	"mimecrypt/internal/mailflow/adapters"
 	"mimecrypt/internal/modules/audit"
 	"mimecrypt/internal/modules/backup"
-	"mimecrypt/internal/modules/discover"
 	"mimecrypt/internal/modules/download"
 	"mimecrypt/internal/modules/encrypt"
 	"mimecrypt/internal/modules/health"
 	"mimecrypt/internal/modules/list"
 	"mimecrypt/internal/modules/login"
 	"mimecrypt/internal/modules/logout"
-	"mimecrypt/internal/modules/process"
 	"mimecrypt/internal/modules/tokenstate"
 	"mimecrypt/internal/modules/writeback"
 	"mimecrypt/internal/provider"
@@ -114,69 +112,8 @@ func buildTokenStateService(cfg appconfig.Config) (*tokenstate.Service, error) {
 	}, nil
 }
 
-func buildProcessService(cfg appconfig.Config) (*process.Service, error) {
-	clients, err := buildProviderClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return buildProcessServiceWithProvider(cfg, clients.Reader, clients.Writer)
-}
-
 func buildDownloadServiceWithReader(reader provider.Reader) *download.Service {
 	return &download.Service{Client: reader}
-}
-
-func buildProcessServiceWithProvider(cfg appconfig.Config, reader provider.Reader, writer provider.Writer) (*process.Service, error) {
-	backupEncryptor, err := buildCatchAllBackupEncryptor(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return &process.Service{
-		Downloader:      buildDownloadServiceWithReader(reader),
-		Encryptor:       &encrypt.Service{ProtectSubject: cfg.Mail.Pipeline.ProtectSubject},
-		BackupEncryptor: backupEncryptor,
-		Backupper:       &backup.Service{},
-		WriteBack:       &writeback.Service{Writer: writer},
-		Auditor: &audit.Service{
-			Path:   cfg.Mail.Pipeline.AuditLogPath,
-			Stdout: cfg.Mail.Pipeline.AuditStdout,
-			Writer: os.Stdout,
-		},
-	}, nil
-}
-
-func buildProcessRequest(cfg appconfig.Config, source provider.MessageRef, writeBack bool, writeBackFolder string, verifyWriteBack bool) process.Request {
-	return process.Request{
-		Source:     source,
-		OutputDir:  cfg.Mail.Pipeline.OutputDir,
-		SaveOutput: cfg.Mail.Pipeline.SaveOutput,
-		WorkDir:    cfg.Mail.Pipeline.WorkDir,
-		BackupDir:  cfg.Mail.Pipeline.BackupDir,
-		WriteBack: process.WriteBackOptions{
-			Enabled:             writeBack,
-			DestinationFolderID: writeBackFolder,
-			Verify:              verifyWriteBack,
-		},
-	}
-}
-
-func buildDiscoverService(cfg appconfig.Config) (*discover.Service, error) {
-	clients, err := buildProviderClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	processor, err := buildProcessServiceWithProvider(cfg, clients.Reader, clients.Writer)
-	if err != nil {
-		return nil, err
-	}
-
-	return &discover.Service{
-		Client:    clients.Reader,
-		Processor: processor,
-	}, nil
 }
 
 func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, includeExisting, writeBack, verifyWriteBack, deleteSource bool) (*mailflow.Runner, error) {

@@ -37,8 +37,6 @@ MimeCrypt 的核心职责如下：
 - `internal/modules/download`：原始 MIME 下载与保存
 - `internal/modules/encrypt`：PGP/MIME 加密与已加密邮件识别
 - `internal/modules/writeback`：回写与幂等对账抽象
-- `internal/modules/process`：单封邮件处理链路编排
-- `internal/modules/discover`：增量发现与循环处理
 - `internal/mailflow`：邮件级事务模型、执行计划、协调器与状态存储
 - `internal/mailflow/adapters`：基于现有 provider / writeback 的 mailflow 适配层
 - `internal/modules/audit`：关键流程审计日志写入
@@ -125,7 +123,7 @@ MimeCrypt 的核心职责如下：
 
 后续规划方向包括：
 
-- 继续收敛剩余 legacy 模块与兼容层，减少对旧 `discover` / `process` 编排的依赖
+- 继续收敛 CLI / 配置层中的单 provider 假设，向命名 source / sink / route 模型推进
 - `google` / `gmail` 来源驱动
 - HTTP webhook 与 SMTP ingress 等 push 型来源
 - 命名 source / sink / route / credential 配置模型
