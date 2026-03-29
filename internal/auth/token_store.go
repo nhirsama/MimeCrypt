@@ -29,6 +29,7 @@ type tokenStore struct {
 	fallbacks []tokenBackend
 	cleanup   []tokenBackend
 	identity  string
+	lockPath  string
 }
 
 type fileTokenBackend struct {
@@ -57,6 +58,7 @@ func newTokenStore(cfg appconfig.AuthConfig) (*tokenStore, error) {
 		return &tokenStore{
 			primary:  fileBackend,
 			identity: tokenStoreIdentity(cfg),
+			lockPath: tokenStoreLockPath(cfg),
 		}, nil
 	}
 
@@ -73,6 +75,7 @@ func newTokenStore(cfg appconfig.AuthConfig) (*tokenStore, error) {
 		fallbacks: []tokenBackend{fileBackend},
 		cleanup:   []tokenBackend{fileBackend},
 		identity:  tokenStoreIdentity(cfg),
+		lockPath:  tokenStoreLockPath(cfg),
 	}, nil
 }
 
@@ -83,6 +86,10 @@ func tokenStoreIdentity(cfg appconfig.AuthConfig) string {
 	default:
 		return "file:" + filepath.Clean(cfg.TokenPath())
 	}
+}
+
+func tokenStoreLockPath(cfg appconfig.AuthConfig) string {
+	return filepath.Join(cfg.StateDir, ".token-store.lock")
 }
 
 func openSystemKeyring(cfg appconfig.AuthConfig) (credentialKeyring, error) {

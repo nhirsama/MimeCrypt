@@ -1,6 +1,8 @@
 package graph
 
 import (
+	"fmt"
+
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
 	"mimecrypt/internal/provider"
@@ -15,6 +17,28 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 	session, err := auth.NewSession(authCfg, nil)
 	if err != nil {
 		return provider.Clients{}, err
+	}
+
+	client, err := newReader(cfg.Mail.Client, session, nil)
+	if err != nil {
+		return provider.Clients{}, err
+	}
+	sourceWriter, err := newWriter(cfg.Mail.Client, session, nil)
+	if err != nil {
+		return provider.Clients{}, err
+	}
+
+	return provider.Clients{
+		Session: session,
+		Reader:  client,
+		Writer:  sourceWriter,
+		Deleter: sourceWriter,
+	}, nil
+}
+
+func BuildWithSession(cfg appconfig.Config, session provider.Session) (provider.Clients, error) {
+	if session == nil {
+		return provider.Clients{}, fmt.Errorf("session 不能为空")
 	}
 
 	client, err := newReader(cfg.Mail.Client, session, nil)

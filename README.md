@@ -397,6 +397,7 @@ export MIMECRYPT_WORK_DIR=""
 - token 默认存储在状态目录下的 `token.json`；只有显式设置 `MIMECRYPT_TOKEN_STORE=keyring` 时，系统 keyring 才会成为主存储。
 - 文件 token 写入当前采用“临时文件 + rename”落盘，不等同于统一经过 `internal/fileutil.WriteFileAtomic`。
 - topology credential 可以覆盖 `state_dir`、`client_id`、`tenant`、`token_store`、`keyring_service`、各协议 scopes 和 `imap_username`。当命名 credential 未显式声明 `state_dir` 时，默认会落到 `<state_dir>/credentials/<credential-name>`。
+- topology credential 切换后，IMAP 用户名会优先读取该 credential 自己 state dir 下的本地配置，不再继承基础 state dir 中缓存的用户名。
 - topology JSON 现在按严格模式解析；未知字段或额外 JSON 文档都会直接报错，避免因拼写错误静默退回到更宽松的行为。
 - `run` 的运行锁、producer 状态和事务状态会按作用域文件名隔离。legacy 单 source 配置下作用域主要体现为 `provider + folder`；topology 模式会额外纳入 `source + driver + folder`。
 - topology 模式下，持续运行会按所选 `source.poll_interval` 驱动轮询，而不是回退到全局默认间隔。
@@ -405,7 +406,7 @@ export MIMECRYPT_WORK_DIR=""
 - `health` 缺省执行只读检查；`health --deep` 追加来源连通性探测，并在 topology 模式下按选定 route 的远端 sink 逐个执行 writeback 健康探测。
 - `token status` 用于读取当前 token 状态；`token import` 用于从 JSON 文件或标准输入导入 token。
 - `logout` 会同时清理文件 token 与 keyring token。
-- 同一 token store 的并发刷新现在会在进程内串行化，避免 source / sink 为同一 credential 时同时刷新并覆盖 token。
+- 同一 credential 的 token 刷新现在会在进程内互斥，并通过 state dir 下的 token store 锁在同机多进程间串行化，避免 source / sink 并发刷新时互相覆盖。
 
 ## 回写方式
 

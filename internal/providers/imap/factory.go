@@ -48,6 +48,24 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 	}, nil
 }
 
+func BuildWithSession(cfg appconfig.Config, session scopedSession) (provider.Clients, error) {
+	if session == nil {
+		return provider.Clients{}, fmt.Errorf("session 不能为空")
+	}
+
+	imapClient, err := newClient(cfg.Mail.Client, cfg.Auth, cfg.Mail.Sync.Folder, session, nil)
+	if err != nil {
+		return provider.Clients{}, err
+	}
+
+	return provider.Clients{
+		Session: session,
+		Reader:  &reader{client: imapClient},
+		Writer:  &writer{client: imapClient},
+		Deleter: &writer{client: imapClient},
+	}, nil
+}
+
 func NewWriter(cfg appconfig.Config, tokenSource scopedAccessTokenSource) (provider.Writer, error) {
 	authCfg := cfg.Auth
 	authCfg.GraphScopes = nil

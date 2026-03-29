@@ -369,6 +369,41 @@ func TestConfigWithCredentialUsesDerivedStateDirAndStoredIMAPUsername(t *testing
 	}
 }
 
+func TestConfigWithCredentialPrefersCredentialStoredIMAPUsernameOverInheritedFallback(t *testing.T) {
+	t.Parallel()
+
+	baseStateDir := t.TempDir()
+	credentialStateDir := DefaultCredentialStateDir(baseStateDir, "archive")
+	if err := SaveLocalConfig(credentialStateDir, LocalConfig{IMAPUsername: "archive@example.com"}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	cfg := Config{
+		Auth: AuthConfig{
+			ClientID:         "base-client",
+			Tenant:           "base-tenant",
+			AuthorityBaseURL: "https://authority.example.com",
+			IMAPScopes:       []string{"imap.read"},
+			StateDir:         baseStateDir,
+			TokenStore:       "file",
+		},
+		Mail: MailConfig{
+			Client: MailClientConfig{
+				IMAPUsername: "base@example.com",
+			},
+		},
+	}
+
+	got := cfg.WithCredential("archive", Credential{
+		Name: "archive",
+		Kind: "oauth",
+	})
+
+	if got.Mail.Client.IMAPUsername != "archive@example.com" {
+		t.Fatalf("IMAPUsername = %q, want archive@example.com", got.Mail.Client.IMAPUsername)
+	}
+}
+
 func TestCredentialResolvedStateDirUsesExplicitStateDir(t *testing.T) {
 	t.Parallel()
 

@@ -56,6 +56,11 @@ func ResolveStoredIMAPUsername(stateDir, fallback string) string {
 	if fallback != "" {
 		return fallback
 	}
+	return ResolveStoredIMAPUsernamePreferStored(stateDir, fallback)
+}
+
+func ResolveStoredIMAPUsernamePreferStored(stateDir, fallback string) string {
+	fallback = strings.TrimSpace(fallback)
 	localCfg, err := LoadLocalConfig(stateDir)
 	if err == nil && strings.TrimSpace(localCfg.IMAPUsername) != "" {
 		return localCfg.IMAPUsername
