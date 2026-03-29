@@ -202,6 +202,13 @@ func (h *pollingSourceHandle) Delete(ctx context.Context) error {
 	return h.deleter.DeleteMessage(ctx, h.message)
 }
 
+func (h *pollingSourceHandle) DeleteSemantics() provider.DeleteSemantics {
+	if reporter, ok := h.deleter.(provider.DeleteSemanticReporter); ok {
+		return reporter.DeleteSemantics()
+	}
+	return provider.DeleteSemanticsUnknown
+}
+
 func (h *pollingSourceHandle) loadState() (pollingState, error) {
 	content, err := os.ReadFile(h.statePath)
 	if err != nil {

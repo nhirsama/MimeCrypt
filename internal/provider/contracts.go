@@ -160,9 +160,21 @@ type Reconciler interface {
 	ReconcileMessage(ctx context.Context, req WriteRequest) (WriteResult, bool, error)
 }
 
+type DeleteSemantics string
+
+const (
+	DeleteSemanticsUnknown DeleteSemantics = "unknown"
+	DeleteSemanticsSoft    DeleteSemantics = "soft"
+	DeleteSemanticsHard    DeleteSemantics = "hard"
+)
+
 // Deleter 抽象来源侧对原邮件的显式删除能力。
 type Deleter interface {
 	DeleteMessage(ctx context.Context, source MessageRef) error
+}
+
+type DeleteSemanticReporter interface {
+	DeleteSemantics() DeleteSemantics
 }
 
 // HealthProber 抽象 provider 侧的最小活体探测，供显式深度健康检查使用。

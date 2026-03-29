@@ -19,6 +19,7 @@ type writer struct {
 }
 
 var _ provider.Deleter = (*writer)(nil)
+var _ provider.DeleteSemanticReporter = (*writer)(nil)
 
 func newWriter(cfg appconfig.MailClientConfig, tokenSource accessTokenSource, httpClient *http.Client) (*writer, error) {
 	client, err := newGraphClient(cfg, tokenSource, httpClient)
@@ -353,6 +354,10 @@ func (w *writer) DeleteMessage(ctx context.Context, source provider.MessageRef) 
 		return fmt.Errorf("原邮件 ID 不能为空")
 	}
 	return w.deleteOriginalIfExists(ctx, source.ID)
+}
+
+func (*writer) DeleteSemantics() provider.DeleteSemantics {
+	return provider.DeleteSemanticsSoft
 }
 
 func isGraphNotFound(err error) bool {

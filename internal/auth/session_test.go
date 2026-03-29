@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -182,6 +185,101 @@ func TestSessionAccessTokenForScopesRefreshesWhenCachedScopesDoNotCoverRequest(t
 	}
 	if refreshScope != "scope-ews" {
 		t.Fatalf("refresh scope = %q, want scope-ews", refreshScope)
+	}
+}
+
+func TestSessionAccessTokenForScopesSerializesRefreshAcrossSessions(t *testing.T) {
+	t.Parallel()
+
+	var refreshCalls atomic.Int32
+	requestStarted := make(chan struct{}, 2)
+	allowResponse := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/organizations/oauth2/v2.0/token" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm() error = %v", err)
+		}
+		if got := r.Form.Get("grant_type"); got != "refresh_token" {
+			t.Fatalf("grant_type = %q, want refresh_token", got)
+		}
+		refreshCalls.Add(1)
+		requestStarted <- struct{}{}
+		<-allowResponse
+		_, _ = io.WriteString(w, `{"access_token":"access-refresh","refresh_token":"refresh-next","token_type":"Bearer","scope":"scope-a","expires_in":3600}`)
+	}))
+	defer server.Close()
+
+	cfg := appconfig.AuthConfig{
+		ClientID:         "client-id",
+		Tenant:           "organizations",
+		AuthorityBaseURL: server.URL,
+		GraphScopes:      []string{"scope-a", "offline_access"},
+		StateDir:         t.TempDir(),
+	}
+
+	sessionA, err := NewSession(cfg, server.Client())
+	if err != nil {
+		t.Fatalf("NewSession(sessionA) error = %v", err)
+	}
+	sessionB, err := NewSession(cfg, server.Client())
+	if err != nil {
+		t.Fatalf("NewSession(sessionB) error = %v", err)
+	}
+	if err := sessionA.store.save(Token{
+		AccessToken:  "stale-access",
+		RefreshToken: "refresh-1",
+		TokenType:    "Bearer",
+		Scope:        "scope-a",
+		ExpiresAt:    time.Now().Add(30 * time.Second),
+	}); err != nil {
+		t.Fatalf("save() error = %v", err)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	errs := make(chan error, 2)
+	for _, session := range []*Session{sessionA, sessionB} {
+		session := session
+		go func() {
+			defer wg.Done()
+			<-start
+			token, err := session.AccessToken(context.Background())
+			if err != nil {
+				errs <- err
+				return
+			}
+			if token != "access-refresh" {
+				errs <- fmt.Errorf("unexpected access token: %s", token)
+			}
+		}()
+	}
+	close(start)
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for first refresh request")
+	}
+
+	select {
+	case <-requestStarted:
+		t.Fatalf("observed a second concurrent refresh request")
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	close(allowResponse)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("AccessToken() error = %v", err)
+		}
+	}
+	if got := refreshCalls.Load(); got != 1 {
+		t.Fatalf("refresh calls = %d, want 1", got)
 	}
 }
 

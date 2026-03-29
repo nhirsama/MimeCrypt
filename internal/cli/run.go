@@ -132,7 +132,7 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 				return nil
 			}
 
-			ticker := time.NewTicker(cfg.Mail.Sync.PollInterval)
+			ticker := time.NewTicker(resolved.Source.PollInterval)
 			defer ticker.Stop()
 
 			for {

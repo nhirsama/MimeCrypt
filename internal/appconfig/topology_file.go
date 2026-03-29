@@ -1,8 +1,10 @@
 package appconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -26,7 +28,15 @@ func LoadTopologyFile(path string) (Topology, error) {
 	}
 
 	var topology Topology
-	if err := json.Unmarshal(content, &topology); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&topology); err != nil {
+		return Topology{}, fmt.Errorf("解析 topology 配置失败: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return Topology{}, fmt.Errorf("解析 topology 配置失败: 存在多余的 JSON 内容")
+		}
 		return Topology{}, fmt.Errorf("解析 topology 配置失败: %w", err)
 	}
 	return topology.Normalize(), nil

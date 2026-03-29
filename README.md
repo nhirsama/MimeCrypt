@@ -98,7 +98,7 @@ MimeCrypt 的核心职责如下：
 
 也就是说，未来会以“命名 source / sink driver”而不是单一全局 provider 作为主要配置单位。这样同一个实例可以同时接入多个来源和多个出口。
 
-当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及共享认证上下文。当前 `run` 与 `process` 已经共用 `mailflow` 编排，`flow-run` 仅保留为兼容别名；`download`、`list`、`health` 已支持基于 JSON topology 文件选择命名 `source`，其中 `health` 在 topology 模式下还可以结合命名 `route` 逐个探测远端 sink；`login`、`token`、`logout` 也已经支持基于 topology 文件选择命名 `credential`。
+当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及默认 credential。命名 `credential_ref` 已经是有效的运行时配置，会实际覆盖 source / sink 的认证上下文、state dir、token store 与协议 scopes。当前 `run` 与 `process` 已经共用 `mailflow` 编排，`flow-run` 仅保留为兼容别名；`download`、`list`、`health` 已支持基于 JSON topology 文件选择命名 `source`，其中 `health` 在 topology 模式下还可以结合命名 `route` 逐个探测远端 sink；`login`、`token`、`logout` 也已经支持基于 topology 文件选择命名 `credential`。
 
 ## 当前能力范围
 
@@ -376,6 +376,7 @@ export MIMECRYPT_WORK_DIR=""
 - `MIMECRYPT_EWS_BASE_URL`：EWS SOAP 端点地址。
 - `MIMECRYPT_PGP_RECIPIENTS`：补充或覆盖收件人邮箱列表；当邮件头缺少 `To/Cc/Bcc` 时应显式提供。
 - `MIMECRYPT_GPG_BINARY`：本地 `gpg` 可执行文件路径。
+- `MIMECRYPT_GPG_HOME`：仅供 MimeCrypt 调用 `gpg` 时使用的 `GNUPGHOME`，用于隔离默认 `~/.gnupg`。
 - `MIMECRYPT_GPG_TRUST_MODEL`：`gpg --trust-model` 取值。缺省值 `auto`，可选 `always`、`auto`、`classic`、`direct`、`tofu`、`tofu+pgp`、`pgp`。
 - `MIMECRYPT_TOKEN_STORE`：token 存储后端。可选 `file`、`keyring`；缺省值 `file`。
 - `MIMECRYPT_KEYRING_SERVICE`：`keyring` 模式下的服务名；缺省值 `mimecrypt`。
@@ -388,6 +389,7 @@ export MIMECRYPT_WORK_DIR=""
 - 加密阶段进入 `gpg` 的明文载荷始终为原始 MIME 字节；解密结果应恢复原始邮件内容与头部信息。
 - `process` 与 `run` 缺省仅产出 `backup/*.pgp` 密文备份，不额外写入本地 `.eml`。
 - 启用 `--save-output` 或 `MIMECRYPT_SAVE_OUTPUT=true` 后，才会额外生成 `output/*.eml`。
+- `mailflow` 工作目录中的临时文件默认是加密产物（`armored-*.asc`、`encrypted-*.eml`、可选 `backup-*.pgp`），不是原始明文 MIME；异常中断后需要关注的是磁盘卫生与临时件清理，而不是把这些文件误判成明文落盘。
 - `backup/*.pgp` 始终针对原始 MIME 源字节加密；若设置了 `MIMECRYPT_BACKUP_KEY_ID`，则统一使用该密钥生成备份。
 - 加密输出的外层包装会增加 `X-MimeCrypt-Processed: yes`，用于标记该邮件经过 MimeCrypt 处理；解密后的原始 MIME 不包含该头部。
 - IMAP 回写阶段优先保留源邮件的 `INTERNALDATE`；当源元数据缺失时，使用 MIME `Date` 头作为回退值。
@@ -395,12 +397,15 @@ export MIMECRYPT_WORK_DIR=""
 - token 默认存储在状态目录下的 `token.json`；只有显式设置 `MIMECRYPT_TOKEN_STORE=keyring` 时，系统 keyring 才会成为主存储。
 - 文件 token 写入当前采用“临时文件 + rename”落盘，不等同于统一经过 `internal/fileutil.WriteFileAtomic`。
 - topology credential 可以覆盖 `state_dir`、`client_id`、`tenant`、`token_store`、`keyring_service`、各协议 scopes 和 `imap_username`。当命名 credential 未显式声明 `state_dir` 时，默认会落到 `<state_dir>/credentials/<credential-name>`。
+- topology JSON 现在按严格模式解析；未知字段或额外 JSON 文档都会直接报错，避免因拼写错误静默退回到更宽松的行为。
 - `run` 的运行锁、producer 状态和事务状态会按作用域文件名隔离。legacy 单 source 配置下作用域主要体现为 `provider + folder`；topology 模式会额外纳入 `source + driver + folder`。
+- topology 模式下，持续运行会按所选 `source.poll_interval` 驱动轮询，而不是回退到全局默认间隔。
 - topology 模式下，`run` 与 `process` 不再混用 `--write-back`、`--save-output`、`--write-back-provider`、`--folder` 这类 legacy 路由参数；`download` / `list` 也不会再允许 `--folder` 覆盖 topology source。
 - topology 模式下，`login` / `token` / `logout` 不再允许 `--client-id`、`--tenant`、`--state-dir`、`--authority-base-url` 这类 legacy 认证参数覆盖已选 credential。
 - `health` 缺省执行只读检查；`health --deep` 追加来源连通性探测，并在 topology 模式下按选定 route 的远端 sink 逐个执行 writeback 健康探测。
 - `token status` 用于读取当前 token 状态；`token import` 用于从 JSON 文件或标准输入导入 token。
 - `logout` 会同时清理文件 token 与 keyring token。
+- 同一 token store 的并发刷新现在会在进程内串行化，避免 source / sink 为同一 credential 时同时刷新并覆盖 token。
 
 ## 回写方式
 
@@ -422,6 +427,7 @@ export MIMECRYPT_WORK_DIR=""
 - 文件夹标识与消息标识采用服务端接口定义
 - Graph 路径在 Outlook Web 中可能呈现为 draft
 - EWS 路径能够保留更接近收件邮件的语义，但其生命周期已进入退役阶段
+- Graph / EWS 对“删除源邮件”的实现语义属于 soft delete；因此 `mailflow` 在启用 delete-source 时只接受声明为 hard delete 的 source，避免把“移到已删除邮件”误当成安全删除。
 
 启用 `--protect-subject` 或 `MIMECRYPT_PROTECT_SUBJECT=true` 后，外层 `Subject` 统一写为 `...`；解密后的原始主题保持不变。
 
@@ -440,6 +446,7 @@ export MIMECRYPT_WORK_DIR=""
 - 读写链路围绕 RFC 822 / MIME 展开
 - 回写阶段可保留源邮件 `INTERNALDATE`
 - IMAP 回写路径可避免 Graph draft 语义带来的展示偏差
+- 当启用 delete-source 时，当前安全删除语义以 IMAP source 为基线；soft-delete source 会被协调器拒绝执行删除
 - provider 抽象保留了 Graph 与 EWS 的兼容接入能力
 
 ## 状态文件与输出目录
@@ -507,7 +514,7 @@ MIMECRYPT_WORK_DIR=/tmp/mimecrypt
 MIMECRYPT_AUDIT_LOG_PATH=
 MIMECRYPT_AUDIT_STDOUT=false
 MIMECRYPT_TOKEN_STORE=file
-GNUPGHOME=/gnupg
+MIMECRYPT_GPG_HOME=/gnupg
 ```
 
 `MIMECRYPT_WORK_DIR` 的容量可按最大单封邮件体积估算：

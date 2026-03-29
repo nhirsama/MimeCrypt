@@ -23,6 +23,7 @@ var _ provider.Reader = (*reader)(nil)
 var _ provider.Writer = (*writer)(nil)
 var _ provider.Reconciler = (*writer)(nil)
 var _ provider.Deleter = (*writer)(nil)
+var _ provider.DeleteSemanticReporter = (*writer)(nil)
 
 func Build(cfg appconfig.Config) (provider.Clients, error) {
 	authCfg := cfg.Auth
@@ -119,6 +120,10 @@ func (w *writer) DeleteMessage(ctx context.Context, source provider.MessageRef) 
 		return fmt.Errorf("原邮件 ID 不能为空")
 	}
 	return w.client.deleteOriginalIfExists(ctx, source)
+}
+
+func (*writer) DeleteSemantics() provider.DeleteSemantics {
+	return provider.DeleteSemanticsHard
 }
 
 // Keep compiler honest about the auth session interface used by the IMAP client.

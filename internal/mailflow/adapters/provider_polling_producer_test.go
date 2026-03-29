@@ -42,8 +42,9 @@ func (r *fakeReader) LatestMessagesInFolder(context.Context, string, int, int) (
 }
 
 type fakeDeleter struct {
-	deleted []provider.MessageRef
-	err     error
+	deleted   []provider.MessageRef
+	err       error
+	semantics provider.DeleteSemantics
 }
 
 func (d *fakeDeleter) DeleteMessage(_ context.Context, source provider.MessageRef) error {
@@ -52,6 +53,13 @@ func (d *fakeDeleter) DeleteMessage(_ context.Context, source provider.MessageRe
 	}
 	d.deleted = append(d.deleted, source)
 	return nil
+}
+
+func (d *fakeDeleter) DeleteSemantics() provider.DeleteSemantics {
+	if d == nil || d.semantics == "" {
+		return provider.DeleteSemanticsHard
+	}
+	return d.semantics
 }
 
 func TestPollingProducerSkipsBootstrapMessagesByDefault(t *testing.T) {
@@ -169,5 +177,14 @@ func TestPollingProducerSourceDeleteUsesProviderDeleter(t *testing.T) {
 	}
 	if len(deleter.deleted) != 1 || deleter.deleted[0].ID != "m1" {
 		t.Fatalf("unexpected deleted refs: %+v", deleter.deleted)
+	}
+	semanticSource, ok := envelope.Source.(interface {
+		DeleteSemantics() provider.DeleteSemantics
+	})
+	if !ok {
+		t.Fatalf("source does not expose delete semantics")
+	}
+	if got := semanticSource.DeleteSemantics(); got != provider.DeleteSemanticsHard {
+		t.Fatalf("DeleteSemantics() = %s, want %s", got, provider.DeleteSemanticsHard)
 	}
 }

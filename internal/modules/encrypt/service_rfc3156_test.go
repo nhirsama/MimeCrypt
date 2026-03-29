@@ -551,6 +551,31 @@ func TestGPGEncryptorUsesAutoTrustModelByDefault(t *testing.T) {
 	}
 }
 
+func TestGPGEncryptorInjectsConfiguredGPGHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script helper is unix-only")
+	}
+
+	envFile := t.TempDir() + "/gnupghome.txt"
+	script := writeExecutable(t, fmt.Sprintf(
+		"#!/bin/sh\nset -eu\nprintf '%%s' \"${GNUPGHOME:-}\" > %q\ncat >/dev/null\ncat <<'EOF'\n-----BEGIN PGP MESSAGE-----\nabc\n-----END PGP MESSAGE-----\nEOF\n",
+		envFile,
+	))
+
+	enc := gpgEncryptor{binary: script, gpgHome: "/tmp/mimecrypt-gnupg"}
+	if _, err := enc.Encrypt(context.Background(), []byte("hello"), []string{"alice@example.com"}); err != nil {
+		t.Fatalf("Encrypt() error = %v", err)
+	}
+
+	got, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "/tmp/mimecrypt-gnupg" {
+		t.Fatalf("GNUPGHOME = %q, want /tmp/mimecrypt-gnupg", string(got))
+	}
+}
+
 func TestGPGEncryptorRejectsInvalidTrustModel(t *testing.T) {
 	enc := gpgEncryptor{binary: "gpg", trustModel: "not-a-model"}
 	_, err := enc.Encrypt(context.Background(), []byte("hello"), []string{"alice@example.com"})

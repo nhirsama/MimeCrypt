@@ -247,6 +247,10 @@ func (w *ewsWriter) DeleteMessage(ctx context.Context, source provider.MessageRe
 	return w.graphHelper.DeleteMessage(ctx, source)
 }
 
+func (*ewsWriter) DeleteSemantics() provider.DeleteSemantics {
+	return provider.DeleteSemanticsSoft
+}
+
 func (w *ewsWriter) resolveCreatedGraphID(ctx context.Context, req provider.WriteRequest, targetFolderID, createdEWSID string) (string, error) {
 	if strings.TrimSpace(req.Source.InternetMessageID) != "" {
 		message, found, err := w.graphHelper.findProcessedMessage(ctx, targetFolderID, req.Source.InternetMessageID, req.Source.ID)

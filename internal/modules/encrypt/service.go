@@ -14,6 +14,7 @@ import (
 const (
 	envPGPRecipients = "MIMECRYPT_PGP_RECIPIENTS"
 	envGPGBinary     = "MIMECRYPT_GPG_BINARY"
+	envGPGHome       = "MIMECRYPT_GPG_HOME"
 	envGPGTrustModel = "MIMECRYPT_GPG_TRUST_MODEL"
 )
 
@@ -247,7 +248,11 @@ func (s *Service) encryptor() MIMEEncryptor {
 	if s != nil && s.Encryptor != nil {
 		return s.Encryptor
 	}
-	return gpgEncryptor{binary: s.gpgBinary(), trustModel: s.gpgTrustModel()}
+	return gpgEncryptor{
+		binary:     s.gpgBinary(),
+		gpgHome:    s.gpgHome(),
+		trustModel: s.gpgTrustModel(),
+	}
 }
 
 func (s *Service) getenv(key string) string {
@@ -269,6 +274,10 @@ func (s *Service) gpgTrustModel() string {
 		return value
 	}
 	return defaultGPGTrustModel()
+}
+
+func (s *Service) gpgHome() string {
+	return strings.TrimSpace(s.getenv(envGPGHome))
 }
 
 func readHeaderFromOpener(open MIMEOpenFunc) (mail.Header, error) {

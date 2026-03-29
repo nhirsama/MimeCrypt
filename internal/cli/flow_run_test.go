@@ -320,6 +320,9 @@ func TestResolveMailflowTopologyLoadsConfiguredSourceAndRoute(t *testing.T) {
 	if resolved.Source.Name != "office" || resolved.Route.Name != "archive" {
 		t.Fatalf("unexpected resolved topology: %+v", resolved)
 	}
+	if resolved.Source.PollInterval != time.Minute {
+		t.Fatalf("PollInterval = %s, want %s", resolved.Source.PollInterval, time.Minute)
+	}
 	if resolved.Source.StatePath != filepath.Join(stateDir, "flow-sync-office-imap-Inbox_Sub.json") {
 		t.Fatalf("unexpected source state path: %q", resolved.Source.StatePath)
 	}

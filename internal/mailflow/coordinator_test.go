@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+
+	"mimecrypt/internal/provider"
 )
 
 type memoryStore struct {
@@ -73,6 +75,7 @@ type fakeSource struct {
 	ackCalls    int
 	err         error
 	ackErr      error
+	semantics   provider.DeleteSemantics
 }
 
 func (s *fakeSource) Acknowledge(context.Context) error {
@@ -83,6 +86,13 @@ func (s *fakeSource) Acknowledge(context.Context) error {
 func (s *fakeSource) Delete(context.Context) error {
 	s.deleteCalls++
 	return s.err
+}
+
+func (s *fakeSource) DeleteSemantics() provider.DeleteSemantics {
+	if s == nil || s.semantics == "" {
+		return provider.DeleteSemanticsHard
+	}
+	return s.semantics
 }
 
 func TestCoordinatorDeletesSourceWhenSameStoreReceiptCommitted(t *testing.T) {
@@ -249,6 +259,65 @@ func TestCoordinatorKeepsSourceWhenStoreDiffers(t *testing.T) {
 	}
 	if source.ackCalls != 1 {
 		t.Fatalf("ackCalls = %d, want 1", source.ackCalls)
+	}
+}
+
+func TestCoordinatorRejectsSoftDeleteSourceBeforeDelivery(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{}
+	source := &fakeSource{semantics: provider.DeleteSemanticsSoft}
+	consumer := &fakeConsumer{
+		receipt: DeliveryReceipt{
+			ID:       "msg-soft",
+			Consumer: "archive",
+		},
+	}
+	processor := &fakeProcessor{
+		result: ProcessedMail{
+			Trace: MailTrace{
+				TransactionKey: "tx-soft-delete",
+			},
+			Plan: ExecutionPlan{
+				Targets: []DeliveryTarget{{
+					Name:     "archive-main",
+					Consumer: "archive",
+					Artifact: "primary",
+					Required: true,
+				}},
+				DeleteSource: DeleteSourcePolicy{
+					Enabled:          true,
+					RequireSameStore: true,
+				},
+			},
+			Artifacts: map[string]MailArtifact{
+				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
+			},
+		},
+	}
+
+	coordinator := &Coordinator{
+		Processor: processor,
+		Store:     store,
+		Consumers: map[string]Consumer{"archive": consumer},
+	}
+
+	_, err := coordinator.Run(context.Background(), MailEnvelope{
+		MIME:   bytesOpener("source"),
+		Trace:  MailTrace{TransactionKey: "tx-soft-delete"},
+		Source: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), "soft delete") {
+		t.Fatalf("Run() error = %v, want soft delete rejection", err)
+	}
+	if consumer.calls != 0 {
+		t.Fatalf("consumer calls = %d, want 0", consumer.calls)
+	}
+	if source.deleteCalls != 0 {
+		t.Fatalf("deleteCalls = %d, want 0", source.deleteCalls)
+	}
+	if source.ackCalls != 0 {
+		t.Fatalf("ackCalls = %d, want 0", source.ackCalls)
 	}
 }
 

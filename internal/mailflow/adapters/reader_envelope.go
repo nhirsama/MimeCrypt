@@ -87,3 +87,10 @@ func (h *singleMessageSourceHandle) Delete(ctx context.Context) error {
 	}
 	return h.deleter.DeleteMessage(ctx, h.message)
 }
+
+func (h *singleMessageSourceHandle) DeleteSemantics() provider.DeleteSemantics {
+	if reporter, ok := h.deleter.(provider.DeleteSemanticReporter); ok {
+		return reporter.DeleteSemantics()
+	}
+	return provider.DeleteSemanticsUnknown
+}

@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -17,7 +18,7 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 	if err != nil {
 		return provider.Clients{}, err
 	}
-	writer, err := BuildWriteBackWriter(cfg)
+	writer, err := BuildWriteBackWriterWithSession(cfg, clients.Session)
 	if err != nil {
 		return provider.Clients{}, err
 	}
@@ -37,18 +38,39 @@ func BuildSourceClients(cfg appconfig.Config) (provider.Clients, error) {
 }
 
 func BuildWriteBackWriter(cfg appconfig.Config) (provider.Writer, error) {
-	session, err := auth.NewSession(cfg.Auth, nil)
-	if err != nil {
-		return nil, err
+	return BuildWriteBackWriterWithSession(cfg, nil)
+}
+
+type scopedAccessSession interface {
+	provider.Session
+	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
+}
+
+func BuildWriteBackWriterWithSession(cfg appconfig.Config, session provider.Session) (provider.Writer, error) {
+	providerName := normalizedWriteBackProvider(cfg.Provider, cfg.Mail.Pipeline.WriteBackProvider)
+	if session == nil {
+		var err error
+		session, err = auth.NewSession(cfg.Auth, nil)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	switch normalizedWriteBackProvider(cfg.Provider, cfg.Mail.Pipeline.WriteBackProvider) {
+	switch providerName {
 	case "graph":
 		return graph.NewWriter(cfg, session)
 	case "ews":
-		return graph.NewEWSWriter(cfg, session)
+		scoped, ok := session.(scopedAccessSession)
+		if !ok {
+			return nil, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
+		}
+		return graph.NewEWSWriter(cfg, scoped)
 	case "imap":
-		return imap.NewWriter(cfg, session)
+		scoped, ok := session.(scopedAccessSession)
+		if !ok {
+			return nil, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
+		}
+		return imap.NewWriter(cfg, scoped)
 	default:
 		return nil, fmt.Errorf("不支持的回写后端: %s", cfg.Mail.Pipeline.WriteBackProvider)
 	}

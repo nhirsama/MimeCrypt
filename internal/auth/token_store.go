@@ -28,6 +28,7 @@ type tokenStore struct {
 	primary   tokenBackend
 	fallbacks []tokenBackend
 	cleanup   []tokenBackend
+	identity  string
 }
 
 type fileTokenBackend struct {
@@ -53,7 +54,10 @@ func newTokenStore(cfg appconfig.AuthConfig) (*tokenStore, error) {
 	}
 
 	if cfg.TokenStoreMode() != "keyring" {
-		return &tokenStore{primary: fileBackend}, nil
+		return &tokenStore{
+			primary:  fileBackend,
+			identity: tokenStoreIdentity(cfg),
+		}, nil
 	}
 
 	ring, err := openSystemKeyring(cfg)
@@ -68,7 +72,17 @@ func newTokenStore(cfg appconfig.AuthConfig) (*tokenStore, error) {
 		},
 		fallbacks: []tokenBackend{fileBackend},
 		cleanup:   []tokenBackend{fileBackend},
+		identity:  tokenStoreIdentity(cfg),
 	}, nil
+}
+
+func tokenStoreIdentity(cfg appconfig.AuthConfig) string {
+	switch cfg.TokenStoreMode() {
+	case "keyring":
+		return "keyring:" + keyringTokenKey(cfg)
+	default:
+		return "file:" + filepath.Clean(cfg.TokenPath())
+	}
 }
 
 func openSystemKeyring(cfg appconfig.AuthConfig) (credentialKeyring, error) {

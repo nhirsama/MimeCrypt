@@ -12,6 +12,7 @@ import (
 
 type gpgEncryptor struct {
 	binary     string
+	gpgHome    string
 	trustModel string
 }
 
@@ -91,6 +92,9 @@ func (g gpgEncryptor) EncryptReaderTo(ctx context.Context, src io.Reader, recipi
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Stdin = src
 	cmd.Stdout = out
+	if gpgHome := strings.TrimSpace(g.gpgHome); gpgHome != "" {
+		cmd.Env = append(os.Environ(), "GNUPGHOME="+gpgHome)
+	}
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

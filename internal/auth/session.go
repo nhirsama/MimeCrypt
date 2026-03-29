@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"mimecrypt/internal/appconfig"
@@ -50,6 +51,8 @@ type Session struct {
 }
 
 var _ provider.Session = (*Session)(nil)
+
+var sessionStoreLocks sync.Map
 
 // NewSession 创建一个只负责登录与 token 缓存的会话对象。
 func NewSession(cfg appconfig.AuthConfig, httpClient *http.Client) (*Session, error) {
@@ -98,6 +101,9 @@ func (s *Session) Login(ctx context.Context, out io.Writer) (Token, error) {
 		return Token{}, err
 	}
 
+	lock := sessionStoreLock(s)
+	lock.Lock()
+	defer lock.Unlock()
 	if err := s.store.save(token); err != nil {
 		return Token{}, err
 	}
@@ -112,6 +118,10 @@ func (s *Session) AccessToken(ctx context.Context) (string, error) {
 
 // AccessTokenForScopes 返回满足指定 scopes 的 access token，必要时会自动刷新。
 func (s *Session) AccessTokenForScopes(ctx context.Context, scopes []string) (string, error) {
+	lock := sessionStoreLock(s)
+	lock.Lock()
+	defer lock.Unlock()
+
 	token, err := s.store.load()
 	if err != nil {
 		return "", err
@@ -138,6 +148,9 @@ func (s *Session) AccessTokenForScopes(ctx context.Context, scopes []string) (st
 
 // LoadCachedToken 读取本地缓存 token，便于调试和状态检查。
 func (s *Session) LoadCachedToken() (Token, error) {
+	lock := sessionStoreLock(s)
+	lock.Lock()
+	defer lock.Unlock()
 	return s.store.load()
 }
 
@@ -149,12 +162,27 @@ func (s *Session) StoreToken(token Token) error {
 	if strings.TrimSpace(token.AccessToken) == "" && strings.TrimSpace(token.RefreshToken) == "" {
 		return fmt.Errorf("导入 token 失败: access token 和 refresh token 不能同时为空")
 	}
+	lock := sessionStoreLock(s)
+	lock.Lock()
+	defer lock.Unlock()
 	return s.store.save(token)
 }
 
 // Logout 清除本地 token 缓存。
 func (s *Session) Logout() error {
+	lock := sessionStoreLock(s)
+	lock.Lock()
+	defer lock.Unlock()
 	return s.store.delete()
+}
+
+func sessionStoreLock(s *Session) *sync.Mutex {
+	identity := "session:unknown"
+	if s != nil && s.store != nil && strings.TrimSpace(s.store.identity) != "" {
+		identity = s.store.identity
+	}
+	lock, _ := sessionStoreLocks.LoadOrStore(identity, &sync.Mutex{})
+	return lock.(*sync.Mutex)
 }
 
 func (c *client) startDeviceCode(ctx context.Context) (DeviceCode, error) {

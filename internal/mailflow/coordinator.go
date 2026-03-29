@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+
+	"mimecrypt/internal/provider"
 )
 
 // Coordinator 负责编排单封邮件的处理、投递与可选删除源邮件。
@@ -84,6 +86,10 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 			}
 		}
 
+		if err := validateDeleteSource(state.Plan.DeleteSource, envelope.Source); err != nil {
+			return Result{}, err
+		}
+
 		for _, target := range state.Plan.Targets {
 			targetKey := target.Key()
 			if _, committed := state.Deliveries[targetKey]; committed {
@@ -126,6 +132,10 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 
 	if !hasRequiredDeliveries(state, state.Plan) {
 		return c.result(state), nil
+	}
+
+	if err := validateDeleteSource(state.Plan.DeleteSource, envelope.Source); err != nil {
+		return Result{}, err
 	}
 
 	if !state.SourceDeleted && shouldDeleteSource(state, state.Plan.DeleteSource) {
@@ -238,4 +248,30 @@ func (c *Coordinator) ackAndComplete(ctx context.Context, state *TxState, source
 		return err
 	}
 	return nil
+}
+
+type deleteSemanticSource interface {
+	DeleteSemantics() provider.DeleteSemantics
+}
+
+func validateDeleteSource(policy DeleteSourcePolicy, source SourceHandle) error {
+	if !policy.Enabled {
+		return nil
+	}
+	deletable, ok := source.(DeletableSource)
+	if source == nil || !ok || deletable == nil {
+		return fmt.Errorf("删除源邮件已启用，但来源不支持删除")
+	}
+	semanticSource, ok := source.(deleteSemanticSource)
+	if !ok {
+		return fmt.Errorf("删除源邮件已启用，但来源未声明删除语义")
+	}
+	switch semanticSource.DeleteSemantics() {
+	case provider.DeleteSemanticsHard:
+		return nil
+	case provider.DeleteSemanticsSoft:
+		return fmt.Errorf("删除源邮件已启用，但来源仅支持 soft delete，已拒绝继续处理")
+	default:
+		return fmt.Errorf("删除源邮件已启用，但来源删除语义未知")
+	}
 }
