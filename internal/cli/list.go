@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
-	"mimecrypt/internal/appruntime"
 	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/list"
 	"mimecrypt/internal/provider"
@@ -21,9 +20,8 @@ func newListCmd() *cobra.Command {
 		return newErrorCommand("list", "列出最新邮件摘要", err)
 	}
 
-	providerFlags := newProviderConfigFlags(cfg)
+	baseFlags := newBaseConfigFlags(cfg)
 	topologyFlags := newTopologyConfigFlags(cfg)
-	folder := cfg.Mail.Sync.Folder
 
 	cmd := &cobra.Command{
 		Use:   "list <end> | list <start> <end>",
@@ -36,9 +34,8 @@ func newListCmd() *cobra.Command {
 		}, "\n"),
 		Args: argRange(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = providerFlags.apply(cfg, cmd)
+			cfg = baseFlags.apply(cfg, cmd)
 			cfg = topologyFlags.apply(cfg)
-			cfg.Mail.Sync.Folder = folder
 
 			start, end, err := parseLatestRange(args)
 			if err != nil {
@@ -46,34 +43,18 @@ func newListCmd() *cobra.Command {
 			}
 
 			request := list.Request{
-				Folder: cfg.Mail.Sync.Folder,
-				Start:  start,
-				End:    end,
+				Start: start,
+				End:   end,
 			}
-			var service *list.Service
-			if strings.TrimSpace(cfg.TopologyPath) == "" {
-				if strings.TrimSpace(cfg.Mail.Sync.Folder) == "" {
-					return fmt.Errorf("list 失败: folder 不能为空")
-				}
-				service, err = appruntime.BuildListService(cfg)
-				if err != nil {
-					return fmt.Errorf("list 失败: %w", err)
-				}
-			} else {
-				resolved, err := resolveTopologySource(cfg, topologyFlags)
-				if err != nil {
-					return fmt.Errorf("list 失败: %w", err)
-				}
-				if resolved.Custom && cmd.Flags().Changed("folder") {
-					return fmt.Errorf("list 失败: --folder 与 --topology-file 不能同时覆盖 source 文件夹")
-				}
-
-				service, err = flowruntime.BuildListService(resolved.SourcePlan)
-				if err != nil {
-					return fmt.Errorf("list 失败: %w", err)
-				}
-				request.Folder = resolved.Source.Folder
+			resolved, err := resolveTopologySource(cfg, topologyFlags)
+			if err != nil {
+				return fmt.Errorf("list 失败: %w", err)
 			}
+			service, err := flowruntime.BuildListService(resolved.SourcePlan)
+			if err != nil {
+				return fmt.Errorf("list 失败: %w", err)
+			}
+			request.Folder = resolved.Source.Folder
 
 			result, err := service.Run(cmd.Context(), request)
 			if err != nil {
@@ -93,9 +74,8 @@ func newListCmd() *cobra.Command {
 		},
 	}
 
-	providerFlags.addFlags(cmd)
+	baseFlags.addFlags(cmd)
 	topologyFlags.addSourceFlags(cmd)
-	cmd.Flags().StringVar(&folder, "folder", folder, "待列出的邮件文件夹标识；Graph 使用 folder id，IMAP 使用 mailbox 名称")
 
 	return cmd
 }

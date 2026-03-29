@@ -80,7 +80,6 @@ type MailTrace struct {
 	InternetMessageID string            `json:"internet_message_id,omitempty"`
 	ReceivedAt        time.Time         `json:"received_at,omitempty"`
 	SourceStore       StoreRef          `json:"source_store,omitempty"`
-	RouteHints        map[string]string `json:"route_hints,omitempty"`
 	Attributes        map[string]string `json:"attributes,omitempty"`
 }
 
@@ -131,11 +130,10 @@ func (a MailArtifact) Validate() error {
 
 // DeliveryTarget 表示一个邮件级别的消费目标。
 type DeliveryTarget struct {
-	Name     string            `json:"name,omitempty"`
-	Consumer string            `json:"consumer,omitempty"`
-	Artifact string            `json:"artifact,omitempty"`
-	Required bool              `json:"required,omitempty"`
-	Options  map[string]string `json:"options,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Consumer string `json:"consumer,omitempty"`
+	Artifact string `json:"artifact,omitempty"`
+	Required bool   `json:"required,omitempty"`
 }
 
 func (t DeliveryTarget) Key() string {

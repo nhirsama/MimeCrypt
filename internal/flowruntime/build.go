@@ -58,7 +58,7 @@ func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, er
 	service := &health.Service{
 		StateDir: run.Config.Auth.StateDir,
 		Folder:   run.Source.Folder,
-		Provider: normalizeDriver(run.Source.Driver, run.Config.Provider),
+		Provider: normalizeDriver(run.Source.Driver, "imap"),
 		Session:  source.Clients.Session,
 		Reader:   source.Clients.Reader,
 	}
@@ -248,7 +248,6 @@ func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
 			Consumer: strings.TrimSpace(target.SinkRef),
 			Artifact: artifact,
 			Required: target.Required,
-			Options:  target.Options,
 		})
 	}
 
@@ -267,7 +266,7 @@ func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
 }
 
 func buildSourceBundle(plan SourcePlan) (sourceBundle, error) {
-	clients, err := providers.BuildSourceClients(plan.Config)
+	clients, err := providers.BuildSourceClients(plan.Config, plan.Source.Driver)
 	if err != nil {
 		return sourceBundle{}, err
 	}
@@ -278,7 +277,7 @@ func buildSourceBundle(plan SourcePlan) (sourceBundle, error) {
 }
 
 func buildSinkBundle(plan SinkPlan) (sinkBundle, error) {
-	clients, err := providers.BuildWriteBackClients(plan.Config)
+	clients, err := providers.BuildSinkClients(plan.Config, plan.Sink.Driver)
 	if err != nil {
 		return sinkBundle{}, err
 	}

@@ -22,7 +22,7 @@ func newErrorCommand(use, short string, err error) *cobra.Command {
 	}
 }
 
-func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL, ewsBaseURL, imapAddr, imapUsername string) appconfig.Config {
+func applyBaseConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL, ewsBaseURL, imapAddr, imapUsername string) appconfig.Config {
 	cfg := defaults.WithStateDir(stateDir)
 	cfg.Auth.ClientID = clientID
 	cfg.Auth.Tenant = tenant
@@ -32,27 +32,6 @@ func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authority
 	cfg.Mail.Client.IMAPAddr = imapAddr
 	cfg.Mail.Client.IMAPUsername = imapUsername
 	return cfg
-}
-
-func validateWriteBackFlags(writeBack, verifyWriteBack bool, writeBackFolder string) error {
-	if verifyWriteBack && !writeBack {
-		return fmt.Errorf("--verify-write-back 依赖 --write-back")
-	}
-	if strings.TrimSpace(writeBackFolder) != "" && !writeBack {
-		return fmt.Errorf("--write-back-folder 依赖 --write-back")
-	}
-
-	return nil
-}
-
-func validateMailflowFlags(saveOutput, writeBack, verifyWriteBack, deleteSource bool, writeBackFolder string) error {
-	if err := validateWriteBackFlags(writeBack, verifyWriteBack, writeBackFolder); err != nil {
-		return err
-	}
-	if deleteSource && !writeBack {
-		return fmt.Errorf("--delete-source 依赖 --write-back")
-	}
-	return nil
 }
 
 type mailflowSummary struct {

@@ -9,35 +9,38 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
 )
 
-func TestValidateMailflowFlagsRejectsDeleteSourceWithoutWriteBack(t *testing.T) {
-	t.Parallel()
-
-	err := validateMailflowFlags(true, false, false, true, "")
-	if err == nil || !strings.Contains(err.Error(), "--delete-source 依赖 --write-back") {
-		t.Fatalf("validateMailflowFlags() error = %v, want delete-source validation", err)
-	}
-}
-
-func TestRunCommandExposesDeleteSourceFlag(t *testing.T) {
+func TestRunCommandRemovesLegacyMailflowFlags(t *testing.T) {
 	t.Parallel()
 
 	cmd := newRunCmd()
-	if cmd.Flags().Lookup("delete-source") == nil {
-		t.Fatalf("expected delete-source flag on run command")
-	}
-}
-
-func TestRunCommandExposesTopologyFlags(t *testing.T) {
-	t.Parallel()
-
-	cmd := newRunCmd()
-	for _, name := range []string{"topology-file", "source", "route"} {
+	for _, name := range []string{"topology-file", "source", "route", "once", "debug-save-first"} {
 		if cmd.Flags().Lookup(name) == nil {
 			t.Fatalf("expected %s flag on run command", name)
+		}
+	}
+	for _, name := range []string{"delete-source", "write-back", "verify-write-back", "folder", "poll-interval", "cycle-timeout", "include-existing"} {
+		if cmd.Flags().Lookup(name) != nil {
+			t.Fatalf("did not expect legacy flag %s on run command", name)
+		}
+	}
+}
+
+func TestProcessCommandExposesTransactionModeAndNoLegacyFlags(t *testing.T) {
+	t.Parallel()
+
+	cmd := newProcessCmd()
+	if cmd.Flags().Lookup("transaction-mode") == nil {
+		t.Fatalf("expected transaction-mode flag on process command")
+	}
+	for _, name := range []string{"write-back", "verify-write-back", "folder"} {
+		if cmd.Flags().Lookup(name) != nil {
+			t.Fatalf("did not expect legacy flag %s on process command", name)
 		}
 	}
 }
@@ -51,8 +54,8 @@ func TestDownloadCommandExposesSourceTopologyFlagsOnly(t *testing.T) {
 			t.Fatalf("expected %s flag on download command", name)
 		}
 	}
-	if cmd.Flags().Lookup("route") != nil {
-		t.Fatalf("did not expect route flag on download command")
+	if cmd.Flags().Lookup("route") != nil || cmd.Flags().Lookup("folder") != nil {
+		t.Fatalf("did not expect route/folder flag on download command")
 	}
 }
 
@@ -65,8 +68,8 @@ func TestListCommandExposesSourceTopologyFlagsOnly(t *testing.T) {
 			t.Fatalf("expected %s flag on list command", name)
 		}
 	}
-	if cmd.Flags().Lookup("route") != nil {
-		t.Fatalf("did not expect route flag on list command")
+	if cmd.Flags().Lookup("route") != nil || cmd.Flags().Lookup("folder") != nil {
+		t.Fatalf("did not expect route/folder flag on list command")
 	}
 }
 
@@ -81,35 +84,18 @@ func TestHealthCommandExposesTopologyFlags(t *testing.T) {
 	}
 }
 
-func TestLoginCommandExposesCredentialFlags(t *testing.T) {
+func TestLoginTokenLogoutCommandsExposeCredentialFlags(t *testing.T) {
 	t.Parallel()
 
-	cmd := newLoginCmd()
-	for _, name := range []string{"topology-file", "credential"} {
-		if cmd.Flags().Lookup(name) == nil {
-			t.Fatalf("expected %s flag on login command", name)
-		}
-	}
-}
-
-func TestTokenStatusCommandExposesCredentialFlags(t *testing.T) {
-	t.Parallel()
-
-	cmd := newTokenStatusCmd(appconfig.Config{})
-	for _, name := range []string{"topology-file", "credential"} {
-		if cmd.Flags().Lookup(name) == nil {
-			t.Fatalf("expected %s flag on token status command", name)
-		}
-	}
-}
-
-func TestLogoutCommandExposesCredentialFlags(t *testing.T) {
-	t.Parallel()
-
-	cmd := newLogoutCmd()
-	for _, name := range []string{"topology-file", "credential"} {
-		if cmd.Flags().Lookup(name) == nil {
-			t.Fatalf("expected %s flag on logout command", name)
+	for _, cmd := range []*cobra.Command{
+		newLoginCmd(),
+		newTokenStatusCmd(appconfig.Config{}),
+		newLogoutCmd(),
+	} {
+		for _, name := range []string{"topology-file", "credential"} {
+			if cmd.Flags().Lookup(name) == nil {
+				t.Fatalf("expected %s flag on %s command", name, cmd.Name())
+			}
 		}
 	}
 }
@@ -165,31 +151,6 @@ func TestSummarizeMailflowResultUsesTraceAndDeliveries(t *testing.T) {
 	if !summary.WroteBack || !summary.Verified {
 		t.Fatalf("unexpected write-back summary: %+v", summary)
 	}
-	if summary.BackupPath != "/backup/m1.pgp" || summary.Format != "pgp-mime" {
-		t.Fatalf("unexpected trace summary: %+v", summary)
-	}
-}
-
-func TestSummarizeMailflowResultMarksAlreadyEncryptedSkip(t *testing.T) {
-	t.Parallel()
-
-	summary, err := summarizeMailflowResult(mailflow.Result{
-		Key:     "tx-skip",
-		Skipped: true,
-		Trace: mailflow.MailTrace{
-			SourceMessageID: "m2",
-			Attributes: map[string]string{
-				"already_encrypted": "true",
-				"format":            "pgp-mime",
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("summarizeMailflowResult() error = %v", err)
-	}
-	if !summary.AlreadyEncrypted || summary.Encrypted {
-		t.Fatalf("unexpected summary flags: %+v", summary)
-	}
 }
 
 func TestRunMailflowCycleSeparatesSkippedMessages(t *testing.T) {
@@ -217,7 +178,7 @@ func TestResolveMailflowTopologyLoadsConfiguredSourceAndRoute(t *testing.T) {
 
 	stateDir := t.TempDir()
 	topologyPath := filepath.Join(stateDir, "topology.json")
-	content, err := json.Marshal(appconfig.Topology{
+	writeCLITopology(t, topologyPath, appconfig.Topology{
 		Sources: map[string]appconfig.Source{
 			"office": {
 				Name:         "office",
@@ -245,33 +206,19 @@ func TestResolveMailflowTopologyLoadsConfiguredSourceAndRoute(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	resolved, err := resolveMailflowTopology(appconfig.Config{
 		TopologyPath: topologyPath,
 		Auth:         appconfig.AuthConfig{StateDir: stateDir},
 		Mail: appconfig.MailConfig{
-			Sync: appconfig.MailSyncConfig{
-				StateDir: stateDir,
-			},
+			Sync: appconfig.MailSyncConfig{StateDir: stateDir},
 		},
-	}, topologyConfigFlags{topologyFile: topologyPath}, appconfig.TopologyOptions{})
+	}, topologyConfigFlags{topologyFile: topologyPath})
 	if err != nil {
 		t.Fatalf("resolveMailflowTopology() error = %v", err)
 	}
-	if !resolved.Custom {
-		t.Fatalf("Custom = false, want true")
-	}
 	if resolved.Source.Name != "office" || resolved.Route.Name != "archive" {
 		t.Fatalf("unexpected resolved topology: %+v", resolved)
-	}
-	if resolved.Source.PollInterval != time.Minute {
-		t.Fatalf("PollInterval = %s, want %s", resolved.Source.PollInterval, time.Minute)
 	}
 	if resolved.Source.StatePath != filepath.Join(stateDir, "flow-sync-office-imap-Inbox_Sub.json") {
 		t.Fatalf("unexpected source state path: %q", resolved.Source.StatePath)
@@ -286,7 +233,7 @@ func TestResolveMailflowRoutePlanLoadsAllSourcesForRoute(t *testing.T) {
 
 	stateDir := t.TempDir()
 	topologyPath := filepath.Join(stateDir, "topology.json")
-	content, err := json.Marshal(appconfig.Topology{
+	writeCLITopology(t, topologyPath, appconfig.Topology{
 		DefaultRoute: "archive",
 		Credentials: map[string]appconfig.Credential{
 			"default": {Name: "default", Kind: "shared-session"},
@@ -324,16 +271,9 @@ func TestResolveMailflowRoutePlanLoadsAllSourcesForRoute(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	resolved, err := resolveMailflowRoutePlan(appconfig.Config{
 		TopologyPath: topologyPath,
-		Provider:     "imap",
 		Auth: appconfig.AuthConfig{
 			ClientID:         "client-id",
 			Tenant:           "organizations",
@@ -347,22 +287,14 @@ func TestResolveMailflowRoutePlanLoadsAllSourcesForRoute(t *testing.T) {
 				IMAPAddr:     "imap.example.com:993",
 				IMAPUsername: "user@example.com",
 			},
-			Sync: appconfig.MailSyncConfig{
-				StateDir: stateDir,
-			},
+			Sync: appconfig.MailSyncConfig{StateDir: stateDir},
 		},
-	}, topologyConfigFlags{topologyFile: topologyPath}, appconfig.TopologyOptions{})
+	}, topologyConfigFlags{topologyFile: topologyPath})
 	if err != nil {
 		t.Fatalf("resolveMailflowRoutePlan() error = %v", err)
 	}
-	if !resolved.Custom {
-		t.Fatalf("Custom = false, want true")
-	}
 	if len(resolved.Runs) != 2 {
 		t.Fatalf("len(Runs) = %d, want 2", len(resolved.Runs))
-	}
-	if resolved.Runs[0].Source.Name != "office" || resolved.Runs[1].Source.Name != "vault" {
-		t.Fatalf("unexpected run order: %#v", []string{resolved.Runs[0].Source.Name, resolved.Runs[1].Source.Name})
 	}
 	if resolved.Runs[0].Route.StateDir != filepath.Join(stateDir, "flow-state", "archive-office-imap-Inbox") {
 		t.Fatalf("office route state dir = %q", resolved.Runs[0].Route.StateDir)
@@ -377,7 +309,7 @@ func TestResolveMailflowTopologyRejectsAmbiguousRouteWithoutExplicitSource(t *te
 
 	stateDir := t.TempDir()
 	topologyPath := filepath.Join(stateDir, "topology.json")
-	content, err := json.Marshal(appconfig.Topology{
+	writeCLITopology(t, topologyPath, appconfig.Topology{
 		DefaultRoute: "archive",
 		Credentials: map[string]appconfig.Credential{
 			"default": {Name: "default", Kind: "shared-session"},
@@ -413,16 +345,9 @@ func TestResolveMailflowTopologyRejectsAmbiguousRouteWithoutExplicitSource(t *te
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
-	_, err = resolveMailflowTopology(appconfig.Config{
+	_, err := resolveMailflowTopology(appconfig.Config{
 		TopologyPath: topologyPath,
-		Provider:     "imap",
 		Auth: appconfig.AuthConfig{
 			ClientID:         "client-id",
 			Tenant:           "organizations",
@@ -436,37 +361,11 @@ func TestResolveMailflowTopologyRejectsAmbiguousRouteWithoutExplicitSource(t *te
 				IMAPAddr:     "imap.example.com:993",
 				IMAPUsername: "user@example.com",
 			},
-			Sync: appconfig.MailSyncConfig{
-				StateDir: stateDir,
-			},
+			Sync: appconfig.MailSyncConfig{StateDir: stateDir},
 		},
-	}, topologyConfigFlags{topologyFile: topologyPath}, appconfig.TopologyOptions{})
+	}, topologyConfigFlags{topologyFile: topologyPath})
 	if err == nil || !strings.Contains(err.Error(), "显式指定 --source") {
 		t.Fatalf("resolveMailflowTopology() error = %v, want explicit source selection", err)
-	}
-}
-
-func TestResolveMailflowTopologyRejectsNonDefaultSelectionInLegacyMode(t *testing.T) {
-	t.Parallel()
-
-	_, err := resolveMailflowTopology(appconfig.Config{
-		Provider: "imap",
-		Auth:     appconfig.AuthConfig{StateDir: t.TempDir()},
-		Mail: appconfig.MailConfig{
-			Pipeline: appconfig.MailPipelineConfig{
-				BackupDir:    "backup",
-				AuditLogPath: "audit.jsonl",
-			},
-			Sync: appconfig.MailSyncConfig{
-				Folder:       "INBOX",
-				StateDir:     t.TempDir(),
-				PollInterval: time.Minute,
-				CycleTimeout: 2 * time.Minute,
-			},
-		},
-	}, topologyConfigFlags{sourceName: "office"}, appconfig.TopologyOptions{})
-	if err == nil || !strings.Contains(err.Error(), "legacy 模式只支持 source=default") {
-		t.Fatalf("resolveMailflowTopology() error = %v, want legacy selection error", err)
 	}
 }
 
@@ -497,4 +396,15 @@ func (r *fakeCycleRunner) RunOnce(context.Context) (mailflow.Result, bool, error
 	current := r.results[r.index]
 	r.index++
 	return current.result, current.processed, current.err
+}
+
+func writeCLITopology(t *testing.T, path string, topology appconfig.Topology) {
+	t.Helper()
+	content, err := json.Marshal(topology)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 }

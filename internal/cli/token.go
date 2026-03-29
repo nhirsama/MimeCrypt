@@ -27,7 +27,7 @@ func newTokenCmd() *cobra.Command {
 }
 
 func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
-	providerFlags := newProviderConfigFlags(cfg)
+	baseFlags := newBaseConfigFlags(cfg)
 	credentialFlags := newCredentialConfigFlags(cfg)
 
 	cmd := &cobra.Command{
@@ -35,14 +35,11 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 		Short: "查询本地 token 状态",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg = providerFlags.apply(cfg, cmd)
+			cfg = baseFlags.apply(cfg, cmd)
 			cfg = credentialFlags.apply(cfg)
 
 			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
-				return fmt.Errorf("token status 失败: %w", err)
-			}
-			if err := validateCustomCredentialFlags(cmd, resolved, "client-id", "tenant", "state-dir", "authority-base-url"); err != nil {
 				return fmt.Errorf("token status 失败: %w", err)
 			}
 			cfg = resolved.Config
@@ -58,7 +55,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			}
 
 			if !result.Present {
-				if resolved.Custom && strings.TrimSpace(resolved.CredentialName) != "" {
+				if strings.TrimSpace(resolved.CredentialName) != "" {
 					fmt.Printf("token_absent credential=%s state_dir=%s token_store=%s\n", resolved.CredentialName, result.StateDir, result.TokenStore)
 					return nil
 				}
@@ -70,7 +67,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			if !result.Token.ExpiresAt.IsZero() {
 				expiresAt = result.Token.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z")
 			}
-			if resolved.Custom && strings.TrimSpace(resolved.CredentialName) != "" {
+			if strings.TrimSpace(resolved.CredentialName) != "" {
 				fmt.Printf(
 					"token_present credential=%s state_dir=%s token_store=%s expires_at=%s scope=%q has_refresh_token=%t\n",
 					resolved.CredentialName,
@@ -93,13 +90,13 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			return nil
 		},
 	}
-	providerFlags.addFlags(cmd)
+	baseFlags.addFlags(cmd)
 	credentialFlags.addFlags(cmd)
 	return cmd
 }
 
 func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
-	providerFlags := newProviderConfigFlags(cfg)
+	baseFlags := newBaseConfigFlags(cfg)
 	credentialFlags := newCredentialConfigFlags(cfg)
 
 	cmd := &cobra.Command{
@@ -107,14 +104,11 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 		Short: "从 JSON 文件或标准输入导入 token",
 		Args:  argRange(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = providerFlags.apply(cfg, cmd)
+			cfg = baseFlags.apply(cfg, cmd)
 			cfg = credentialFlags.apply(cfg)
 
 			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
-				return fmt.Errorf("token import 失败: %w", err)
-			}
-			if err := validateCustomCredentialFlags(cmd, resolved, "client-id", "tenant", "state-dir", "authority-base-url"); err != nil {
 				return fmt.Errorf("token import 失败: %w", err)
 			}
 			cfg = resolved.Config
@@ -135,7 +129,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 				return fmt.Errorf("token import 失败: %w", err)
 			}
 
-			if resolved.Custom && strings.TrimSpace(resolved.CredentialName) != "" {
+			if strings.TrimSpace(resolved.CredentialName) != "" {
 				fmt.Printf(
 					"已导入 token，credential=%s state_dir=%s token_store=%s has_refresh_token=%t\n",
 					resolved.CredentialName,
@@ -155,7 +149,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 		},
 	}
 
-	providerFlags.addFlags(cmd)
+	baseFlags.addFlags(cmd)
 	credentialFlags.addFlags(cmd)
 	return cmd
 }

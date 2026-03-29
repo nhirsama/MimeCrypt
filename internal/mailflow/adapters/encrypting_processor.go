@@ -218,12 +218,6 @@ func createTempFile(dir, pattern string) (*os.File, error) {
 
 func cloneTrace(trace mailflow.MailTrace) mailflow.MailTrace {
 	cloned := trace
-	if trace.RouteHints != nil {
-		cloned.RouteHints = make(map[string]string, len(trace.RouteHints))
-		for key, value := range trace.RouteHints {
-			cloned.RouteHints[key] = value
-		}
-	}
 	if trace.Attributes != nil {
 		cloned.Attributes = make(map[string]string, len(trace.Attributes))
 		for key, value := range trace.Attributes {

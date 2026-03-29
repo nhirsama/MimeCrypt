@@ -9,11 +9,15 @@ import (
 )
 
 func buildMailflowSingleRunner(ctx context.Context, resolved resolvedMailflowTopology) (*flowruntime.SingleMessageRunner, error) {
-	return flowruntime.BuildSingleMessageRunner(ctx, resolved.SourceRun, flowruntime.TransactionModeEphemeral)
+	return buildMailflowSingleRunnerWithMode(ctx, resolved, flowruntime.TransactionModeEphemeral)
 }
 
-func runMailflowMessageByID(ctx context.Context, resolved resolvedMailflowTopology, messageID string) (mailflowSummary, error) {
-	runner, err := buildMailflowSingleRunner(ctx, resolved)
+func buildMailflowSingleRunnerWithMode(ctx context.Context, resolved resolvedMailflowTopology, mode flowruntime.TransactionMode) (*flowruntime.SingleMessageRunner, error) {
+	return flowruntime.BuildSingleMessageRunner(ctx, resolved.SourceRun, mode)
+}
+
+func runMailflowMessageByID(ctx context.Context, resolved resolvedMailflowTopology, messageID string, mode flowruntime.TransactionMode) (mailflowSummary, error) {
+	runner, err := buildMailflowSingleRunnerWithMode(ctx, resolved, mode)
 	if err != nil {
 		return mailflowSummary{}, err
 	}

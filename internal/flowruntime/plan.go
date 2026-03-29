@@ -23,7 +23,6 @@ type SourcePlan struct {
 	Topology appconfig.Topology
 	Source   appconfig.Source
 	Config   appconfig.Config
-	Custom   bool
 }
 
 type SinkPlan struct {
@@ -43,7 +42,6 @@ type RoutePlan struct {
 	Topology appconfig.Topology
 	Route    appconfig.Route
 	Runs     []SourceRun
-	Custom   bool
 }
 
 func ResolveSourcePlan(cfg appconfig.Config, selector Selector) (SourcePlan, error) {
@@ -51,45 +49,8 @@ func ResolveSourcePlan(cfg appconfig.Config, selector Selector) (SourcePlan, err
 		return SourcePlan{}, fmt.Errorf("该命令不支持 route 选择: %s", value)
 	}
 
-	topologyPath := strings.TrimSpace(cfg.TopologyPath)
-	if topologyPath == "" {
-		topology, err := cfg.BuildTopology(appconfig.TopologyOptions{})
-		if err != nil {
-			return SourcePlan{}, err
-		}
-		if value := strings.TrimSpace(selector.SourceName); value != "" && value != topology.DefaultSource {
-			return SourcePlan{}, fmt.Errorf("legacy 模式只支持 source=%s", topology.DefaultSource)
-		}
-		source, err := topology.DefaultSourceConfig()
-		if err != nil {
-			return SourcePlan{}, err
-		}
-		sourceCfg, err := configForSource(cfg, topology, source)
-		if err != nil {
-			return SourcePlan{}, err
-		}
-		if strings.TrimSpace(source.StatePath) == "" {
-			source.StatePath = sourceCfg.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)
-			topology.Sources[source.Name] = source
-		}
-		if err := topology.ValidateStructure(); err != nil {
-			return SourcePlan{}, err
-		}
-		return SourcePlan{
-			Topology: topology,
-			Source:   source,
-			Config:   sourceCfg,
-		}, nil
-	}
-
-	topology, err := appconfig.LoadTopologyFile(topologyPath)
+	topology, err := loadRuntimeTopology(cfg)
 	if err != nil {
-		return SourcePlan{}, err
-	}
-	if err := populateSourceStatePaths(cfg, &topology); err != nil {
-		return SourcePlan{}, err
-	}
-	if err := topology.ValidateStructure(); err != nil {
 		return SourcePlan{}, err
 	}
 	sourceName, err := selectSourceName(topology, selector.SourceName)
@@ -110,53 +71,12 @@ func ResolveSourcePlan(cfg appconfig.Config, selector Selector) (SourcePlan, err
 		Topology: topology,
 		Source:   source,
 		Config:   sourceCfg,
-		Custom:   true,
 	}, nil
 }
 
-func ResolveRoutePlan(cfg appconfig.Config, selector Selector, legacyOptions appconfig.TopologyOptions, mode RoutePlanMode) (RoutePlan, error) {
-	topologyPath := strings.TrimSpace(cfg.TopologyPath)
-	if topologyPath == "" {
-		topology, err := cfg.BuildTopology(legacyOptions)
-		if err != nil {
-			return RoutePlan{}, err
-		}
-		if value := strings.TrimSpace(selector.RouteName); value != "" && value != topology.DefaultRoute {
-			return RoutePlan{}, fmt.Errorf("legacy 模式只支持 route=%s", topology.DefaultRoute)
-		}
-		if value := strings.TrimSpace(selector.SourceName); value != "" && value != topology.DefaultSource {
-			return RoutePlan{}, fmt.Errorf("legacy 模式只支持 source=%s", topology.DefaultSource)
-		}
-		route, err := topology.DefaultRouteConfig()
-		if err != nil {
-			return RoutePlan{}, err
-		}
-		source, err := topology.DefaultSourceConfig()
-		if err != nil {
-			return RoutePlan{}, err
-		}
-		run, err := buildSourceRun(cfg, topology, route, source)
-		if err != nil {
-			return RoutePlan{}, err
-		}
-		if err := topology.Validate(); err != nil {
-			return RoutePlan{}, err
-		}
-		return RoutePlan{
-			Topology: topology,
-			Route:    route,
-			Runs:     []SourceRun{run},
-		}, nil
-	}
-
-	topology, err := appconfig.LoadTopologyFile(topologyPath)
+func ResolveRoutePlan(cfg appconfig.Config, selector Selector, mode RoutePlanMode) (RoutePlan, error) {
+	topology, err := loadRuntimeTopology(cfg)
 	if err != nil {
-		return RoutePlan{}, err
-	}
-	if err := populateSourceStatePaths(cfg, &topology); err != nil {
-		return RoutePlan{}, err
-	}
-	if err := topology.ValidateStructure(); err != nil {
 		return RoutePlan{}, err
 	}
 	routeName, err := selectRouteName(topology, selector.RouteName)
@@ -194,8 +114,25 @@ func ResolveRoutePlan(cfg appconfig.Config, selector Selector, legacyOptions app
 		Topology: topology,
 		Route:    route,
 		Runs:     runs,
-		Custom:   true,
 	}, nil
+}
+
+func loadRuntimeTopology(cfg appconfig.Config) (appconfig.Topology, error) {
+	topologyPath := strings.TrimSpace(cfg.TopologyPath)
+	if topologyPath == "" {
+		return appconfig.Topology{}, fmt.Errorf("topology path 未配置")
+	}
+	topology, err := appconfig.LoadTopologyFile(topologyPath)
+	if err != nil {
+		return appconfig.Topology{}, err
+	}
+	if err := populateSourceStatePaths(cfg, &topology); err != nil {
+		return appconfig.Topology{}, err
+	}
+	if err := topology.ValidateStructure(); err != nil {
+		return appconfig.Topology{}, err
+	}
+	return topology, nil
 }
 
 func populateSourceStatePaths(cfg appconfig.Config, topology *appconfig.Topology) error {
@@ -374,7 +311,6 @@ func configForSource(cfg appconfig.Config, topology appconfig.Topology, source a
 	if err != nil {
 		return appconfig.Config{}, err
 	}
-	sourceCfg.Provider = normalizeDriver(source.Driver, "imap")
 	sourceCfg.Mail.Sync.Folder = source.Folder
 	return sourceCfg, nil
 }
@@ -384,9 +320,6 @@ func configForSink(cfg appconfig.Config, topology appconfig.Topology, source app
 	if err != nil {
 		return appconfig.Config{}, err
 	}
-	sinkDriver := normalizeDriver(sink.Driver, "imap")
-	sinkCfg.Provider = sourceProviderForSinkDriver(sinkDriver)
-	sinkCfg.Mail.Pipeline.WriteBackProvider = sinkDriver
 	sinkCfg.Mail.Sync.Folder = source.Folder
 	if folder := strings.TrimSpace(sink.Folder); folder != "" {
 		sinkCfg.Mail.Sync.Folder = folder
@@ -415,13 +348,4 @@ func normalizeDriver(value, fallback string) string {
 		return strings.ToLower(strings.TrimSpace(fallback))
 	}
 	return value
-}
-
-func sourceProviderForSinkDriver(driver string) string {
-	switch normalizeDriver(driver, "imap") {
-	case "ews":
-		return "graph"
-	default:
-		return normalizeDriver(driver, "imap")
-	}
 }

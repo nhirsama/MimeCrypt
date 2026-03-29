@@ -6,16 +6,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mimecrypt/internal/appconfig"
 )
 
-func TestResolveCredentialPlanLegacyRejectsNamedCredential(t *testing.T) {
+func TestResolveCredentialPlanRequiresTopology(t *testing.T) {
 	t.Parallel()
 
-	_, err := ResolveCredentialPlan(appconfig.Config{}, "archive-auth")
-	if err == nil || !strings.Contains(err.Error(), "legacy 模式只支持 credential=default") {
-		t.Fatalf("ResolveCredentialPlan() error = %v, want legacy selection error", err)
+	_, err := ResolveCredentialPlan(appconfig.Config{}, "")
+	if err == nil || !strings.Contains(err.Error(), "topology path 未配置") {
+		t.Fatalf("ResolveCredentialPlan() error = %v, want topology path error", err)
 	}
 }
 
@@ -24,7 +25,7 @@ func TestResolveCredentialPlanUsesExplicitCredentialFromTopology(t *testing.T) {
 
 	stateDir := t.TempDir()
 	topologyPath := filepath.Join(stateDir, "topology.json")
-	content, err := json.Marshal(appconfig.Topology{
+	writeCredentialTopology(t, topologyPath, appconfig.Topology{
 		DefaultCredential: "default",
 		Credentials: map[string]appconfig.Credential{
 			"default": {
@@ -45,9 +46,8 @@ func TestResolveCredentialPlanUsesExplicitCredentialFromTopology(t *testing.T) {
 				Driver:       "imap",
 				Mode:         "poll",
 				Folder:       "INBOX",
-				StatePath:    filepath.Join(stateDir, "flow-sync-default.json"),
-				PollInterval: 1,
-				CycleTimeout: 1,
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
 			},
 		},
 		Sinks: map[string]appconfig.Sink{
@@ -63,12 +63,6 @@ func TestResolveCredentialPlanUsesExplicitCredentialFromTopology(t *testing.T) {
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	plan, err := ResolveCredentialPlan(appconfig.Config{
 		TopologyPath: topologyPath,
@@ -79,9 +73,6 @@ func TestResolveCredentialPlanUsesExplicitCredentialFromTopology(t *testing.T) {
 	}, "archive-auth")
 	if err != nil {
 		t.Fatalf("ResolveCredentialPlan() error = %v", err)
-	}
-	if !plan.Custom {
-		t.Fatalf("Custom = false, want true")
 	}
 	if plan.CredentialName != "archive-auth" {
 		t.Fatalf("CredentialName = %q, want archive-auth", plan.CredentialName)
@@ -99,16 +90,15 @@ func TestResolveCredentialPlanAllowsTopologyWithoutNamedCredentials(t *testing.T
 
 	stateDir := t.TempDir()
 	topologyPath := filepath.Join(stateDir, "topology.json")
-	content, err := json.Marshal(appconfig.Topology{
+	writeCredentialTopology(t, topologyPath, appconfig.Topology{
 		Sources: map[string]appconfig.Source{
 			"default": {
 				Name:         "default",
 				Driver:       "imap",
 				Mode:         "poll",
 				Folder:       "INBOX",
-				StatePath:    filepath.Join(stateDir, "flow-sync-default.json"),
-				PollInterval: 1,
-				CycleTimeout: 1,
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
 			},
 		},
 		Sinks: map[string]appconfig.Sink{
@@ -124,12 +114,6 @@ func TestResolveCredentialPlanAllowsTopologyWithoutNamedCredentials(t *testing.T
 			},
 		},
 	})
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
 
 	plan, err := ResolveCredentialPlan(appconfig.Config{
 		TopologyPath: topologyPath,
@@ -143,10 +127,18 @@ func TestResolveCredentialPlanAllowsTopologyWithoutNamedCredentials(t *testing.T
 	if plan.CredentialName != "" {
 		t.Fatalf("CredentialName = %q, want empty", plan.CredentialName)
 	}
-	if plan.Custom {
-		t.Fatalf("Custom = true, want false")
-	}
 	if plan.Config.Auth.StateDir != stateDir {
 		t.Fatalf("Auth.StateDir = %q, want %q", plan.Config.Auth.StateDir, stateDir)
+	}
+}
+
+func writeCredentialTopology(t *testing.T, path string, topology appconfig.Topology) {
+	t.Helper()
+	content, err := json.Marshal(topology)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 }

@@ -2,7 +2,6 @@ package providers
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,176 +14,64 @@ import (
 	"mimecrypt/internal/auth"
 )
 
-func TestBuildSourceAndWriteBackClientsWithSharedSessionUseConfiguredWriteBackProvider(t *testing.T) {
+func TestSessionAuthConfigForDriversUsesLeastPrivilegeUnion(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name              string
-		sourceProvider    string
-		writeBackProvider string
-		wantWriterType    string
-	}{
-		{
-			name:              "imap source with graph writer",
-			sourceProvider:    "imap",
-			writeBackProvider: "graph",
-			wantWriterType:    "*graph.writer",
-		},
-		{
-			name:              "imap source with ews writer",
-			sourceProvider:    "imap",
-			writeBackProvider: "ews",
-			wantWriterType:    "*graph.ewsWriter",
-		},
-		{
-			name:              "graph source with imap writer",
-			sourceProvider:    "graph",
-			writeBackProvider: "imap",
-			wantWriterType:    "*imap.writer",
-		},
+	cfg := testProviderConfig(t)
+	got := SessionAuthConfigForDrivers(cfg, "imap", "ews")
+
+	if !reflect.DeepEqual(got.GraphScopes, []string{"scope-graph"}) {
+		t.Fatalf("GraphScopes = %#v", got.GraphScopes)
+	}
+	if !reflect.DeepEqual(got.EWSScopes, []string{"scope-ews"}) {
+		t.Fatalf("EWSScopes = %#v", got.EWSScopes)
+	}
+	if !reflect.DeepEqual(got.IMAPScopes, []string{"scope-imap"}) {
+		t.Fatalf("IMAPScopes = %#v", got.IMAPScopes)
 	}
 
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			cfg := testProviderConfig(t, tc.sourceProvider, tc.writeBackProvider)
-			session, err := auth.NewSession(sessionAuthConfig(cfg), nil)
-			if err != nil {
-				t.Fatalf("NewSession() error = %v", err)
-			}
-			source, err := BuildSourceClientsWithSession(cfg, session)
-			if err != nil {
-				t.Fatalf("BuildSourceClientsWithSession() error = %v", err)
-			}
-			clients, err := BuildWriteBackClientsWithSession(cfg, session)
-			if err != nil {
-				t.Fatalf("BuildWriteBackClientsWithSession() error = %v", err)
-			}
-			if source.Reader == nil {
-				t.Fatalf("Source reader = nil")
-			}
-			if got := fmt.Sprintf("%T", clients.Writer); got != tc.wantWriterType {
-				t.Fatalf("Writer type = %s, want %s", got, tc.wantWriterType)
-			}
-		})
+	got = SessionAuthConfigForDrivers(cfg, "graph")
+	if got.EWSScopes != nil || got.IMAPScopes != nil {
+		t.Fatalf("unexpected non-graph scopes: %#v", got)
 	}
 }
 
-func TestSessionAuthConfigScopesFollowSourceAndWriteBackProviders(t *testing.T) {
+func TestBuildSourceClientsWithSessionUsesExplicitDriver(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name              string
-		sourceProvider    string
-		writeBackProvider string
-		wantGraph         []string
-		wantEWS           []string
-		wantIMAP          []string
-	}{
-		{
-			name:              "imap source with graph writer",
-			sourceProvider:    "imap",
-			writeBackProvider: "graph",
-			wantGraph:         []string{"scope-graph"},
-			wantIMAP:          []string{"scope-imap"},
-		},
-		{
-			name:              "imap source with ews writer",
-			sourceProvider:    "imap",
-			writeBackProvider: "ews",
-			wantGraph:         []string{"scope-graph"},
-			wantEWS:           []string{"scope-ews"},
-			wantIMAP:          []string{"scope-imap"},
-		},
-		{
-			name:              "graph source with imap writer",
-			sourceProvider:    "graph",
-			writeBackProvider: "imap",
-			wantGraph:         []string{"scope-graph"},
-			wantIMAP:          []string{"scope-imap"},
-		},
-		{
-			name:              "graph source with graph writer",
-			sourceProvider:    "graph",
-			writeBackProvider: "graph",
-			wantGraph:         []string{"scope-graph"},
-		},
+	cfg := testProviderConfig(t)
+	session, err := auth.NewSession(SessionAuthConfigForDrivers(cfg, "imap"), nil)
+	if err != nil {
+		t.Fatalf("NewSession() error = %v", err)
 	}
 
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			cfg := testProviderConfig(t, tc.sourceProvider, tc.writeBackProvider)
-			got := sessionAuthConfig(cfg)
-			if !reflect.DeepEqual(got.GraphScopes, tc.wantGraph) {
-				t.Fatalf("GraphScopes = %#v, want %#v", got.GraphScopes, tc.wantGraph)
-			}
-			if !reflect.DeepEqual(got.EWSScopes, tc.wantEWS) {
-				t.Fatalf("EWSScopes = %#v, want %#v", got.EWSScopes, tc.wantEWS)
-			}
-			if !reflect.DeepEqual(got.IMAPScopes, tc.wantIMAP) {
-				t.Fatalf("IMAPScopes = %#v, want %#v", got.IMAPScopes, tc.wantIMAP)
-			}
-		})
+	clients, err := BuildSourceClientsWithSession(cfg, "imap", session)
+	if err != nil {
+		t.Fatalf("BuildSourceClientsWithSession() error = %v", err)
+	}
+	if got := reflect.TypeOf(clients.Reader).String(); got != "*imap.reader" {
+		t.Fatalf("reader type = %s, want *imap.reader", got)
 	}
 }
 
-func TestBuildWriteBackClientsExposeExplicitCapabilities(t *testing.T) {
+func TestBuildSinkClientsUsesExplicitDriver(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name              string
-		sourceProvider    string
-		writeBackProvider string
-		wantReconciler    bool
-		wantHealth        bool
-	}{
-		{
-			name:              "graph writer exposes health only",
-			sourceProvider:    "imap",
-			writeBackProvider: "graph",
-			wantHealth:        true,
-		},
-		{
-			name:              "imap writer exposes health and reconciler",
-			sourceProvider:    "graph",
-			writeBackProvider: "imap",
-			wantReconciler:    true,
-			wantHealth:        true,
-		},
+	cfg := testProviderConfig(t)
+
+	clients, err := BuildSinkClients(cfg, "ews")
+	if err != nil {
+		t.Fatalf("BuildSinkClients() error = %v", err)
 	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			cfg := testProviderConfig(t, tc.sourceProvider, tc.writeBackProvider)
-			clients, err := BuildWriteBackClients(cfg)
-			if err != nil {
-				t.Fatalf("BuildWriteBackClients() error = %v", err)
-			}
-			if clients.Writer == nil {
-				t.Fatalf("Writer = nil")
-			}
-			if clients.Reader == nil {
-				t.Fatalf("Reader = nil")
-			}
-			if (clients.Reconciler != nil) != tc.wantReconciler {
-				t.Fatalf("Reconciler present = %t, want %t", clients.Reconciler != nil, tc.wantReconciler)
-			}
-			if (clients.Health != nil) != tc.wantHealth {
-				t.Fatalf("Health present = %t, want %t", clients.Health != nil, tc.wantHealth)
-			}
-		})
+	if got := reflect.TypeOf(clients.Writer).String(); got != "*graph.ewsWriter" {
+		t.Fatalf("writer type = %s, want *graph.ewsWriter", got)
+	}
+	if clients.Health == nil {
+		t.Fatalf("Health = nil")
 	}
 }
 
-func TestBuildWriteBackClientsMixedProviderGraphHealthUsesGraphScopes(t *testing.T) {
+func TestBuildSinkClientsGraphHealthUsesGraphScopes(t *testing.T) {
 	t.Parallel()
 
 	var refreshScope string
@@ -211,11 +98,11 @@ func TestBuildWriteBackClientsMixedProviderGraphHealthUsesGraphScopes(t *testing
 	}))
 	defer graphServer.Close()
 
-	cfg := testProviderConfig(t, "imap", "graph")
+	cfg := testProviderConfig(t)
 	cfg.Auth.AuthorityBaseURL = authServer.URL
 	cfg.Mail.Client.GraphBaseURL = graphServer.URL + "/v1.0"
 
-	session, err := auth.NewSession(cfg.Auth, nil)
+	session, err := auth.NewSession(SessionAuthConfigForDrivers(cfg, "graph"), nil)
 	if err != nil {
 		t.Fatalf("NewSession() error = %v", err)
 	}
@@ -229,9 +116,9 @@ func TestBuildWriteBackClientsMixedProviderGraphHealthUsesGraphScopes(t *testing
 		t.Fatalf("StoreToken() error = %v", err)
 	}
 
-	clients, err := BuildWriteBackClients(cfg)
+	clients, err := BuildSinkClientsWithSession(cfg, "graph", session)
 	if err != nil {
-		t.Fatalf("BuildWriteBackClients() error = %v", err)
+		t.Fatalf("BuildSinkClientsWithSession() error = %v", err)
 	}
 	if clients.Health == nil {
 		t.Fatalf("Health = nil")
@@ -249,11 +136,10 @@ func TestBuildWriteBackClientsMixedProviderGraphHealthUsesGraphScopes(t *testing
 	}
 }
 
-func testProviderConfig(t *testing.T, providerName, writeBackProvider string) appconfig.Config {
+func testProviderConfig(t *testing.T) appconfig.Config {
 	t.Helper()
 
 	return appconfig.Config{
-		Provider: providerName,
 		Auth: appconfig.AuthConfig{
 			ClientID:         "client-id",
 			Tenant:           "organizations",
@@ -270,9 +156,6 @@ func testProviderConfig(t *testing.T, providerName, writeBackProvider string) ap
 				EWSBaseURL:   "https://ews.example.com/EWS/Exchange.asmx",
 				IMAPAddr:     "imap.example.com:993",
 				IMAPUsername: "user@example.com",
-			},
-			Pipeline: appconfig.MailPipelineConfig{
-				WriteBackProvider: writeBackProvider,
 			},
 			Sync: appconfig.MailSyncConfig{
 				Folder: "INBOX",

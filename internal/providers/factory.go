@@ -11,43 +11,45 @@ import (
 	"mimecrypt/internal/providers/imap"
 )
 
-func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
-	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
-	case "", "graph":
-		return graph.BuildSourceClients(cfg)
-	case "imap":
-		return imap.BuildSourceClients(cfg)
-	default:
-		return provider.SourceClients{}, fmt.Errorf("不支持的邮件服务提供方: %s", cfg.Provider)
-	}
+func BuildSourceClients(cfg appconfig.Config, driver string) (provider.SourceClients, error) {
+	return BuildSourceClientsWithSession(cfg, driver, nil)
 }
 
-func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.SourceClients, error) {
-	switch normalizedSourceProvider(cfg.Provider) {
+func BuildSourceClientsWithSession(cfg appconfig.Config, driver string, session provider.Session) (provider.SourceClients, error) {
+	driver = normalizeDriver(driver)
+	if session == nil {
+		var err error
+		session, err = auth.NewSession(SessionAuthConfigForDrivers(cfg, driver), nil)
+		if err != nil {
+			return provider.SourceClients{}, err
+		}
+	}
+
+	switch driver {
 	case "graph":
 		return graph.BuildSourceClientsWithSession(cfg, session)
 	case "imap":
 		return imap.BuildSourceClientsWithSession(cfg, session)
 	default:
-		return provider.SourceClients{}, fmt.Errorf("不支持的邮件服务提供方: %s", cfg.Provider)
+		return provider.SourceClients{}, fmt.Errorf("不支持的 source driver: %s", driver)
 	}
 }
 
-func BuildWriteBackClients(cfg appconfig.Config) (provider.SinkClients, error) {
-	return BuildWriteBackClientsWithSession(cfg, nil)
+func BuildSinkClients(cfg appconfig.Config, driver string) (provider.SinkClients, error) {
+	return BuildSinkClientsWithSession(cfg, driver, nil)
 }
 
-func BuildWriteBackClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.SinkClients, error) {
-	providerName := normalizedWriteBackProvider(cfg.Provider, cfg.Mail.Pipeline.WriteBackProvider)
+func BuildSinkClientsWithSession(cfg appconfig.Config, driver string, session provider.Session) (provider.SinkClients, error) {
+	driver = normalizeDriver(driver)
 	if session == nil {
 		var err error
-		session, err = auth.NewSession(sessionAuthConfig(cfg), nil)
+		session, err = auth.NewSession(SessionAuthConfigForDrivers(cfg, driver), nil)
 		if err != nil {
 			return provider.SinkClients{}, err
 		}
 	}
 
-	switch providerName {
+	switch driver {
 	case "graph":
 		return graph.NewWriterClients(cfg, session)
 	case "ews":
@@ -55,18 +57,27 @@ func BuildWriteBackClientsWithSession(cfg appconfig.Config, session provider.Ses
 	case "imap":
 		return imap.NewWriterClients(cfg, session)
 	default:
-		return provider.SinkClients{}, fmt.Errorf("不支持的回写后端: %s", cfg.Mail.Pipeline.WriteBackProvider)
+		return provider.SinkClients{}, fmt.Errorf("不支持的 sink driver: %s", driver)
 	}
 }
 
-func sessionAuthConfig(cfg appconfig.Config) appconfig.AuthConfig {
+func SessionAuthConfigForDrivers(cfg appconfig.Config, drivers ...string) appconfig.AuthConfig {
 	authCfg := cfg.Auth
-	sourceProvider := normalizedSourceProvider(cfg.Provider)
-	writeBackProvider := normalizedWriteBackProvider(cfg.Provider, cfg.Mail.Pipeline.WriteBackProvider)
 
-	needsGraph := sourceProvider == "graph" || writeBackProvider == "graph" || writeBackProvider == "ews"
-	needsEWS := writeBackProvider == "ews"
-	needsIMAP := sourceProvider == "imap" || writeBackProvider == "imap"
+	needsGraph := false
+	needsEWS := false
+	needsIMAP := false
+	for _, driver := range drivers {
+		switch normalizeDriver(driver) {
+		case "graph":
+			needsGraph = true
+		case "ews":
+			needsGraph = true
+			needsEWS = true
+		case "imap":
+			needsIMAP = true
+		}
+	}
 
 	if !needsGraph {
 		authCfg.GraphScopes = nil
@@ -80,23 +91,6 @@ func sessionAuthConfig(cfg appconfig.Config) appconfig.AuthConfig {
 	return authCfg
 }
 
-func normalizedSourceProvider(providerName string) string {
-	switch strings.ToLower(strings.TrimSpace(providerName)) {
-	case "", "graph":
-		return "graph"
-	case "imap":
-		return "imap"
-	default:
-		return strings.ToLower(strings.TrimSpace(providerName))
-	}
-}
-
-func normalizedWriteBackProvider(providerName, writeBackProvider string) string {
-	if value := strings.ToLower(strings.TrimSpace(writeBackProvider)); value != "" {
-		return value
-	}
-	if value := normalizedSourceProvider(providerName); value != "" {
-		return value
-	}
-	return "unknown"
+func normalizeDriver(driver string) string {
+	return strings.ToLower(strings.TrimSpace(driver))
 }

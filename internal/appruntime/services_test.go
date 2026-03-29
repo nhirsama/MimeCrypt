@@ -13,7 +13,7 @@ import (
 	"mimecrypt/internal/auth"
 )
 
-func TestBuildHealthServiceMixedProviderWriteBackProbeUsesGraphToken(t *testing.T) {
+func TestBuildLoginServiceGraphIdentityProbeUsesGraphToken(t *testing.T) {
 	t.Parallel()
 
 	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,42 +37,33 @@ func TestBuildHealthServiceMixedProviderWriteBackProbeUsesGraphToken(t *testing.
 		if got := r.Header.Get("Authorization"); got != "Bearer access-graph" {
 			t.Fatalf("Authorization = %q, want Bearer access-graph", got)
 		}
-		_, _ = io.WriteString(w, `{"id":"u1","mail":"user@example.com","userPrincipalName":"user@example.com"}`)
+		_, _ = io.WriteString(w, `{"id":"u1","mail":"user@example.com","userPrincipalName":"user@example.com","displayName":"User"}`)
 	}))
 	defer graphServer.Close()
 
 	cfg := appconfig.Config{
-		Provider: "imap",
 		Auth: appconfig.AuthConfig{
 			ClientID:         "client-id",
 			Tenant:           "organizations",
 			AuthorityBaseURL: authServer.URL,
 			GraphScopes:      []string{"scope-graph"},
-			IMAPScopes:       []string{"scope-imap"},
 			StateDir:         t.TempDir(),
 			TokenStore:       "file",
 		},
 		Mail: appconfig.MailConfig{
 			Client: appconfig.MailClientConfig{
 				GraphBaseURL: graphServer.URL + "/v1.0",
-				IMAPAddr:     "imap.example.com:993",
-				IMAPUsername: "user@example.com",
-			},
-			Pipeline: appconfig.MailPipelineConfig{
-				WriteBackProvider: "graph",
-			},
-			Sync: appconfig.MailSyncConfig{
-				Folder: "INBOX",
 			},
 		},
 	}
 
-	session, err := auth.NewSession(cfg.Auth, nil)
+	service, err := BuildLoginService(cfg)
 	if err != nil {
-		t.Fatalf("NewSession() error = %v", err)
+		t.Fatalf("BuildLoginService() error = %v", err)
 	}
+	session := service.Session.(*auth.Session)
 	if err := session.StoreToken(auth.Token{
-		AccessToken:  "stale-imap",
+		AccessToken:  "stale-graph",
 		RefreshToken: "refresh-1",
 		TokenType:    "Bearer",
 		Scope:        "scope-imap",
@@ -81,19 +72,45 @@ func TestBuildHealthServiceMixedProviderWriteBackProbeUsesGraphToken(t *testing.
 		t.Fatalf("StoreToken() error = %v", err)
 	}
 
-	service, err := BuildHealthService(cfg)
+	user, err := service.IdentityProbe(context.Background())
 	if err != nil {
-		t.Fatalf("BuildHealthService() error = %v", err)
+		t.Fatalf("IdentityProbe() error = %v", err)
 	}
-	if service.WriteBack == nil {
-		t.Fatalf("WriteBack = nil")
+	if user.Account() != "user@example.com" {
+		t.Fatalf("Account() = %q, want user@example.com", user.Account())
+	}
+}
+
+func TestBuildLoginServiceFallsBackToIMAPUsernameIdentity(t *testing.T) {
+	t.Parallel()
+
+	service, err := BuildLoginService(appconfig.Config{
+		Auth: appconfig.AuthConfig{
+			ClientID:         "client-id",
+			Tenant:           "organizations",
+			AuthorityBaseURL: "https://login.microsoftonline.com",
+			IMAPScopes:       []string{"scope-imap"},
+			StateDir:         t.TempDir(),
+			TokenStore:       "file",
+		},
+		Mail: appconfig.MailConfig{
+			Client: appconfig.MailClientConfig{
+				IMAPUsername: "user@example.com",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildLoginService() error = %v", err)
+	}
+	if service.IdentityProbe == nil {
+		t.Fatalf("IdentityProbe = nil")
 	}
 
-	detail, err := service.WriteBack.HealthCheck(context.Background())
+	user, err := service.IdentityProbe(context.Background())
 	if err != nil {
-		t.Fatalf("HealthCheck() error = %v", err)
+		t.Fatalf("IdentityProbe() error = %v", err)
 	}
-	if detail != "user@example.com" {
-		t.Fatalf("detail = %q, want user@example.com", detail)
+	if user.Account() != "user@example.com" {
+		t.Fatalf("Account() = %q, want user@example.com", user.Account())
 	}
 }

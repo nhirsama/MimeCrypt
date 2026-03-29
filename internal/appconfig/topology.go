@@ -8,19 +8,10 @@ import (
 
 const (
 	defaultTopologyCredentialName = "default"
-	defaultTopologyRouteName      = "default"
-	defaultTopologySourceName     = "default"
 )
 
-type TopologyOptions struct {
-	IncludeExisting bool
-	WriteBack       bool
-	VerifyWriteBack bool
-	DeleteSource    bool
-}
-
 // Topology 表示命名 source / sink / route / credential 的配置拓扑。
-// 当前仍由单 provider 环境变量编译出一个默认 topology，后续再扩展到多来源多出口。
+// 当前运行时完全基于该显式模型进行解析与装配。
 type Topology struct {
 	Credentials       map[string]Credential `json:"credentials,omitempty"`
 	Sources           map[string]Source     `json:"sources,omitempty"`
@@ -32,42 +23,39 @@ type Topology struct {
 }
 
 type Credential struct {
-	Name             string            `json:"name,omitempty"`
-	Kind             string            `json:"kind,omitempty"`
-	StateDir         string            `json:"state_dir,omitempty"`
-	ClientID         string            `json:"client_id,omitempty"`
-	Tenant           string            `json:"tenant,omitempty"`
-	AuthorityBaseURL string            `json:"authority_base_url,omitempty"`
-	TokenStore       string            `json:"token_store,omitempty"`
-	KeyringService   string            `json:"keyring_service,omitempty"`
-	GraphScopes      []string          `json:"graph_scopes,omitempty"`
-	EWSScopes        []string          `json:"ews_scopes,omitempty"`
-	IMAPScopes       []string          `json:"imap_scopes,omitempty"`
-	IMAPUsername     string            `json:"imap_username,omitempty"`
-	Options          map[string]string `json:"options,omitempty"`
+	Name             string   `json:"name,omitempty"`
+	Kind             string   `json:"kind,omitempty"`
+	StateDir         string   `json:"state_dir,omitempty"`
+	ClientID         string   `json:"client_id,omitempty"`
+	Tenant           string   `json:"tenant,omitempty"`
+	AuthorityBaseURL string   `json:"authority_base_url,omitempty"`
+	TokenStore       string   `json:"token_store,omitempty"`
+	KeyringService   string   `json:"keyring_service,omitempty"`
+	GraphScopes      []string `json:"graph_scopes,omitempty"`
+	EWSScopes        []string `json:"ews_scopes,omitempty"`
+	IMAPScopes       []string `json:"imap_scopes,omitempty"`
+	IMAPUsername     string   `json:"imap_username,omitempty"`
 }
 
 type Source struct {
-	Name            string            `json:"name,omitempty"`
-	Driver          string            `json:"driver,omitempty"`
-	Mode            string            `json:"mode,omitempty"`
-	CredentialRef   string            `json:"credential_ref,omitempty"`
-	Folder          string            `json:"folder,omitempty"`
-	StatePath       string            `json:"state_path,omitempty"`
-	IncludeExisting bool              `json:"include_existing,omitempty"`
-	PollInterval    time.Duration     `json:"poll_interval,omitempty"`
-	CycleTimeout    time.Duration     `json:"cycle_timeout,omitempty"`
-	Options         map[string]string `json:"options,omitempty"`
+	Name            string        `json:"name,omitempty"`
+	Driver          string        `json:"driver,omitempty"`
+	Mode            string        `json:"mode,omitempty"`
+	CredentialRef   string        `json:"credential_ref,omitempty"`
+	Folder          string        `json:"folder,omitempty"`
+	StatePath       string        `json:"state_path,omitempty"`
+	IncludeExisting bool          `json:"include_existing,omitempty"`
+	PollInterval    time.Duration `json:"poll_interval,omitempty"`
+	CycleTimeout    time.Duration `json:"cycle_timeout,omitempty"`
 }
 
 type Sink struct {
-	Name          string            `json:"name,omitempty"`
-	Driver        string            `json:"driver,omitempty"`
-	CredentialRef string            `json:"credential_ref,omitempty"`
-	OutputDir     string            `json:"output_dir,omitempty"`
-	Folder        string            `json:"folder,omitempty"`
-	Verify        bool              `json:"verify,omitempty"`
-	Options       map[string]string `json:"options,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Driver        string `json:"driver,omitempty"`
+	CredentialRef string `json:"credential_ref,omitempty"`
+	OutputDir     string `json:"output_dir,omitempty"`
+	Folder        string `json:"folder,omitempty"`
+	Verify        bool   `json:"verify,omitempty"`
 }
 
 type Route struct {
@@ -76,15 +64,13 @@ type Route struct {
 	StateDir     string             `json:"state_dir,omitempty"`
 	Targets      []RouteTarget      `json:"targets,omitempty"`
 	DeleteSource DeleteSourcePolicy `json:"delete_source,omitempty"`
-	Options      map[string]string  `json:"options,omitempty"`
 }
 
 type RouteTarget struct {
-	Name     string            `json:"name,omitempty"`
-	SinkRef  string            `json:"sink_ref,omitempty"`
-	Artifact string            `json:"artifact,omitempty"`
-	Required bool              `json:"required,omitempty"`
-	Options  map[string]string `json:"options,omitempty"`
+	Name     string `json:"name,omitempty"`
+	SinkRef  string `json:"sink_ref,omitempty"`
+	Artifact string `json:"artifact,omitempty"`
+	Required bool   `json:"required,omitempty"`
 }
 
 type DeleteSourcePolicy struct {
@@ -127,106 +113,6 @@ func (t Topology) Normalize() Topology {
 		}
 	}
 	return t
-}
-
-func (c Config) BuildTopology(options TopologyOptions) (Topology, error) {
-	if options.VerifyWriteBack && !options.WriteBack {
-		return Topology{}, fmt.Errorf("verify write back 依赖 write back")
-	}
-	if options.DeleteSource && !options.WriteBack {
-		return Topology{}, fmt.Errorf("delete source 依赖 write back")
-	}
-
-	topology := Topology{
-		Credentials: map[string]Credential{
-			defaultTopologyCredentialName: {
-				Name: defaultTopologyCredentialName,
-				Kind: "shared-session",
-			},
-		},
-		Sources: map[string]Source{
-			defaultTopologySourceName: {
-				Name:            defaultTopologySourceName,
-				Driver:          normalizeTopologyDriver(c.Provider, defaultProvider),
-				Mode:            "poll",
-				CredentialRef:   defaultTopologyCredentialName,
-				Folder:          c.Mail.Sync.Folder,
-				IncludeExisting: options.IncludeExisting,
-				PollInterval:    c.Mail.Sync.PollInterval,
-				CycleTimeout:    c.Mail.Sync.CycleTimeout,
-			},
-		},
-		Sinks: map[string]Sink{},
-		Routes: map[string]Route{
-			defaultTopologyRouteName: {
-				Name:       defaultTopologyRouteName,
-				SourceRefs: []string{defaultTopologySourceName},
-			},
-		},
-		DefaultSource:     defaultTopologySourceName,
-		DefaultRoute:      defaultTopologyRouteName,
-		DefaultCredential: defaultTopologyCredentialName,
-	}
-	source := topology.Sources[defaultTopologySourceName]
-	source.StatePath = c.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)
-	topology.Sources[defaultTopologySourceName] = source
-	route := topology.Routes[defaultTopologyRouteName]
-	route.StateDir = c.Mail.FlowStateDirFor(route.Name, source.Name, source.Driver, source.Folder)
-	topology.Routes[defaultTopologyRouteName] = route
-
-	if !c.Mail.Pipeline.SaveOutput && !options.WriteBack {
-		topology.Sinks["discard"] = Sink{
-			Name:   "discard",
-			Driver: "discard",
-		}
-		route.Targets = append(route.Targets, RouteTarget{
-			Name:     "discard-primary",
-			SinkRef:  "discard",
-			Artifact: "primary",
-			Required: true,
-		})
-	}
-	if c.Mail.Pipeline.SaveOutput {
-		topology.Sinks["local-output"] = Sink{
-			Name:      "local-output",
-			Driver:    "file",
-			OutputDir: c.Mail.Pipeline.OutputDir,
-		}
-		route.Targets = append(route.Targets, RouteTarget{
-			Name:     "local-output",
-			SinkRef:  "local-output",
-			Artifact: "primary",
-			Required: true,
-		})
-	}
-	if options.WriteBack {
-		topology.Sinks["write-back"] = Sink{
-			Name:          "write-back",
-			Driver:        normalizeTopologyDriver(c.Mail.Pipeline.WriteBackProvider, defaultWriteBackProvider),
-			CredentialRef: defaultTopologyCredentialName,
-			Folder:        strings.TrimSpace(c.Mail.Pipeline.WriteBackFolder),
-			Verify:        options.VerifyWriteBack,
-		}
-		route.Targets = append(route.Targets, RouteTarget{
-			Name:     "write-back",
-			SinkRef:  "write-back",
-			Artifact: "primary",
-			Required: true,
-		})
-	}
-	if options.DeleteSource {
-		route.DeleteSource = DeleteSourcePolicy{
-			Enabled:          true,
-			RequireSameStore: true,
-			EligibleSinks:    []string{"write-back"},
-		}
-	}
-	topology.Routes[defaultTopologyRouteName] = route
-
-	if err := topology.Validate(); err != nil {
-		return Topology{}, err
-	}
-	return topology, nil
 }
 
 func (t Topology) ValidateStructure() error {

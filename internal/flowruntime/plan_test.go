@@ -19,14 +19,8 @@ func TestResolveRoutePlanAllSourcesUsesCredentialScopedStateLayout(t *testing.T)
 	topology := appconfig.Topology{
 		DefaultRoute: "archive",
 		Credentials: map[string]appconfig.Credential{
-			"default": {
-				Name: "default",
-				Kind: "shared-session",
-			},
-			"vault-auth": {
-				Name: "vault-auth",
-				Kind: "oauth",
-			},
+			"default":    {Name: "default", Kind: "shared-session"},
+			"vault-auth": {Name: "vault-auth", Kind: "oauth"},
 		},
 		Sources: map[string]appconfig.Source{
 			"office": {
@@ -74,7 +68,7 @@ func TestResolveRoutePlanAllSourcesUsesCredentialScopedStateLayout(t *testing.T)
 	}
 	writeTopologyFile(t, topologyPath, topology)
 
-	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{RouteName: "archive"}, appconfig.TopologyOptions{}, RoutePlanAllSources)
+	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{RouteName: "archive"}, RoutePlanAllSources)
 	if err != nil {
 		t.Fatalf("ResolveRoutePlan() error = %v", err)
 	}
@@ -159,7 +153,7 @@ func TestResolveRoutePlanSingleSourceRejectsAmbiguousRouteWithoutSelection(t *te
 	}
 	writeTopologyFile(t, topologyPath, topology)
 
-	_, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{RouteName: "archive"}, appconfig.TopologyOptions{}, RoutePlanSingleSource)
+	_, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{RouteName: "archive"}, RoutePlanSingleSource)
 	if err == nil || !strings.Contains(err.Error(), "显式指定 --source") {
 		t.Fatalf("ResolveRoutePlan() error = %v, want explicit source selection", err)
 	}
@@ -218,51 +212,6 @@ func TestResolveSourcePlanUsesCredentialScopedConfigAndStatePath(t *testing.T) {
 	}
 }
 
-func TestResolveSourcePlanFallsBackToSingleCredentialWhenCredentialRefEmpty(t *testing.T) {
-	t.Parallel()
-
-	stateDir := t.TempDir()
-	topologyPath := filepath.Join(stateDir, "topology.json")
-	topology := appconfig.Topology{
-		Credentials: map[string]appconfig.Credential{
-			"archive-auth": {Name: "archive-auth", Kind: "oauth"},
-		},
-		Sources: map[string]appconfig.Source{
-			"archive": {
-				Name:         "archive",
-				Driver:       "imap",
-				Mode:         "poll",
-				Folder:       "Archive/2026",
-				PollInterval: time.Minute,
-				CycleTimeout: 2 * time.Minute,
-			},
-		},
-		Sinks: map[string]appconfig.Sink{
-			"discard": {Name: "discard", Driver: "discard"},
-		},
-		Routes: map[string]appconfig.Route{
-			"default": {
-				Name:       "default",
-				SourceRefs: []string{"archive"},
-				Targets: []appconfig.RouteTarget{
-					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
-				},
-			},
-		},
-	}
-	writeTopologyFile(t, topologyPath, topology)
-
-	plan, err := ResolveSourcePlan(testRuntimeConfig(stateDir, topologyPath), Selector{})
-	if err != nil {
-		t.Fatalf("ResolveSourcePlan() error = %v", err)
-	}
-
-	credentialStateDir := filepath.Join(stateDir, "credentials", "archive-auth")
-	if plan.Config.Auth.StateDir != credentialStateDir {
-		t.Fatalf("Auth.StateDir = %q, want %q", plan.Config.Auth.StateDir, credentialStateDir)
-	}
-}
-
 func TestResolveRoutePlanUsesDefaultCredentialForSinkWithoutCredentialRef(t *testing.T) {
 	t.Parallel()
 
@@ -304,7 +253,7 @@ func TestResolveRoutePlanUsesDefaultCredentialForSinkWithoutCredentialRef(t *tes
 	}
 	writeTopologyFile(t, topologyPath, topology)
 
-	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{}, appconfig.TopologyOptions{}, RoutePlanSingleSource)
+	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{}, RoutePlanSingleSource)
 	if err != nil {
 		t.Fatalf("ResolveRoutePlan() error = %v", err)
 	}
@@ -363,56 +312,8 @@ func TestResolveSourcePlanRejectsAmbiguousImplicitCredential(t *testing.T) {
 	}
 }
 
-func TestResolveSourcePlanDoesNotRequireRouteSelectionWhenMultipleRoutesExist(t *testing.T) {
-	t.Parallel()
-
-	stateDir := t.TempDir()
-	topologyPath := filepath.Join(stateDir, "topology.json")
-	topology := appconfig.Topology{
-		Sources: map[string]appconfig.Source{
-			"archive": {
-				Name:         "archive",
-				Driver:       "imap",
-				Mode:         "poll",
-				Folder:       "Archive/2026",
-				PollInterval: time.Minute,
-				CycleTimeout: 2 * time.Minute,
-			},
-		},
-		Sinks: map[string]appconfig.Sink{
-			"discard": {Name: "discard", Driver: "discard"},
-		},
-		Routes: map[string]appconfig.Route{
-			"primary": {
-				Name:       "primary",
-				SourceRefs: []string{"archive"},
-				Targets: []appconfig.RouteTarget{
-					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
-				},
-			},
-			"audit": {
-				Name:       "audit",
-				SourceRefs: []string{"archive"},
-				Targets: []appconfig.RouteTarget{
-					{Name: "discard-audit", SinkRef: "discard", Artifact: "primary", Required: true},
-				},
-			},
-		},
-	}
-	writeTopologyFile(t, topologyPath, topology)
-
-	plan, err := ResolveSourcePlan(testRuntimeConfig(stateDir, topologyPath), Selector{})
-	if err != nil {
-		t.Fatalf("ResolveSourcePlan() error = %v", err)
-	}
-	if plan.Source.Name != "archive" {
-		t.Fatalf("Source.Name = %q, want archive", plan.Source.Name)
-	}
-}
-
 func testRuntimeConfig(stateDir, topologyPath string) appconfig.Config {
 	return appconfig.Config{
-		Provider:     "imap",
 		TopologyPath: topologyPath,
 		Auth: appconfig.AuthConfig{
 			ClientID:         "client-id",

@@ -19,7 +19,7 @@ func newLoginCmd() *cobra.Command {
 		return newErrorCommand("login", "通过 device code 登录并缓存 token", err)
 	}
 
-	providerFlags := newProviderConfigFlags(cfg)
+	baseFlags := newBaseConfigFlags(cfg)
 	credentialFlags := newCredentialConfigFlags(cfg)
 
 	cmd := &cobra.Command{
@@ -27,15 +27,12 @@ func newLoginCmd() *cobra.Command {
 		Short: "执行 device code 登录并写入本地 token 缓存",
 		Args:  argRange(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = providerFlags.apply(cfg, cmd)
+			cfg = baseFlags.apply(cfg, cmd)
 			cfg = credentialFlags.apply(cfg)
 			cfg = applyLoginIMAPUsernameArg(cfg, cmd, args)
 
 			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
-				return fmt.Errorf("login 失败: %w", err)
-			}
-			if err := validateCustomCredentialFlags(cmd, resolved, "client-id", "tenant", "state-dir", "authority-base-url"); err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
 			cfg = resolved.Config
@@ -59,7 +56,7 @@ func newLoginCmd() *cobra.Command {
 			}
 
 			fmt.Printf("登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
-			if resolved.Custom && strings.TrimSpace(resolved.CredentialName) != "" {
+			if strings.TrimSpace(resolved.CredentialName) != "" {
 				fmt.Printf("credential=%s\n", resolved.CredentialName)
 			}
 			fmt.Printf("token 已缓存到 %s\n", result.StateDir)
@@ -68,7 +65,7 @@ func newLoginCmd() *cobra.Command {
 		},
 	}
 
-	providerFlags.addFlags(cmd)
+	baseFlags.addFlags(cmd)
 	credentialFlags.addFlags(cmd)
 
 	return cmd

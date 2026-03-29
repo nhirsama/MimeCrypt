@@ -9,9 +9,9 @@ import (
 )
 
 type Service struct {
-	Session  provider.Session
-	Mail     provider.Reader
-	StateDir string
+	Session       provider.Session
+	IdentityProbe func(context.Context) (provider.User, error)
+	StateDir      string
 }
 
 type Result struct {
@@ -26,9 +26,13 @@ func (s *Service) Run(ctx context.Context, out io.Writer) (Result, error) {
 		return Result{}, err
 	}
 
-	user, err := s.Mail.Me(ctx)
-	if err != nil {
-		return Result{}, fmt.Errorf("登录成功，但验证当前用户信息失败: %w", err)
+	user := provider.User{}
+	if s.IdentityProbe != nil {
+		var err error
+		user, err = s.IdentityProbe(ctx)
+		if err != nil {
+			return Result{}, fmt.Errorf("登录成功，但验证当前用户信息失败: %w", err)
+		}
 	}
 
 	return Result{

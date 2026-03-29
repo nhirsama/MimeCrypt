@@ -30,9 +30,6 @@ func newLogoutCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("logout 失败: %w", err)
 			}
-			if err := validateCustomCredentialFlags(cmd, resolved, "state-dir"); err != nil {
-				return fmt.Errorf("logout 失败: %w", err)
-			}
 			cfg = resolved.Config
 			service, err := appruntime.BuildLogoutService(cfg)
 			if err != nil {

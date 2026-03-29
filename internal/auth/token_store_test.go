@@ -1,200 +1,140 @@
 package auth
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/99designs/keyring"
+
+	"mimecrypt/internal/appconfig"
 )
 
-func TestTokenStoreLoadsFromKeyringPrimary(t *testing.T) {
+func TestFileTokenBackendRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	ring := keyring.NewArrayKeyring(nil)
-	store := &tokenStore{
-		primary: &keyringTokenBackend{
-			ring: ring,
-			key:  "token:test",
-		},
+	path := filepath.Join(t.TempDir(), "token.json")
+	backend := &fileTokenBackend{path: path}
+	token := Token{
+		AccessToken:  "access",
+		RefreshToken: "refresh",
+		Scope:        "scope-graph",
 	}
 
-	token := Token{
-		AccessToken:  "access-1",
-		RefreshToken: "refresh-1",
-		TokenType:    "Bearer",
-		Scope:        "scope-a",
-		ExpiresAt:    time.Now().Add(time.Hour),
-	}
-	if err := store.save(token); err != nil {
+	if err := backend.save(token); err != nil {
 		t.Fatalf("save() error = %v", err)
 	}
 
-	loaded, err := store.load()
+	loaded, err := backend.load()
 	if err != nil {
 		t.Fatalf("load() error = %v", err)
 	}
-	if loaded.AccessToken != "access-1" {
-		t.Fatalf("AccessToken = %q, want access-1", loaded.AccessToken)
+	if loaded.AccessToken != "access" || loaded.RefreshToken != "refresh" {
+		t.Fatalf("unexpected token: %+v", loaded)
+	}
+
+	if err := backend.delete(); err != nil {
+		t.Fatalf("delete() error = %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected token file to be removed, got %v", err)
 	}
 }
 
-func TestTokenStoreMigratesFileTokenIntoKeyring(t *testing.T) {
+func TestTokenStoreLoadTranslatesMissingTokenToLoginRequired(t *testing.T) {
+	t.Parallel()
+
+	store := &tokenStore{
+		backend: &fileTokenBackend{path: filepath.Join(t.TempDir(), "missing.json")},
+	}
+
+	_, err := store.load()
+	if !errors.Is(err, ErrLoginRequired) {
+		t.Fatalf("load() error = %v, want ErrLoginRequired", err)
+	}
+}
+
+func TestNewTokenStoreBuildsFileBackendOnly(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	fileBackend := &fileTokenBackend{
-		path:        filepath.Join(stateDir, "token.json"),
-		legacyPaths: []string{filepath.Join(stateDir, "graph-token.json")},
-	}
-	if err := fileBackend.save(Token{
-		AccessToken:  "legacy-access",
-		RefreshToken: "legacy-refresh",
-		TokenType:    "Bearer",
-		Scope:        "scope-a",
-		ExpiresAt:    time.Now().Add(time.Hour),
-	}); err != nil {
-		t.Fatalf("fileBackend.save() error = %v", err)
-	}
-
-	ring := keyring.NewArrayKeyring(nil)
-	store := &tokenStore{
-		primary: &keyringTokenBackend{
-			ring: ring,
-			key:  "token:test",
+	store, err := newTokenStore(appconfig.AuthConfig{
+		ClientID:   "client-id",
+		Tenant:     "organizations",
+		StateDir:   stateDir,
+		TokenStore: "file",
+		GraphScopes: []string{
+			"scope-graph",
 		},
-		fallbacks: []tokenBackend{fileBackend},
-		cleanup:   []tokenBackend{fileBackend},
-	}
-
-	loaded, err := store.load()
+	})
 	if err != nil {
-		t.Fatalf("load() error = %v", err)
-	}
-	if loaded.AccessToken != "legacy-access" {
-		t.Fatalf("AccessToken = %q, want legacy-access", loaded.AccessToken)
+		t.Fatalf("newTokenStore() error = %v", err)
 	}
 
-	if _, err := ring.Get("token:test"); err != nil {
-		t.Fatalf("ring.Get() error = %v", err)
+	if store.backend == nil {
+		t.Fatalf("backend = nil")
 	}
-	if _, err := os.Stat(fileBackend.path); !os.IsNotExist(err) {
-		t.Fatalf("expected file token to be removed, stat err = %v", err)
+	if store.identity != "file:"+filepath.Join(stateDir, "token.json") {
+		t.Fatalf("identity = %q", store.identity)
 	}
 }
 
-type stubTokenBackend struct {
-	loadFunc   func() (Token, error)
-	saveFunc   func(Token) error
-	deleteFunc func() error
-}
-
-func (b stubTokenBackend) load() (Token, error) {
-	if b.loadFunc == nil {
-		return Token{}, errTokenNotFound
-	}
-	return b.loadFunc()
-}
-
-func (b stubTokenBackend) save(token Token) error {
-	if b.saveFunc == nil {
-		return nil
-	}
-	return b.saveFunc(token)
-}
-
-func (b stubTokenBackend) delete() error {
-	if b.deleteFunc == nil {
-		return nil
-	}
-	return b.deleteFunc()
-}
-
-func TestTokenStoreLoadsFallbackWhenPrimaryKeyringUnavailable(t *testing.T) {
+func TestKeyringTokenBackendRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	want := Token{
-		AccessToken:  "fallback-access",
-		RefreshToken: "fallback-refresh",
-		TokenType:    "Bearer",
-		Scope:        "scope-a",
-		ExpiresAt:    time.Now().Add(time.Hour),
-	}
+	ring := &fakeCredentialKeyring{items: map[string]keyring.Item{}}
+	backend := &keyringTokenBackend{ring: ring, key: "token-key"}
+	token := Token{AccessToken: "access", RefreshToken: "refresh"}
 
-	store := &tokenStore{
-		primary: stubTokenBackend{
-			loadFunc: func() (Token, error) {
-				return Token{}, errors.New("keyring temporarily unavailable")
-			},
-		},
-		fallbacks: []tokenBackend{
-			stubTokenBackend{
-				loadFunc: func() (Token, error) { return want, nil },
-			},
-		},
-	}
-
-	got, err := store.load()
-	if err != nil {
-		t.Fatalf("load() error = %v", err)
-	}
-	if got.AccessToken != want.AccessToken || got.RefreshToken != want.RefreshToken {
-		t.Fatalf("load() = %+v, want %+v", got, want)
-	}
-}
-
-func TestTokenStoreSaveIgnoresCleanupFailureAfterPrimarySuccess(t *testing.T) {
-	t.Parallel()
-
-	store := &tokenStore{
-		primary: stubTokenBackend{
-			saveFunc: func(Token) error { return nil },
-		},
-		cleanup: []tokenBackend{
-			stubTokenBackend{
-				deleteFunc: func() error { return errors.New("permission denied") },
-			},
-		},
-	}
-
-	if err := store.save(Token{AccessToken: "ok"}); err != nil {
+	if err := backend.save(token); err != nil {
 		t.Fatalf("save() error = %v", err)
 	}
-}
 
-func TestTokenStoreDeleteRemovesPrimaryAndFallbacks(t *testing.T) {
-	t.Parallel()
-
-	var deleted []string
-	store := &tokenStore{
-		primary: stubTokenBackend{
-			deleteFunc: func() error {
-				deleted = append(deleted, "primary")
-				return nil
-			},
-		},
-		fallbacks: []tokenBackend{
-			stubTokenBackend{
-				deleteFunc: func() error {
-					deleted = append(deleted, "fallback-1")
-					return nil
-				},
-			},
-			stubTokenBackend{
-				deleteFunc: func() error {
-					deleted = append(deleted, "fallback-2")
-					return errTokenNotFound
-				},
-			},
-		},
+	loaded, err := backend.load()
+	if err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	if loaded.AccessToken != "access" {
+		t.Fatalf("AccessToken = %q", loaded.AccessToken)
 	}
 
-	if err := store.delete(); err != nil {
+	raw := ring.items["token-key"]
+	var decoded Token
+	if err := json.Unmarshal(raw.Data, &decoded); err != nil {
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if decoded.RefreshToken != "refresh" {
+		t.Fatalf("RefreshToken = %q", decoded.RefreshToken)
+	}
+
+	if err := backend.delete(); err != nil {
 		t.Fatalf("delete() error = %v", err)
 	}
-	if len(deleted) != 3 {
-		t.Fatalf("delete() removed %v, want all backends", deleted)
+}
+
+type fakeCredentialKeyring struct {
+	items map[string]keyring.Item
+}
+
+func (f *fakeCredentialKeyring) Get(key string) (keyring.Item, error) {
+	item, ok := f.items[key]
+	if !ok {
+		return keyring.Item{}, keyring.ErrKeyNotFound
 	}
+	return item, nil
+}
+
+func (f *fakeCredentialKeyring) Set(item keyring.Item) error {
+	f.items[item.Key] = item
+	return nil
+}
+
+func (f *fakeCredentialKeyring) Remove(key string) error {
+	if _, ok := f.items[key]; !ok {
+		return keyring.ErrKeyNotFound
+	}
+	delete(f.items, key)
+	return nil
 }

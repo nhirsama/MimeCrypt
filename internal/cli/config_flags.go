@@ -3,14 +3,13 @@ package cli
 import (
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
 )
 
-type providerConfigFlags struct {
+type baseConfigFlags struct {
 	clientID         string
 	tenant           string
 	stateDir         string
@@ -21,8 +20,8 @@ type providerConfigFlags struct {
 	imapUsername     string
 }
 
-func newProviderConfigFlags(cfg appconfig.Config) providerConfigFlags {
-	return providerConfigFlags{
+func newBaseConfigFlags(cfg appconfig.Config) baseConfigFlags {
+	return baseConfigFlags{
 		clientID:         cfg.Auth.ClientID,
 		tenant:           cfg.Auth.Tenant,
 		stateDir:         cfg.Auth.StateDir,
@@ -34,7 +33,7 @@ func newProviderConfigFlags(cfg appconfig.Config) providerConfigFlags {
 	}
 }
 
-func (f *providerConfigFlags) addFlags(cmd *cobra.Command) {
+func (f *baseConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.clientID, "client-id", f.clientID, "Microsoft Entra 应用的 Client ID")
 	cmd.Flags().StringVar(&f.tenant, "tenant", f.tenant, "租户标识；缺省值为 organizations")
 	cmd.Flags().StringVar(&f.stateDir, "state-dir", f.stateDir, "本地状态目录")
@@ -45,8 +44,18 @@ func (f *providerConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.imapUsername, "imap-username", f.imapUsername, "IMAP 登录用户名，一般为邮箱地址")
 }
 
-func (f providerConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
-	return syncConfig(cfg, f.clientID, f.tenant, f.stateDir, f.authorityBaseURL, f.graphBaseURL, f.ewsBaseURL, f.imapAddr, resolveIMAPUsernameForCommand(f.stateDir, f.imapUsername, cmd))
+func (f baseConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
+	return applyBaseConfig(
+		cfg,
+		f.clientID,
+		f.tenant,
+		f.stateDir,
+		f.authorityBaseURL,
+		f.graphBaseURL,
+		f.ewsBaseURL,
+		f.imapAddr,
+		resolveIMAPUsernameForCommand(f.stateDir, f.imapUsername, cmd),
+	)
 }
 
 func resolveIMAPUsernameForCommand(stateDir, fallback string, cmd *cobra.Command) string {
@@ -56,11 +65,7 @@ func resolveIMAPUsernameForCommand(stateDir, fallback string, cmd *cobra.Command
 	if cmd != nil && cmd.Flags().Changed("imap-username") {
 		return strings.TrimSpace(fallback)
 	}
-	localCfg, err := appconfig.LoadLocalConfig(stateDir)
-	if err == nil && strings.TrimSpace(localCfg.IMAPUsername) != "" {
-		return localCfg.IMAPUsername
-	}
-	return strings.TrimSpace(fallback)
+	return appconfig.ResolveStoredIMAPUsernamePreferStored(stateDir, fallback)
 }
 
 type topologyConfigFlags struct {
@@ -111,86 +116,43 @@ func (f credentialConfigFlags) apply(cfg appconfig.Config) appconfig.Config {
 	return cfg
 }
 
-type processingConfigFlags struct {
-	outputDir         string
-	saveOutput        bool
-	workDir           string
-	protectSubject    bool
-	backupDir         string
-	backupKeyID       string
-	auditLogPath      string
-	auditStdout       bool
-	writeBackProvider string
-	writeBackFolder   string
+type pipelineConfigFlags struct {
+	workDir        string
+	protectSubject bool
+	backupDir      string
+	backupKeyID    string
+	auditLogPath   string
+	auditStdout    bool
 }
 
-func newProcessingConfigFlags(cfg appconfig.Config) processingConfigFlags {
-	return processingConfigFlags{
-		outputDir:         cfg.Mail.Pipeline.OutputDir,
-		saveOutput:        cfg.Mail.Pipeline.SaveOutput,
-		workDir:           cfg.Mail.Pipeline.WorkDir,
-		protectSubject:    cfg.Mail.Pipeline.ProtectSubject,
-		backupDir:         cfg.Mail.Pipeline.BackupDir,
-		backupKeyID:       cfg.Mail.Pipeline.BackupKeyID,
-		auditLogPath:      cfg.Mail.Pipeline.AuditLogPath,
-		auditStdout:       cfg.Mail.Pipeline.AuditStdout,
-		writeBackProvider: cfg.Mail.Pipeline.WriteBackProvider,
-		writeBackFolder:   cfg.Mail.Pipeline.WriteBackFolder,
+func newPipelineConfigFlags(cfg appconfig.Config) pipelineConfigFlags {
+	return pipelineConfigFlags{
+		workDir:        cfg.Mail.Pipeline.WorkDir,
+		protectSubject: cfg.Mail.Pipeline.ProtectSubject,
+		backupDir:      cfg.Mail.Pipeline.BackupDir,
+		backupKeyID:    cfg.Mail.Pipeline.BackupKeyID,
+		auditLogPath:   cfg.Mail.Pipeline.AuditLogPath,
+		auditStdout:    cfg.Mail.Pipeline.AuditStdout,
 	}
 }
 
-func (f *processingConfigFlags) addFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.outputDir, "output-dir", f.outputDir, "处理结果输出目录")
-	cmd.Flags().BoolVar(&f.saveOutput, "save-output", f.saveOutput, "将加密后的 PGP/MIME 额外保存到本地 output-dir")
+func (f *pipelineConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.workDir, "work-dir", f.workDir, "处理过程临时目录；为空时使用系统临时目录")
 	cmd.Flags().BoolVar(&f.protectSubject, "protect-subject", f.protectSubject, "将外层邮件主题写为 \"...\"")
 	cmd.Flags().StringVar(&f.backupDir, "backup-dir", f.backupDir, "源邮件加密备份目录；保存 gpg 加密后的文件")
 	cmd.Flags().StringVar(&f.backupKeyID, "backup-key-id", f.backupKeyID, "备份加密使用的 catch-all GPG key id；设置后所有备份统一用该 key")
 	cmd.Flags().StringVar(&f.auditLogPath, "audit-log-path", f.auditLogPath, "审计日志输出路径（JSONL）")
 	cmd.Flags().BoolVar(&f.auditStdout, "audit-stdout", f.auditStdout, "将审计日志同步输出到 stdout，便于容器日志采集")
-	cmd.Flags().StringVar(&f.writeBackProvider, "write-back-provider", f.writeBackProvider, "回写后端；可选 graph、ews 或 imap")
-	cmd.Flags().StringVar(&f.writeBackFolder, "write-back-folder", f.writeBackFolder, "回写目标文件夹标识；为空时沿用源文件夹")
 }
 
-func (f processingConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
-	cfg.Mail.Pipeline.OutputDir = f.outputDir
-	cfg.Mail.Pipeline.SaveOutput = f.saveOutput
+func (f pipelineConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
 	cfg.Mail.Pipeline.WorkDir = f.workDir
 	cfg.Mail.Pipeline.ProtectSubject = f.protectSubject
 	cfg.Mail.Pipeline.BackupDir = f.backupDir
 	cfg.Mail.Pipeline.BackupKeyID = f.backupKeyID
 	cfg.Mail.Pipeline.AuditStdout = f.auditStdout
-	cfg.Mail.Pipeline.WriteBackProvider = f.writeBackProvider
-	cfg.Mail.Pipeline.WriteBackFolder = f.writeBackFolder
-	if cmd.Flags().Changed("audit-log-path") {
+	if cmd != nil && cmd.Flags().Changed("audit-log-path") {
 		cfg.Mail.Pipeline.AuditLogPath = f.auditLogPath
 	}
-	return cfg
-}
-
-type syncConfigFlags struct {
-	folder       string
-	pollInterval time.Duration
-	cycleTimeout time.Duration
-}
-
-func newSyncConfigFlags(cfg appconfig.Config) syncConfigFlags {
-	return syncConfigFlags{
-		folder:       cfg.Mail.Sync.Folder,
-		pollInterval: cfg.Mail.Sync.PollInterval,
-		cycleTimeout: cfg.Mail.Sync.CycleTimeout,
-	}
-}
-
-func (f *syncConfigFlags) addFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.folder, "folder", f.folder, "要监听的邮件文件夹标识；Graph 用 folder id，IMAP 用 mailbox 名称")
-	cmd.Flags().DurationVar(&f.pollInterval, "poll-interval", f.pollInterval, "轮询增量同步的时间间隔")
-	cmd.Flags().DurationVar(&f.cycleTimeout, "cycle-timeout", f.cycleTimeout, "单次发现与处理周期的超时时间")
-}
-
-func (f syncConfigFlags) apply(cfg appconfig.Config) appconfig.Config {
-	cfg.Mail.Sync.Folder = f.folder
-	cfg.Mail.Sync.PollInterval = f.pollInterval
-	cfg.Mail.Sync.CycleTimeout = f.cycleTimeout
 	return cfg
 }

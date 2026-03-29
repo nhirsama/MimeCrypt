@@ -11,29 +11,25 @@ import (
 )
 
 const (
-	defaultProvider          = "imap"
-	defaultClientID          = "fff3108f-14f7-4877-9739-1a2766e5ca9a"
-	defaultTenant            = "organizations"
-	defaultAuthorityBaseURL  = "https://login.microsoftonline.com"
-	defaultGraphBaseURL      = "https://graph.microsoft.com/v1.0"
-	defaultGraphScopes       = "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/User.Read offline_access openid profile"
-	defaultEWSBaseURL        = "https://outlook.office365.com/EWS/Exchange.asmx"
-	defaultEWSScopes         = "https://outlook.office365.com/EWS.AccessAsUser.All"
-	defaultIMAPAddr          = "outlook.office365.com:993"
-	defaultIMAPScopes        = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
-	defaultWriteBackProvider = "imap"
-	defaultFolder            = "INBOX"
-	defaultPollInterval      = time.Minute
-	defaultCycleTimeout      = 2 * time.Minute
-	defaultOutputDir         = "output"
-	defaultTokenFileName     = "token.json"
-	legacyTokenFileName      = "graph-token.json"
-	defaultTokenStore        = "file"
-	defaultKeyringService    = "mimecrypt"
+	defaultClientID         = "fff3108f-14f7-4877-9739-1a2766e5ca9a"
+	defaultTenant           = "organizations"
+	defaultAuthorityBaseURL = "https://login.microsoftonline.com"
+	defaultGraphBaseURL     = "https://graph.microsoft.com/v1.0"
+	defaultGraphScopes      = "https://graph.microsoft.com/Mail.ReadWrite https://graph.microsoft.com/User.Read offline_access openid profile"
+	defaultEWSBaseURL       = "https://outlook.office365.com/EWS/Exchange.asmx"
+	defaultEWSScopes        = "https://outlook.office365.com/EWS.AccessAsUser.All"
+	defaultIMAPAddr         = "outlook.office365.com:993"
+	defaultIMAPScopes       = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
+	defaultFolder           = "INBOX"
+	defaultPollInterval     = time.Minute
+	defaultCycleTimeout     = 2 * time.Minute
+	defaultOutputDir        = "output"
+	defaultTokenFileName    = "token.json"
+	defaultTokenStore       = "file"
+	defaultKeyringService   = "mimecrypt"
 )
 
 type Config struct {
-	Provider     string
 	TopologyPath string
 	Auth         AuthConfig
 	Mail         MailConfig
@@ -65,16 +61,13 @@ type MailClientConfig struct {
 }
 
 type MailPipelineConfig struct {
-	OutputDir         string
-	SaveOutput        bool
-	WorkDir           string
-	ProtectSubject    bool
-	BackupDir         string
-	BackupKeyID       string
-	AuditLogPath      string
-	AuditStdout       bool
-	WriteBackProvider string
-	WriteBackFolder   string
+	OutputDir      string
+	WorkDir        string
+	ProtectSubject bool
+	BackupDir      string
+	BackupKeyID    string
+	AuditLogPath   string
+	AuditStdout    bool
 }
 
 type MailSyncConfig struct {
@@ -95,10 +88,6 @@ func LoadFromEnv() (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	saveOutput, err := getenvBoolDefault("MIMECRYPT_SAVE_OUTPUT", false)
-	if err != nil {
-		return Config{}, fmt.Errorf("解析 MIMECRYPT_SAVE_OUTPUT 失败: %w", err)
-	}
 	protectSubject, err := getenvBoolDefault("MIMECRYPT_PROTECT_SUBJECT", false)
 	if err != nil {
 		return Config{}, fmt.Errorf("解析 MIMECRYPT_PROTECT_SUBJECT 失败: %w", err)
@@ -113,8 +102,7 @@ func LoadFromEnv() (Config, error) {
 	}
 
 	return Config{
-		Provider:     getenvDefault("MIMECRYPT_PROVIDER", defaultProvider),
-		TopologyPath: strings.TrimSpace(os.Getenv("MIMECRYPT_TOPOLOGY_PATH")),
+		TopologyPath: getenvDefault("MIMECRYPT_TOPOLOGY_PATH", DefaultTopologyPath(stateDir)),
 		Auth: AuthConfig{
 			ClientID:         getenvDefault("MIMECRYPT_CLIENT_ID", defaultClientID),
 			Tenant:           getenvDefault("MIMECRYPT_TENANT", defaultTenant),
@@ -134,19 +122,16 @@ func LoadFromEnv() (Config, error) {
 				IMAPUsername: imapUsername,
 			},
 			Pipeline: MailPipelineConfig{
-				OutputDir:         getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
-				SaveOutput:        saveOutput,
-				WorkDir:           os.Getenv("MIMECRYPT_WORK_DIR"),
-				ProtectSubject:    protectSubject,
-				BackupDir:         getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
-				BackupKeyID:       os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),
-				AuditLogPath:      getenvDefault("MIMECRYPT_AUDIT_LOG_PATH", DefaultAuditLogPath(stateDir)),
-				AuditStdout:       auditStdout,
-				WriteBackProvider: getenvDefault("MIMECRYPT_WRITEBACK_PROVIDER", defaultWriteBackProvider),
-				WriteBackFolder:   os.Getenv("MIMECRYPT_WRITEBACK_FOLDER"),
+				OutputDir:      getenvDefault("MIMECRYPT_OUTPUT_DIR", defaultOutputDir),
+				WorkDir:        os.Getenv("MIMECRYPT_WORK_DIR"),
+				ProtectSubject: protectSubject,
+				BackupDir:      getenvDefault("MIMECRYPT_BACKUP_DIR", "backup"),
+				BackupKeyID:    os.Getenv("MIMECRYPT_BACKUP_KEY_ID"),
+				AuditLogPath:   getenvDefault("MIMECRYPT_AUDIT_LOG_PATH", DefaultAuditLogPath(stateDir)),
+				AuditStdout:    auditStdout,
 			},
 			Sync: MailSyncConfig{
-				Folder:       getenvDefault("MIMECRYPT_FOLDER", defaultFolder),
+				Folder:       defaultFolder,
 				StateDir:     stateDir,
 				PollInterval: defaultPollInterval,
 				CycleTimeout: defaultCycleTimeout,
@@ -229,36 +214,11 @@ func (c MailConfig) ValidateSync() error {
 	if strings.TrimSpace(c.Sync.StateDir) == "" {
 		return fmt.Errorf("state dir 不能为空")
 	}
-	if c.Pipeline.SaveOutput && strings.TrimSpace(c.Pipeline.OutputDir) == "" {
-		return fmt.Errorf("output dir 不能为空")
-	}
 	if strings.TrimSpace(c.Pipeline.BackupDir) == "" {
 		return fmt.Errorf("backup dir 不能为空")
 	}
 	if !c.Pipeline.HasAuditOutput() {
 		return fmt.Errorf("至少需要一个审计输出：audit log path 或 audit stdout")
-	}
-	switch strings.ToLower(strings.TrimSpace(c.Pipeline.WriteBackProvider)) {
-	case "", "graph":
-		if err := c.ValidateClient(); err != nil {
-			return err
-		}
-	case "ews":
-		if err := c.ValidateClient(); err != nil {
-			return err
-		}
-		if err := c.Client.ValidateEWS(); err != nil {
-			return err
-		}
-	case "imap":
-		if err := c.Client.ValidateIMAP(); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("write back provider 不支持: %s", c.Pipeline.WriteBackProvider)
-	}
-	if strings.TrimSpace(c.Sync.Folder) == "" {
-		return fmt.Errorf("folder 不能为空")
 	}
 	if c.Sync.PollInterval <= 0 {
 		return fmt.Errorf("poll interval 必须大于 0")
@@ -307,33 +267,6 @@ func (c AuthConfig) KeyringServiceName() string {
 	return value
 }
 
-func (c AuthConfig) LegacyTokenPaths() []string {
-	return []string{filepath.Join(c.StateDir, legacyTokenFileName)}
-}
-
-func (c AuthConfig) TokenPaths() []string {
-	paths := []string{c.TokenPath()}
-	for _, path := range c.LegacyTokenPaths() {
-		if path == "" || path == paths[0] {
-			continue
-		}
-		paths = append(paths, path)
-	}
-	return paths
-}
-
-func (c MailConfig) SyncStatePath() string {
-	return filepath.Join(c.Sync.StateDir, "sync-"+sanitizeFileComponent(c.Sync.Folder)+".json")
-}
-
-func (c MailConfig) FlowProducerStatePath() string {
-	return filepath.Join(c.Sync.StateDir, "flow-sync-"+sanitizeFileComponent(c.Sync.Folder)+".json")
-}
-
-func (c MailConfig) FlowStateDir() string {
-	return filepath.Join(c.Sync.StateDir, "flow-state", sanitizeFileComponent(c.Sync.Folder))
-}
-
 func (c MailConfig) FlowProducerStatePathFor(sourceName, driver, folder string) string {
 	scope := flowStateScope("", sourceName, driver, folder)
 	return filepath.Join(c.Sync.StateDir, "flow-sync-"+sanitizeFileComponent(scope)+".json")
@@ -342,10 +275,6 @@ func (c MailConfig) FlowProducerStatePathFor(sourceName, driver, folder string) 
 func (c MailConfig) FlowStateDirFor(routeName, sourceName, driver, folder string) string {
 	scope := flowStateScope(routeName, sourceName, driver, folder)
 	return filepath.Join(c.Sync.StateDir, "flow-state", sanitizeFileComponent(scope))
-}
-
-func (c Config) RunLockPath() string {
-	return c.RunLockPathFor("", c.Provider, c.Mail.Sync.Folder)
 }
 
 func (c Config) RunLockPathFor(sourceName, driver, folder string) string {
@@ -423,10 +352,10 @@ func sanitizeFileComponent(value string) string {
 
 func flowStateScope(routeName, sourceName, driver, folder string) string {
 	parts := make([]string, 0, 4)
-	if value := strings.TrimSpace(routeName); value != "" && value != defaultTopologyRouteName {
+	if value := strings.TrimSpace(routeName); value != "" {
 		parts = append(parts, value)
 	}
-	if value := strings.TrimSpace(sourceName); value != "" && value != defaultTopologySourceName {
+	if value := strings.TrimSpace(sourceName); value != "" {
 		parts = append(parts, value)
 	}
 	if value := strings.TrimSpace(driver); value != "" {

@@ -1,14 +1,14 @@
 package appruntime
 
 import (
+	"context"
+
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
-	"mimecrypt/internal/modules/download"
-	"mimecrypt/internal/modules/health"
-	"mimecrypt/internal/modules/list"
 	"mimecrypt/internal/modules/login"
 	"mimecrypt/internal/modules/logout"
 	"mimecrypt/internal/modules/tokenstate"
+	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers"
 )
 
@@ -17,16 +17,40 @@ func BuildLoginService(cfg appconfig.Config) (*login.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	sourceClients, err := providers.BuildSourceClientsWithSession(cfg, session)
+
+	service := &login.Service{
+		Session:  session,
+		StateDir: cfg.Auth.StateDir,
+	}
+
+	identityProbe, err := buildLoginIdentityProbe(cfg, session)
 	if err != nil {
 		return nil, err
 	}
+	service.IdentityProbe = identityProbe
+	return service, nil
+}
 
-	return &login.Service{
-		Session:  sourceClients.Session,
-		Mail:     sourceClients.Reader,
-		StateDir: cfg.Auth.StateDir,
-	}, nil
+func buildLoginIdentityProbe(cfg appconfig.Config, session provider.Session) (func(context.Context) (provider.User, error), error) {
+	switch {
+	case len(cfg.Auth.GraphScopes) > 0:
+		clients, err := providers.BuildSourceClientsWithSession(cfg, "graph", session)
+		if err != nil {
+			return nil, err
+		}
+		return clients.Reader.Me, nil
+	case cfg.Mail.Client.IMAPUsername != "":
+		user := provider.User{
+			Mail:              cfg.Mail.Client.IMAPUsername,
+			UserPrincipalName: cfg.Mail.Client.IMAPUsername,
+			DisplayName:       cfg.Mail.Client.IMAPUsername,
+		}
+		return func(context.Context) (provider.User, error) {
+			return user, nil
+		}, nil
+	default:
+		return nil, nil
+	}
 }
 
 func BuildLogoutService(cfg appconfig.Config) (*logout.Service, error) {
@@ -35,43 +59,6 @@ func BuildLogoutService(cfg appconfig.Config) (*logout.Service, error) {
 		return nil, err
 	}
 	return &logout.Service{Session: session}, nil
-}
-
-func BuildDownloadService(cfg appconfig.Config) (*download.Service, error) {
-	sourceClients, err := providers.BuildSourceClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &download.Service{Client: sourceClients.Reader}, nil
-}
-
-func BuildListService(cfg appconfig.Config) (*list.Service, error) {
-	sourceClients, err := providers.BuildSourceClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return &list.Service{Client: sourceClients.Reader}, nil
-}
-
-func BuildHealthService(cfg appconfig.Config) (*health.Service, error) {
-	sourceClients, err := providers.BuildSourceClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-	sinkClients, err := providers.BuildWriteBackClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return &health.Service{
-		StateDir:          cfg.Auth.StateDir,
-		Folder:            cfg.Mail.Sync.Folder,
-		Provider:          cfg.Provider,
-		WriteBackProvider: cfg.Mail.Pipeline.WriteBackProvider,
-		Session:           sourceClients.Session,
-		Reader:            sourceClients.Reader,
-		WriteBack:         sinkClients.Health,
-	}, nil
 }
 
 func BuildTokenStateService(cfg appconfig.Config) (*tokenstate.Service, error) {

@@ -2,10 +2,12 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/flowruntime"
 )
 
 func newProcessCmd() *cobra.Command {
@@ -14,55 +16,35 @@ func newProcessCmd() *cobra.Command {
 		return newErrorCommand("process", "根据邮件 ID 和配置处理邮件", err)
 	}
 
-	providerFlags := newProviderConfigFlags(cfg)
+	baseFlags := newBaseConfigFlags(cfg)
 	topologyFlags := newTopologyConfigFlags(cfg)
-	processingFlags := newProcessingConfigFlags(cfg)
-	folder := cfg.Mail.Sync.Folder
-	writeBack := false
-	verifyWriteBack := false
+	pipelineFlags := newPipelineConfigFlags(cfg)
+	transactionMode := string(flowruntime.TransactionModeEphemeral)
 
 	cmd := &cobra.Command{
 		Use:   "process <message-id>",
 		Short: "按邮件标识执行单封邮件处理",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = providerFlags.apply(cfg, cmd)
+			cfg = baseFlags.apply(cfg, cmd)
 			cfg = topologyFlags.apply(cfg)
-			cfg = processingFlags.apply(cfg, cmd)
-			cfg.Mail.Sync.Folder = folder
+			cfg = pipelineFlags.apply(cfg, cmd)
 
-			resolved, err := resolveMailflowTopology(cfg, topologyFlags, appconfig.TopologyOptions{
-				WriteBack:       writeBack,
-				VerifyWriteBack: verifyWriteBack,
-			})
+			if err := cfg.Mail.ValidatePipelineBase(); err != nil {
+				return fmt.Errorf("process 失败: %w", err)
+			}
+
+			resolved, err := resolveMailflowTopology(cfg, topologyFlags)
 			if err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
-			if resolved.Custom {
-				if err := validateCustomTopologyFlags(cmd, resolved.Custom,
-					"save-output",
-					"output-dir",
-					"write-back",
-					"verify-write-back",
-					"write-back-provider",
-					"write-back-folder",
-					"folder",
-				); err != nil {
-					return fmt.Errorf("process 失败: %w", err)
-				}
-				if err := cfg.Mail.ValidatePipelineBase(); err != nil {
-					return fmt.Errorf("process 失败: %w", err)
-				}
-			} else {
-				if err := validateMailflowFlags(cfg.Mail.Pipeline.SaveOutput, writeBack, verifyWriteBack, false, processingFlags.writeBackFolder); err != nil {
-					return fmt.Errorf("process 失败: %w", err)
-				}
-				if err := cfg.Mail.ValidateSync(); err != nil {
-					return fmt.Errorf("process 失败: %w", err)
-				}
+
+			mode, err := parseTransactionMode(transactionMode)
+			if err != nil {
+				return fmt.Errorf("process 失败: %w", err)
 			}
 
-			result, err := runMailflowMessageByID(cmd.Context(), resolved, args[0])
+			result, err := runMailflowMessageByID(cmd.Context(), resolved, args[0], mode)
 			if err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
@@ -84,12 +66,21 @@ func newProcessCmd() *cobra.Command {
 		},
 	}
 
-	providerFlags.addFlags(cmd)
+	baseFlags.addFlags(cmd)
 	topologyFlags.addFlags(cmd)
-	processingFlags.addFlags(cmd)
-	cmd.Flags().StringVar(&folder, "folder", folder, "邮件所在文件夹；Graph 用 folder id，IMAP 用 mailbox 名称")
-	cmd.Flags().BoolVar(&writeBack, "write-back", writeBack, "处理完成后回写邮件至邮箱")
-	cmd.Flags().BoolVar(&verifyWriteBack, "verify-write-back", verifyWriteBack, "回写后校验邮件是否成功写入")
+	pipelineFlags.addFlags(cmd)
+	cmd.Flags().StringVar(&transactionMode, "transaction-mode", transactionMode, "单封处理事务状态模式：ephemeral 或 persistent")
 
 	return cmd
+}
+
+func parseTransactionMode(value string) (flowruntime.TransactionMode, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", string(flowruntime.TransactionModeEphemeral):
+		return flowruntime.TransactionModeEphemeral, nil
+	case string(flowruntime.TransactionModePersistent):
+		return flowruntime.TransactionModePersistent, nil
+	default:
+		return "", fmt.Errorf("不支持的 transaction mode: %s", value)
+	}
 }

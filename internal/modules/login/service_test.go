@@ -1,6 +1,7 @@
 package login
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -11,148 +12,85 @@ import (
 )
 
 type fakeSession struct {
-	loginCalled bool
-	loginOut    io.Writer
-	loginErr    error
+	loginToken provider.Token
+	loginErr   error
+	loggedIn   bool
 }
 
-func (f *fakeSession) Login(_ context.Context, out io.Writer) (provider.Token, error) {
-	f.loginCalled = true
-	f.loginOut = out
+func (f *fakeSession) Login(context.Context, io.Writer) (provider.Token, error) {
 	if f.loginErr != nil {
 		return provider.Token{}, f.loginErr
 	}
-	return provider.Token{AccessToken: "token"}, nil
+	f.loggedIn = true
+	return f.loginToken, nil
 }
 
-func (f *fakeSession) AccessToken(context.Context) (string, error) {
+func (*fakeSession) AccessToken(context.Context) (string, error) { return "", nil }
+func (*fakeSession) AccessTokenForScopes(context.Context, []string) (string, error) {
 	return "", nil
 }
+func (*fakeSession) LoadCachedToken() (provider.Token, error) { return provider.Token{}, nil }
+func (*fakeSession) Logout() error                            { return nil }
 
-func (f *fakeSession) AccessTokenForScopes(context.Context, []string) (string, error) {
-	return "", nil
-}
-
-func (f *fakeSession) LoadCachedToken() (provider.Token, error) {
-	return provider.Token{}, nil
-}
-
-func (f *fakeSession) Logout() error {
-	return nil
-}
-
-type fakeReader struct {
-	meCalled bool
-	user     provider.User
-	err      error
-}
-
-func (f *fakeReader) Me(context.Context) (provider.User, error) {
-	f.meCalled = true
-	if f.err != nil {
-		return provider.User{}, f.err
-	}
-	return f.user, nil
-}
-
-func (f *fakeReader) Message(context.Context, string) (provider.Message, error) {
-	return provider.Message{}, nil
-}
-
-func (f *fakeReader) FetchMIME(context.Context, string) (io.ReadCloser, error) {
-	return nil, nil
-}
-
-func (f *fakeReader) DeltaCreatedMessages(context.Context, string, string) ([]provider.Message, string, error) {
-	return nil, "", nil
-}
-
-func (f *fakeReader) FirstMessageInFolder(context.Context, string) (provider.Message, bool, error) {
-	return provider.Message{}, false, nil
-}
-
-func (f *fakeReader) LatestMessagesInFolder(context.Context, string, int, int) ([]provider.Message, error) {
-	return nil, nil
-}
-
-func TestRunReturnsAccountAndStateDir(t *testing.T) {
+func TestServiceRunReturnsIdentityProbeResult(t *testing.T) {
 	t.Parallel()
 
-	session := &fakeSession{}
-	reader := &fakeReader{
-		user: provider.User{
-			Mail:        "user@example.com",
-			DisplayName: "Test User",
+	session := &fakeSession{loginToken: provider.Token{AccessToken: "token"}}
+	service := &Service{
+		Session:  session,
+		StateDir: "/state",
+		IdentityProbe: func(context.Context) (provider.User, error) {
+			return provider.User{
+				Mail:        "user@example.com",
+				DisplayName: "User",
+			}, nil
 		},
 	}
-	service := Service{
-		Session:  session,
-		Mail:     reader,
-		StateDir: "/state",
-	}
 
-	var out strings.Builder
-	result, err := service.Run(context.Background(), &out)
+	result, err := service.Run(context.Background(), &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if !session.loginCalled {
+	if !session.loggedIn {
 		t.Fatalf("expected Login() to be called")
 	}
-	if session.loginOut != &out {
-		t.Fatalf("expected login output writer to be forwarded")
-	}
-	if !reader.meCalled {
-		t.Fatalf("expected Me() to be called")
-	}
-	if result.Account != "user@example.com" {
-		t.Fatalf("Account = %q, want user@example.com", result.Account)
-	}
-	if result.DisplayName != "Test User" {
-		t.Fatalf("DisplayName = %q, want Test User", result.DisplayName)
+	if result.Account != "user@example.com" || result.DisplayName != "User" {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 	if result.StateDir != "/state" {
 		t.Fatalf("StateDir = %q, want /state", result.StateDir)
 	}
 }
 
-func TestRunReturnsLoginError(t *testing.T) {
+func TestServiceRunSucceedsWithoutIdentityProbe(t *testing.T) {
 	t.Parallel()
 
-	session := &fakeSession{loginErr: errors.New("login failed")}
-	reader := &fakeReader{}
-	service := Service{
-		Session: session,
-		Mail:    reader,
+	service := &Service{
+		Session:  &fakeSession{loginToken: provider.Token{AccessToken: "token"}},
+		StateDir: "/state",
 	}
 
-	_, err := service.Run(context.Background(), io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "login failed") {
-		t.Fatalf("Run() error = %v, want login failure", err)
+	result, err := service.Run(context.Background(), &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
-	if reader.meCalled {
-		t.Fatalf("Me() should not be called after login failure")
+	if result.Account != "" || result.DisplayName != "" {
+		t.Fatalf("unexpected identity result: %+v", result)
 	}
 }
 
-func TestRunWrapsCurrentUserLookupError(t *testing.T) {
+func TestServiceRunReturnsIdentityProbeError(t *testing.T) {
 	t.Parallel()
 
-	session := &fakeSession{}
-	reader := &fakeReader{err: errors.New("graph unavailable")}
-	service := Service{
-		Session: session,
-		Mail:    reader,
+	service := &Service{
+		Session: &fakeSession{loginToken: provider.Token{AccessToken: "token"}},
+		IdentityProbe: func(context.Context) (provider.User, error) {
+			return provider.User{}, errors.New("probe failed")
+		},
 	}
 
-	_, err := service.Run(context.Background(), io.Discard)
-	if err == nil {
-		t.Fatalf("expected error")
-	}
-	if !strings.Contains(err.Error(), "登录成功，但验证当前用户信息失败") {
-		t.Fatalf("error = %q, want wrapped user lookup failure", err)
-	}
-	if !strings.Contains(err.Error(), "graph unavailable") {
-		t.Fatalf("error = %q, want original cause", err)
+	_, err := service.Run(context.Background(), &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "验证当前用户信息失败") {
+		t.Fatalf("Run() error = %v, want identity probe error", err)
 	}
 }
