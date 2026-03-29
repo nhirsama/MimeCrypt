@@ -47,7 +47,7 @@ MimeCrypt 的核心职责如下：
 - `internal/providers/imap`：IMAP OAuth 收信与回写实现
 - `internal/providers/graph`：Microsoft Graph 读信与 Graph/EWS 回写实现
 - `internal/auth`：OAuth 登录、token 缓存与刷新
-- `internal/appconfig`：环境变量、本地配置与状态路径管理
+- `internal/appconfig`：环境变量、本地配置、默认 topology 编译与状态路径管理
 - `internal/mimefile`：MIME 文件保存逻辑
 - `internal/fileutil`：原子写入等通用文件工具
 - `internal/mimeutil`：MIME 头部识别与 MimeCrypt 标记校验
@@ -98,7 +98,7 @@ MimeCrypt 的核心职责如下：
 
 也就是说，未来会以“命名 source / sink driver”而不是单一全局 provider 作为主要配置单位。这样同一个实例可以同时接入多个来源和多个出口。
 
-当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织。当前 `run`、`process`、`flow-run` 已经共用 `mailflow` 编排，但命名 source / sink / route / credential 模型仍未落地，因此 `mailflow` 还没有完全演进到最终形态。
+当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及共享认证上下文。当前 `run` 与 `process` 已经共用 `mailflow` 编排，`flow-run` 仅保留为兼容别名；多实例 source / sink / route / credential 的用户可配置入口仍未落地，因此 `mailflow` 还没有完全演进到最终形态。
 
 ## 当前能力范围
 
@@ -119,14 +119,15 @@ MimeCrypt 的核心职责如下：
 - 关键步骤 JSONL 审计日志
 - 单实例运行锁与只读 / 深度两级健康检查
 - `mailflow` 事务骨架、文件状态存储以及 producer / processor / consumer 适配层
-- `run` / `process` / `flow-run` 共用 `mailflow` 协调器
+- 单 provider 环境变量配置编译为默认 `source / sink / route / credential` topology
+- `run` / `process` 共用 `mailflow` 协调器，`flow-run` 为兼容别名
 
 后续规划方向包括：
 
 - 继续收敛 CLI / 配置层中的单 provider 假设，向命名 source / sink / route 模型推进
 - `google` / `gmail` 来源驱动
 - HTTP webhook 与 SMTP ingress 等 push 型来源
-- 命名 source / sink / route / credential 配置模型
+- 将命名 source / sink / route / credential topology 暴露为用户可配置入口
 - 更细粒度的邮件路由与密钥选择策略
 
 ## Provider 与回写后端
@@ -222,6 +223,7 @@ go run ./cmd/mimecrypt run --poll-interval 1m --save-output --output-dir ./outpu
 go run ./cmd/mimecrypt run --once --backup-dir ./backup --audit-log-path ./audit.jsonl
 go run ./cmd/mimecrypt run --once --backup-key-id 0xDEADBEEF
 go run ./cmd/mimecrypt run --once --write-back
+go run ./cmd/mimecrypt run --once --write-back --delete-source
 go run ./cmd/mimecrypt run --once --write-back --write-back-provider imap
 go run ./cmd/mimecrypt run --once --write-back --write-back-folder archive
 go run ./cmd/mimecrypt run --once --protect-subject
@@ -233,14 +235,7 @@ go run ./cmd/mimecrypt run --once --protect-subject
 go run ./cmd/mimecrypt run --debug-save-first --save-output --output-dir ./output
 ```
 
-基于 `mailflow` 执行邮件级事务处理：
-
-```bash
-go run ./cmd/mimecrypt flow-run --once --save-output --output-dir ./output
-go run ./cmd/mimecrypt flow-run --once --write-back --verify-write-back
-go run ./cmd/mimecrypt flow-run --once --write-back --delete-source
-go run ./cmd/mimecrypt flow-run --poll-interval 1m --save-output --write-back
-```
+补充说明：`flow-run` 仍可用，但现在只是 `run` 的兼容别名，后续应优先使用 `run`。
 
 ## 配置
 
@@ -275,6 +270,15 @@ export MIMECRYPT_EWS_BASE_URL="https://outlook.office365.com/EWS/Exchange.asmx"
 export MIMECRYPT_TOKEN_STORE="file"
 export MIMECRYPT_KEYRING_SERVICE="mimecrypt"
 ```
+
+当前这些环境变量仍是 CLI 的直接输入，但在进入 `mailflow` 主链路前会先被编译成一个默认 topology：
+
+- `default` source：对应当前 `provider + folder + poll` 语义
+- `local-output` / `write-back` / `discard` sink：按命令参数和环境变量启用
+- `default` route：把单封邮件路由到当前启用的 sink 集合
+- `default` credential：表示当前共享的认证上下文，而不是最终形态的多凭据注册表
+
+也就是说，现阶段已经有了 `source / sink / route / credential` 的内部边界，但还没有向用户暴露多实例配置文件或驱动注册表。
 
 加密相关配置示例如下：
 

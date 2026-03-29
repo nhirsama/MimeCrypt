@@ -503,6 +503,136 @@ func TestMailConfigFlowPathsSanitizeFolder(t *testing.T) {
 	}
 }
 
+func TestConfigBuildTopologyDefaultsToDiscardRoute(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Provider: "imap",
+		Mail: MailConfig{
+			Pipeline: MailPipelineConfig{
+				OutputDir:  "/output",
+				SaveOutput: false,
+			},
+			Sync: MailSyncConfig{
+				Folder:       "INBOX",
+				StateDir:     "/state",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+	}
+
+	topology, err := cfg.BuildTopology(TopologyOptions{})
+	if err != nil {
+		t.Fatalf("BuildTopology() error = %v", err)
+	}
+
+	if topology.DefaultSource != "default" || topology.DefaultRoute != "default" {
+		t.Fatalf("unexpected defaults: %+v", topology)
+	}
+	source, err := topology.DefaultSourceConfig()
+	if err != nil {
+		t.Fatalf("DefaultSourceConfig() error = %v", err)
+	}
+	if source.Mode != "poll" || source.StatePath != filepath.Join("/state", "flow-sync-imap-INBOX.json") {
+		t.Fatalf("unexpected source config: %+v", source)
+	}
+	route, err := topology.DefaultRouteConfig()
+	if err != nil {
+		t.Fatalf("DefaultRouteConfig() error = %v", err)
+	}
+	if route.StateDir != filepath.Join("/state", "flow-state", "imap-INBOX") {
+		t.Fatalf("unexpected route state dir: %q", route.StateDir)
+	}
+	if len(route.Targets) != 1 || route.Targets[0].SinkRef != "discard" {
+		t.Fatalf("unexpected route targets: %+v", route.Targets)
+	}
+	if route.DeleteSource.Enabled {
+		t.Fatalf("DeleteSource.Enabled = true, want false")
+	}
+}
+
+func TestConfigBuildTopologyAddsWriteBackAndDeleteSourcePolicy(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Provider: "graph",
+		Mail: MailConfig{
+			Pipeline: MailPipelineConfig{
+				OutputDir:         "/output",
+				SaveOutput:        true,
+				WriteBackProvider: "imap",
+				WriteBackFolder:   "Encrypted",
+			},
+			Sync: MailSyncConfig{
+				Folder:       "INBOX",
+				StateDir:     "/state",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+	}
+
+	topology, err := cfg.BuildTopology(TopologyOptions{
+		IncludeExisting: true,
+		WriteBack:       true,
+		VerifyWriteBack: true,
+		DeleteSource:    true,
+	})
+	if err != nil {
+		t.Fatalf("BuildTopology() error = %v", err)
+	}
+
+	source, err := topology.DefaultSourceConfig()
+	if err != nil {
+		t.Fatalf("DefaultSourceConfig() error = %v", err)
+	}
+	if !source.IncludeExisting || source.Driver != "graph" {
+		t.Fatalf("unexpected source config: %+v", source)
+	}
+	writeBack, ok := topology.Sinks["write-back"]
+	if !ok {
+		t.Fatalf("missing write-back sink")
+	}
+	if writeBack.Driver != "imap" || writeBack.Folder != "Encrypted" || !writeBack.Verify {
+		t.Fatalf("unexpected write-back sink: %+v", writeBack)
+	}
+	route, err := topology.DefaultRouteConfig()
+	if err != nil {
+		t.Fatalf("DefaultRouteConfig() error = %v", err)
+	}
+	if len(route.Targets) != 2 {
+		t.Fatalf("len(Targets) = %d, want 2", len(route.Targets))
+	}
+	if !route.DeleteSource.Enabled || !route.DeleteSource.RequireSameStore {
+		t.Fatalf("unexpected delete-source policy: %+v", route.DeleteSource)
+	}
+	if got := route.DeleteSource.EligibleSinks; len(got) != 1 || got[0] != "write-back" {
+		t.Fatalf("EligibleSinks = %+v, want [write-back]", got)
+	}
+}
+
+func TestMailConfigFlowPathsForSourceIncludeDriverScope(t *testing.T) {
+	t.Parallel()
+
+	cfg := MailConfig{
+		Sync: MailSyncConfig{
+			Folder:   "Archive/2026:April",
+			StateDir: "/state",
+		},
+	}
+
+	if got, want := cfg.FlowProducerStatePathFor("default", "graph"), filepath.Join("/state", "flow-sync-graph-Archive_2026_April.json"); got != want {
+		t.Fatalf("FlowProducerStatePathFor() = %q, want %q", got, want)
+	}
+	if got, want := cfg.FlowStateDirFor("default", "default", "imap"), filepath.Join("/state", "flow-state", "imap-Archive_2026_April"); got != want {
+		t.Fatalf("FlowStateDirFor() = %q, want %q", got, want)
+	}
+	if got, want := cfg.FlowStateDirFor("archive", "office-source", "imap"), filepath.Join("/state", "flow-state", "archive-office-source-imap-Archive_2026_April"); got != want {
+		t.Fatalf("FlowStateDirFor(custom) = %q, want %q", got, want)
+	}
+}
+
 func resetMimeCryptEnv(t *testing.T) {
 	t.Helper()
 

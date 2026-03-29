@@ -117,26 +117,42 @@ func buildDownloadServiceWithReader(reader provider.Reader) *download.Service {
 }
 
 func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, includeExisting, writeBack, verifyWriteBack, deleteSource bool) (*mailflow.Runner, error) {
+	topology, err := cfg.BuildTopology(appconfig.TopologyOptions{
+		IncludeExisting: includeExisting,
+		WriteBack:       writeBack,
+		VerifyWriteBack: verifyWriteBack,
+		DeleteSource:    deleteSource,
+	})
+	if err != nil {
+		return nil, err
+	}
+	source, err := topology.DefaultSourceConfig()
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(source.Mode, "poll") {
+		return nil, fmt.Errorf("run 仅支持 polling source，当前 source=%s mode=%s", source.Name, source.Mode)
+	}
 	clients, err := buildProviderClients(cfg)
 	if err != nil {
 		return nil, err
 	}
-	coordinator, err := buildMailflowCoordinator(ctx, cfg, clients, writeBack, verifyWriteBack, deleteSource)
+	coordinator, err := buildMailflowCoordinator(ctx, cfg, clients, topology)
 	if err != nil {
 		return nil, err
 	}
-	sourceStore, err := buildMailflowSourceStore(ctx, cfg, clients.Reader, deleteSource)
+	sourceStore, err := buildMailflowSourceStore(ctx, cfg, clients.Reader, source, deleteSource)
 	if err != nil {
 		return nil, err
 	}
 
 	return &mailflow.Runner{
 		Producer: &adapters.PollingProducer{
-			Name:            "default",
-			Driver:          normalizeDriver(cfg.Provider, "imap"),
-			Folder:          cfg.Mail.Sync.Folder,
-			StatePath:       cfg.Mail.FlowProducerStatePath(),
-			IncludeExisting: includeExisting,
+			Name:            source.Name,
+			Driver:          source.Driver,
+			Folder:          source.Folder,
+			StatePath:       source.StatePath,
+			IncludeExisting: source.IncludeExisting,
 			Store:           sourceStore,
 			Reader:          clients.Reader,
 			Deleter:         clients.Deleter,
@@ -145,8 +161,16 @@ func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, includeExist
 	}, nil
 }
 
-func buildMailflowCoordinator(ctx context.Context, cfg appconfig.Config, clients provider.Clients, writeBack, verifyWriteBack, deleteSource bool) (*mailflow.Coordinator, error) {
-	plan, err := buildMailflowPlan(cfg.Mail.Pipeline.SaveOutput, writeBack, deleteSource)
+func buildMailflowCoordinator(ctx context.Context, cfg appconfig.Config, clients provider.Clients, topology appconfig.Topology) (*mailflow.Coordinator, error) {
+	return buildMailflowCoordinatorWithStore(ctx, cfg, clients, topology, nil)
+}
+
+func buildMailflowCoordinatorWithStore(ctx context.Context, cfg appconfig.Config, clients provider.Clients, topology appconfig.Topology, store mailflow.StateStore) (*mailflow.Coordinator, error) {
+	route, err := topology.DefaultRouteConfig()
+	if err != nil {
+		return nil, err
+	}
+	plan, err := buildMailflowPlan(route)
 	if err != nil {
 		return nil, err
 	}
@@ -156,9 +180,12 @@ func buildMailflowCoordinator(ctx context.Context, cfg appconfig.Config, clients
 		return nil, err
 	}
 
-	consumers, err := buildMailflowConsumers(ctx, cfg, clients, writeBack, verifyWriteBack, deleteSource)
+	consumers, err := buildMailflowConsumers(ctx, cfg, clients, topology, route)
 	if err != nil {
 		return nil, err
+	}
+	if store == nil {
+		store = mailflow.FileStateStore{Dir: route.StateDir}
 	}
 
 	return &mailflow.Coordinator{
@@ -175,40 +202,50 @@ func buildMailflowCoordinator(ctx context.Context, cfg appconfig.Config, clients
 			BackupDir:  cfg.Mail.Pipeline.BackupDir,
 			StaticPlan: plan,
 		},
-		Store: mailflow.FileStateStore{
-			Dir: cfg.Mail.FlowStateDir(),
-		},
+		Store:     store,
 		Consumers: consumers,
 	}, nil
 }
 
-func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, clients provider.Clients, writeBack, verifyWriteBack, deleteSource bool) (map[string]mailflow.Consumer, error) {
+func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, clients provider.Clients, topology appconfig.Topology, route appconfig.Route) (map[string]mailflow.Consumer, error) {
 	consumers := make(map[string]mailflow.Consumer)
-	if !cfg.Mail.Pipeline.SaveOutput && !writeBack {
-		consumers["discard"] = &adapters.DiscardConsumer{}
-	}
-	if cfg.Mail.Pipeline.SaveOutput {
-		consumers["local-output"] = &adapters.FileConsumer{
-			OutputDir: cfg.Mail.Pipeline.OutputDir,
+	for _, target := range route.Targets {
+		sinkRef := strings.TrimSpace(target.SinkRef)
+		if sinkRef == "" {
+			continue
 		}
-	}
-	if writeBack {
-		sinkStore, err := buildMailflowSinkStore(ctx, cfg, clients.Reader, deleteSource)
-		if err != nil {
-			return nil, err
+		if _, exists := consumers[sinkRef]; exists {
+			continue
 		}
-		consumers["write-back"] = &adapters.WritebackConsumer{
-			Service:             &writeback.Service{Writer: clients.Writer},
-			DestinationFolderID: cfg.Mail.Pipeline.WriteBackFolder,
-			Verify:              verifyWriteBack,
-			Store:               sinkStore,
+		sink, ok := topology.Sinks[sinkRef]
+		if !ok {
+			return nil, fmt.Errorf("route %s 引用了不存在的 sink: %s", route.Name, sinkRef)
+		}
+		switch strings.ToLower(strings.TrimSpace(sink.Driver)) {
+		case "discard":
+			consumers[sinkRef] = &adapters.DiscardConsumer{}
+		case "file":
+			consumers[sinkRef] = &adapters.FileConsumer{
+				OutputDir: sink.OutputDir,
+			}
+		default:
+			sinkStore, err := buildMailflowSinkStore(ctx, cfg, clients.Reader, sink, route.DeleteSource.Enabled)
+			if err != nil {
+				return nil, err
+			}
+			consumers[sinkRef] = &adapters.WritebackConsumer{
+				Service:             &writeback.Service{Writer: clients.Writer},
+				DestinationFolderID: sink.Folder,
+				Verify:              sink.Verify,
+				Store:               sinkStore,
+			}
 		}
 	}
 	return consumers, nil
 }
 
-func buildMailflowSourceStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, resolveAccount bool) (mailflow.StoreRef, error) {
-	driver := normalizeDriver(cfg.Provider, "imap")
+func buildMailflowSourceStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, source appconfig.Source, resolveAccount bool) (mailflow.StoreRef, error) {
+	driver := normalizeDriver(source.Driver, "imap")
 	account := ""
 	var err error
 	if resolveAccount {
@@ -220,12 +257,12 @@ func buildMailflowSourceStore(ctx context.Context, cfg appconfig.Config, reader 
 	return mailflow.StoreRef{
 		Driver:  driver,
 		Account: account,
-		Mailbox: cfg.Mail.Sync.Folder,
+		Mailbox: source.Folder,
 	}, nil
 }
 
-func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, resolveAccount bool) (mailflow.StoreRef, error) {
-	driver := normalizeDriver(cfg.Mail.Pipeline.WriteBackProvider, "imap")
+func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, sink appconfig.Sink, resolveAccount bool) (mailflow.StoreRef, error) {
+	driver := normalizeDriver(sink.Driver, "imap")
 	account := ""
 	var err error
 	if resolveAccount {
@@ -234,7 +271,7 @@ func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader pr
 			return mailflow.StoreRef{}, err
 		}
 	}
-	mailbox := strings.TrimSpace(cfg.Mail.Pipeline.WriteBackFolder)
+	mailbox := strings.TrimSpace(sink.Folder)
 	if mailbox == "" {
 		mailbox = cfg.Mail.Sync.Folder
 	}
@@ -287,41 +324,28 @@ func validateMailflowFlags(saveOutput, writeBack, verifyWriteBack, deleteSource 
 	return nil
 }
 
-func buildMailflowPlan(saveOutput, writeBack, deleteSource bool) (mailflow.ExecutionPlan, error) {
-	targets := make([]mailflow.DeliveryTarget, 0, 2)
-	if !saveOutput && !writeBack {
+func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
+	targets := make([]mailflow.DeliveryTarget, 0, len(route.Targets))
+	for _, target := range route.Targets {
+		artifact := strings.TrimSpace(target.Artifact)
+		if artifact == "" {
+			artifact = "primary"
+		}
 		targets = append(targets, mailflow.DeliveryTarget{
-			Name:     "discard-primary",
-			Consumer: "discard",
-			Artifact: "primary",
-			Required: true,
-		})
-	}
-	if saveOutput {
-		targets = append(targets, mailflow.DeliveryTarget{
-			Name:     "local-output",
-			Consumer: "local-output",
-			Artifact: "primary",
-			Required: true,
-		})
-	}
-	if writeBack {
-		targets = append(targets, mailflow.DeliveryTarget{
-			Name:     "write-back",
-			Consumer: "write-back",
-			Artifact: "primary",
-			Required: true,
+			Name:     strings.TrimSpace(target.Name),
+			Consumer: strings.TrimSpace(target.SinkRef),
+			Artifact: artifact,
+			Required: target.Required,
+			Options:  target.Options,
 		})
 	}
 
-	plan := mailflow.ExecutionPlan{
-		Targets: targets,
-	}
-	if deleteSource {
+	plan := mailflow.ExecutionPlan{Targets: targets}
+	if route.DeleteSource.Enabled {
 		plan.DeleteSource = mailflow.DeleteSourcePolicy{
 			Enabled:           true,
-			RequireSameStore:  true,
-			EligibleConsumers: []string{"write-back"},
+			RequireSameStore:  route.DeleteSource.RequireSameStore,
+			EligibleConsumers: append([]string(nil), route.DeleteSource.EligibleSinks...),
 		}
 	}
 	if err := plan.Validate(); err != nil {

@@ -21,10 +21,42 @@ func TestValidateMailflowFlagsRejectsDeleteSourceWithoutWriteBack(t *testing.T) 
 	}
 }
 
+func TestRunCommandExposesDeleteSourceFlag(t *testing.T) {
+	t.Parallel()
+
+	cmd := newRunCmd()
+	if cmd.Flags().Lookup("delete-source") == nil {
+		t.Fatalf("expected delete-source flag on run command")
+	}
+}
+
+func TestFlowRunCommandIsHiddenDeprecatedAlias(t *testing.T) {
+	t.Parallel()
+
+	cmd := newFlowRunCmd()
+	if !cmd.Hidden {
+		t.Fatalf("Hidden = false, want true")
+	}
+	if cmd.Deprecated == "" || !strings.Contains(cmd.Deprecated, "请改用 run") {
+		t.Fatalf("Deprecated = %q, want migration hint", cmd.Deprecated)
+	}
+}
+
 func TestBuildMailflowPlanAddsConfiguredTargets(t *testing.T) {
 	t.Parallel()
 
-	plan, err := buildMailflowPlan(true, true, true)
+	plan, err := buildMailflowPlan(appconfig.Route{
+		Name: "default",
+		Targets: []appconfig.RouteTarget{
+			{Name: "local-output", SinkRef: "local-output", Artifact: "primary", Required: true},
+			{Name: "write-back", SinkRef: "write-back", Artifact: "primary", Required: true},
+		},
+		DeleteSource: appconfig.DeleteSourcePolicy{
+			Enabled:          true,
+			RequireSameStore: true,
+			EligibleSinks:    []string{"write-back"},
+		},
+	})
 	if err != nil {
 		t.Fatalf("buildMailflowPlan() error = %v", err)
 	}
@@ -42,7 +74,12 @@ func TestBuildMailflowPlanAddsConfiguredTargets(t *testing.T) {
 func TestBuildMailflowPlanFallsBackToDiscardTarget(t *testing.T) {
 	t.Parallel()
 
-	plan, err := buildMailflowPlan(false, false, false)
+	plan, err := buildMailflowPlan(appconfig.Route{
+		Name: "default",
+		Targets: []appconfig.RouteTarget{
+			{Name: "discard-primary", SinkRef: "discard", Artifact: "primary", Required: true},
+		},
+	})
 	if err != nil {
 		t.Fatalf("buildMailflowPlan() error = %v", err)
 	}

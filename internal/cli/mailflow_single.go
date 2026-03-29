@@ -11,14 +11,22 @@ import (
 )
 
 func buildMailflowEnvelopeBuilder(ctx context.Context, cfg appconfig.Config, clients provider.Clients, deleteSource bool) (*adapters.ReaderEnvelopeBuilder, error) {
-	sourceStore, err := buildMailflowSourceStore(ctx, cfg, clients.Reader, deleteSource)
+	topology, err := cfg.BuildTopology(appconfig.TopologyOptions{DeleteSource: deleteSource})
+	if err != nil {
+		return nil, err
+	}
+	source, err := topology.DefaultSourceConfig()
+	if err != nil {
+		return nil, err
+	}
+	sourceStore, err := buildMailflowSourceStore(ctx, cfg, clients.Reader, source, deleteSource)
 	if err != nil {
 		return nil, err
 	}
 	return &adapters.ReaderEnvelopeBuilder{
-		Name:    "default",
-		Driver:  normalizeDriver(cfg.Provider, "imap"),
-		Folder:  cfg.Mail.Sync.Folder,
+		Name:    source.Name,
+		Driver:  normalizeDriver(source.Driver, "imap"),
+		Folder:  source.Folder,
 		Store:   sourceStore,
 		Reader:  clients.Reader,
 		Deleter: clients.Deleter,
@@ -69,7 +77,15 @@ func runMailflowFirstMessage(ctx context.Context, cfg appconfig.Config, writeBac
 }
 
 func runMailflowEnvelope(ctx context.Context, cfg appconfig.Config, clients provider.Clients, envelope mailflow.MailEnvelope, writeBack, verifyWriteBack, deleteSource bool) (mailflowSummary, error) {
-	coordinator, err := buildMailflowCoordinator(ctx, cfg, clients, writeBack, verifyWriteBack, deleteSource)
+	topology, err := cfg.BuildTopology(appconfig.TopologyOptions{
+		WriteBack:       writeBack,
+		VerifyWriteBack: verifyWriteBack,
+		DeleteSource:    deleteSource,
+	})
+	if err != nil {
+		return mailflowSummary{}, err
+	}
+	coordinator, err := buildMailflowCoordinatorWithStore(ctx, cfg, clients, topology, &mailflow.MemoryStateStore{})
 	if err != nil {
 		return mailflowSummary{}, err
 	}

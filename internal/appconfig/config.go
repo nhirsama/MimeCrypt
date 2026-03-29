@@ -319,6 +319,16 @@ func (c MailConfig) FlowStateDir() string {
 	return filepath.Join(c.Sync.StateDir, "flow-state", sanitizeFileComponent(c.Sync.Folder))
 }
 
+func (c MailConfig) FlowProducerStatePathFor(sourceName, driver string) string {
+	scope := flowStateScope("", sourceName, driver, c.Sync.Folder)
+	return filepath.Join(c.Sync.StateDir, "flow-sync-"+sanitizeFileComponent(scope)+".json")
+}
+
+func (c MailConfig) FlowStateDirFor(routeName, sourceName, driver string) string {
+	scope := flowStateScope(routeName, sourceName, driver, c.Sync.Folder)
+	return filepath.Join(c.Sync.StateDir, "flow-state", sanitizeFileComponent(scope))
+}
+
 func (c Config) RunLockPath() string {
 	return filepath.Join(c.Auth.StateDir, "run-"+sanitizeFileComponent(c.Provider)+"-"+sanitizeFileComponent(c.Mail.Sync.Folder)+".lock")
 }
@@ -389,4 +399,24 @@ func sanitizeFileComponent(value string) string {
 	}
 
 	return result
+}
+
+func flowStateScope(routeName, sourceName, driver, folder string) string {
+	parts := make([]string, 0, 4)
+	if value := strings.TrimSpace(routeName); value != "" && value != defaultTopologyRouteName {
+		parts = append(parts, value)
+	}
+	if value := strings.TrimSpace(sourceName); value != "" && value != defaultTopologySourceName {
+		parts = append(parts, value)
+	}
+	if value := strings.TrimSpace(driver); value != "" {
+		parts = append(parts, value)
+	}
+	if value := strings.TrimSpace(folder); value != "" {
+		parts = append(parts, value)
+	}
+	if len(parts) == 0 {
+		return "unknown"
+	}
+	return strings.Join(parts, "-")
 }
