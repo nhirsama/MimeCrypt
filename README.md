@@ -31,6 +31,8 @@ MimeCrypt 的核心职责如下：
 
 - `cmd/mimecrypt`：程序入口，负责启动 CLI 与信号感知退出
 - `internal/cli`：Cobra 命令树与参数绑定
+- `internal/appruntime`：登录、登出、token、基础健康检查等非 mailflow 运行时装配
+- `internal/flowruntime`：topology 解析、source/route 运行计划与 mailflow 装配
 - `internal/modules/login`：登录与账号验证
 - `internal/modules/logout`：本地认证状态清理
 - `internal/modules/list`：邮件摘要列表
@@ -98,7 +100,7 @@ MimeCrypt 的核心职责如下：
 
 也就是说，未来会以“命名 source / sink driver”而不是单一全局 provider 作为主要配置单位。这样同一个实例可以同时接入多个来源和多个出口。
 
-当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及默认 credential。命名 `credential_ref` 已经是有效的运行时配置，会实际覆盖 source / sink 的认证上下文、state dir、token store 与协议 scopes。当前 `run` 与 `process` 已经共用 `mailflow` 编排，`flow-run` 仅保留为兼容别名；`download`、`list`、`health` 已支持基于 JSON topology 文件选择命名 `source`，其中 `health` 在 topology 模式下还可以结合命名 `route` 逐个探测远端 sink；`login`、`token`、`logout` 也已经支持基于 topology 文件选择命名 `credential`。
+当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及默认 credential。命名 `credential_ref` 已经是有效的运行时配置，会实际覆盖 source / sink 的认证上下文、state dir、token store 与协议 scopes。当前 `run`、`process`、`download`、`list`、`health` 已统一走 `flowruntime` 的 topology 解析与运行时装配；`login`、`token`、`logout` 则通过 `appruntime` 解析命名 `credential` 并装配认证相关服务。
 
 ## 当前能力范围
 
@@ -122,7 +124,7 @@ MimeCrypt 的核心职责如下：
 - 单 provider 环境变量配置编译为默认 `source / sink / route / credential` topology
 - `run` / `process` / `download` / `list` / `health` 可通过 topology 文件选择命名 `source`；其中 `run` / `process` / `health` 还支持命名 `route`
 - `login` / `token` / `logout` 可通过 topology 文件选择命名 `credential`
-- `run` / `process` 共用 `mailflow` 协调器，`flow-run` 为兼容别名
+- `run` / `process` 共用 `mailflow` 协调器，单封处理显式使用 ephemeral 事务状态，持续运行显式使用 persistent 事务状态
 
 后续规划方向包括：
 
@@ -249,8 +251,6 @@ go run ./cmd/mimecrypt download <message-id> --topology-file ./topology.json --s
 go run ./cmd/mimecrypt list 0 10 --topology-file ./topology.json --source office-inbox
 go run ./cmd/mimecrypt health --topology-file ./topology.json --route default --source office-inbox --deep
 ```
-
-补充说明：`flow-run` 仍可用，但现在只是 `run` 的兼容别名，后续应优先使用 `run`。
 
 ## 配置
 

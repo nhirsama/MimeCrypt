@@ -38,7 +38,6 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newEncryptCmd())
 	rootCmd.AddCommand(newDownloadCmd())
 	rootCmd.AddCommand(newProcessCmd())
-	rootCmd.AddCommand(newFlowRunCmd())
 	rootCmd.AddCommand(newRunCmd())
 
 	return rootCmd

@@ -72,7 +72,7 @@ func ResolveSourcePlan(cfg appconfig.Config, selector Selector) (SourcePlan, err
 			source.StatePath = sourceCfg.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)
 			topology.Sources[source.Name] = source
 		}
-		if err := topology.Validate(); err != nil {
+		if err := topology.ValidateStructure(); err != nil {
 			return SourcePlan{}, err
 		}
 		return SourcePlan{
@@ -89,30 +89,18 @@ func ResolveSourcePlan(cfg appconfig.Config, selector Selector) (SourcePlan, err
 	if err := populateSourceStatePaths(cfg, &topology); err != nil {
 		return SourcePlan{}, err
 	}
-	if value := strings.TrimSpace(selector.SourceName); value != "" {
-		topology.DefaultSource = value
-	}
-	if strings.TrimSpace(topology.DefaultRoute) == "" {
-		name, err := inferSingleName("route", topologyRouteNames(topology.Routes))
-		if err != nil {
-			return SourcePlan{}, err
-		}
-		topology.DefaultRoute = name
-	}
-	if strings.TrimSpace(topology.DefaultSource) == "" {
-		name, err := inferSingleName("source", topologySourceNames(topology.Sources))
-		if err != nil {
-			return SourcePlan{}, err
-		}
-		topology.DefaultSource = name
-	}
-	if err := topology.Validate(); err != nil {
+	if err := topology.ValidateStructure(); err != nil {
 		return SourcePlan{}, err
 	}
+	sourceName, err := selectSourceName(topology, selector.SourceName)
+	if err != nil {
+		return SourcePlan{}, err
+	}
+	topology.DefaultSource = sourceName
 
-	source, ok := topology.Sources[topology.DefaultSource]
+	source, ok := topology.Sources[sourceName]
 	if !ok {
-		return SourcePlan{}, fmt.Errorf("topology source 不存在: %s", topology.DefaultSource)
+		return SourcePlan{}, fmt.Errorf("topology source 不存在: %s", sourceName)
 	}
 	sourceCfg, err := configForSource(cfg, topology, source)
 	if err != nil {
@@ -168,19 +156,18 @@ func ResolveRoutePlan(cfg appconfig.Config, selector Selector, legacyOptions app
 	if err := populateSourceStatePaths(cfg, &topology); err != nil {
 		return RoutePlan{}, err
 	}
-	if value := strings.TrimSpace(selector.RouteName); value != "" {
-		topology.DefaultRoute = value
+	if err := topology.ValidateStructure(); err != nil {
+		return RoutePlan{}, err
 	}
-	if strings.TrimSpace(topology.DefaultRoute) == "" {
-		name, err := inferSingleName("route", topologyRouteNames(topology.Routes))
-		if err != nil {
-			return RoutePlan{}, err
-		}
-		topology.DefaultRoute = name
+	routeName, err := selectRouteName(topology, selector.RouteName)
+	if err != nil {
+		return RoutePlan{}, err
 	}
-	route, ok := topology.Routes[topology.DefaultRoute]
+	topology.DefaultRoute = routeName
+
+	route, ok := topology.Routes[routeName]
 	if !ok {
-		return RoutePlan{}, fmt.Errorf("topology route 不存在: %s", topology.DefaultRoute)
+		return RoutePlan{}, fmt.Errorf("topology route 不存在: %s", routeName)
 	}
 	sourceNames, err := selectRouteSources(topology, route, selector.SourceName, mode)
 	if err != nil {
@@ -188,9 +175,6 @@ func ResolveRoutePlan(cfg appconfig.Config, selector Selector, legacyOptions app
 	}
 	if strings.TrimSpace(topology.DefaultSource) == "" && len(sourceNames) > 0 {
 		topology.DefaultSource = sourceNames[0]
-	}
-	if err := topology.Validate(); err != nil {
-		return RoutePlan{}, err
 	}
 
 	runs := make([]SourceRun, 0, len(sourceNames))
@@ -349,6 +333,26 @@ func inferSingleName(kind string, values []string) (string, error) {
 	}
 }
 
+func selectSourceName(topology appconfig.Topology, explicit string) (string, error) {
+	if value := strings.TrimSpace(explicit); value != "" {
+		return value, nil
+	}
+	if value := strings.TrimSpace(topology.DefaultSource); value != "" {
+		return value, nil
+	}
+	return inferSingleName("source", topologySourceNames(topology.Sources))
+}
+
+func selectRouteName(topology appconfig.Topology, explicit string) (string, error) {
+	if value := strings.TrimSpace(explicit); value != "" {
+		return value, nil
+	}
+	if value := strings.TrimSpace(topology.DefaultRoute); value != "" {
+		return value, nil
+	}
+	return inferSingleName("route", topologyRouteNames(topology.Routes))
+}
+
 func topologyRouteNames(routes map[string]appconfig.Route) []string {
 	names := make([]string, 0, len(routes))
 	for name := range routes {
@@ -391,40 +395,18 @@ func configForSink(cfg appconfig.Config, topology appconfig.Topology, source app
 }
 
 func applyTopologyCredential(cfg appconfig.Config, topology appconfig.Topology, credentialRef string) (appconfig.Config, error) {
-	resolvedRef, err := resolveTopologyCredentialRef(topology, credentialRef)
+	resolvedRef, err := topology.ResolveCredentialRef(credentialRef)
 	if err != nil {
 		return appconfig.Config{}, err
 	}
 	if resolvedRef == "" {
 		return cfg, nil
 	}
-	credential, ok := topology.Credentials[resolvedRef]
-	if !ok {
-		return appconfig.Config{}, fmt.Errorf("credential 不存在: %s", resolvedRef)
+	credential, err := topology.CredentialConfig(resolvedRef)
+	if err != nil {
+		return appconfig.Config{}, err
 	}
 	return cfg.WithCredential(credential.Name, credential), nil
-}
-
-func resolveTopologyCredentialRef(topology appconfig.Topology, credentialRef string) (string, error) {
-	credentialRef = strings.TrimSpace(credentialRef)
-	if credentialRef != "" {
-		return credentialRef, nil
-	}
-	if value := strings.TrimSpace(topology.DefaultCredential); value != "" {
-		return value, nil
-	}
-	if len(topology.Credentials) == 0 {
-		return "", nil
-	}
-	if _, ok := topology.Credentials["default"]; ok {
-		return "default", nil
-	}
-	if len(topology.Credentials) == 1 {
-		for name := range topology.Credentials {
-			return strings.TrimSpace(name), nil
-		}
-	}
-	return "", fmt.Errorf("topology 存在多个 credential，请显式设置 credential_ref 或 default_credential")
 }
 
 func normalizeDriver(value, fallback string) string {

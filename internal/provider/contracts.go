@@ -77,14 +77,9 @@ func (r MessageRef) WithFallbackFolder(folderID string) MessageRef {
 type Session interface {
 	Login(ctx context.Context, out io.Writer) (Token, error)
 	AccessToken(ctx context.Context) (string, error)
+	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
 	LoadCachedToken() (Token, error)
 	Logout() error
-}
-
-// ScopedSession 抽象按 protocol scopes 取 access token 的认证能力。
-type ScopedSession interface {
-	Session
-	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
 }
 
 // Reader 抽象收件相关的底层 API。

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/appruntime"
 )
 
 func newTokenCmd() *cobra.Command {
@@ -37,7 +38,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			cfg = providerFlags.apply(cfg, cmd)
 			cfg = credentialFlags.apply(cfg)
 
-			resolved, err := resolveCredentialConfig(cfg, credentialFlags)
+			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("token status 失败: %w", err)
 			}
@@ -46,7 +47,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			}
 			cfg = resolved.Config
 
-			service, err := buildTokenStateService(cfg)
+			service, err := appruntime.BuildTokenStateService(cfg)
 			if err != nil {
 				return fmt.Errorf("token status 失败: %w", err)
 			}
@@ -57,7 +58,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			}
 
 			if !result.Present {
-				if resolved.Custom {
+				if resolved.Custom && strings.TrimSpace(resolved.CredentialName) != "" {
 					fmt.Printf("token_absent credential=%s state_dir=%s token_store=%s\n", resolved.CredentialName, result.StateDir, result.TokenStore)
 					return nil
 				}
@@ -69,7 +70,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			if !result.Token.ExpiresAt.IsZero() {
 				expiresAt = result.Token.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z")
 			}
-			if resolved.Custom {
+			if resolved.Custom && strings.TrimSpace(resolved.CredentialName) != "" {
 				fmt.Printf(
 					"token_present credential=%s state_dir=%s token_store=%s expires_at=%s scope=%q has_refresh_token=%t\n",
 					resolved.CredentialName,
@@ -109,7 +110,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 			cfg = providerFlags.apply(cfg, cmd)
 			cfg = credentialFlags.apply(cfg)
 
-			resolved, err := resolveCredentialConfig(cfg, credentialFlags)
+			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("token import 失败: %w", err)
 			}
@@ -118,7 +119,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 			}
 			cfg = resolved.Config
 
-			service, err := buildTokenStateService(cfg)
+			service, err := appruntime.BuildTokenStateService(cfg)
 			if err != nil {
 				return fmt.Errorf("token import 失败: %w", err)
 			}
@@ -134,7 +135,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 				return fmt.Errorf("token import 失败: %w", err)
 			}
 
-			if resolved.Custom {
+			if resolved.Custom && strings.TrimSpace(resolved.CredentialName) != "" {
 				fmt.Printf(
 					"已导入 token，credential=%s state_dir=%s token_store=%s has_refresh_token=%t\n",
 					resolved.CredentialName,

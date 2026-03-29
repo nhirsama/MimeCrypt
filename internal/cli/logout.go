@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/appruntime"
 )
 
 func newLogoutCmd() *cobra.Command {
@@ -25,7 +26,7 @@ func newLogoutCmd() *cobra.Command {
 			cfg.Auth.StateDir = stateDir
 			cfg = credentialFlags.apply(cfg)
 
-			resolved, err := resolveCredentialConfig(cfg, credentialFlags)
+			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("logout 失败: %w", err)
 			}
@@ -33,7 +34,7 @@ func newLogoutCmd() *cobra.Command {
 				return fmt.Errorf("logout 失败: %w", err)
 			}
 			cfg = resolved.Config
-			service, err := buildLogoutService(cfg)
+			service, err := appruntime.BuildLogoutService(cfg)
 			if err != nil {
 				return fmt.Errorf("logout 失败: %w", err)
 			}

@@ -64,7 +64,7 @@ func NewWriterClients(cfg appconfig.Config, session provider.Session) (provider.
 	}, nil
 }
 
-func NewEWSWriterClients(cfg appconfig.Config, session provider.ScopedSession) (provider.SinkClients, error) {
+func NewEWSWriterClients(cfg appconfig.Config, session provider.Session) (provider.SinkClients, error) {
 	if session == nil {
 		return provider.SinkClients{}, fmt.Errorf("session 不能为空")
 	}
@@ -90,8 +90,8 @@ type graphTokenSource struct {
 }
 
 func (s graphTokenSource) AccessToken(ctx context.Context) (string, error) {
-	if scoped, ok := s.session.(provider.ScopedSession); ok && len(s.scopes) > 0 {
-		return scoped.AccessTokenForScopes(ctx, s.scopes)
+	if len(s.scopes) > 0 {
+		return s.session.AccessTokenForScopes(ctx, s.scopes)
 	}
 	return s.session.AccessToken(ctx)
 }

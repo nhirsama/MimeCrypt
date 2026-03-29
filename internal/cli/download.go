@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/appruntime"
 	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/download"
 )
@@ -38,7 +39,7 @@ func newDownloadCmd() *cobra.Command {
 
 			var service *download.Service
 			if strings.TrimSpace(cfg.TopologyPath) == "" {
-				service, err = buildDownloadService(cfg)
+				service, err = appruntime.BuildDownloadService(cfg)
 				if err != nil {
 					return fmt.Errorf("download 失败: %w", err)
 				}

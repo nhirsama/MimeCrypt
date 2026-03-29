@@ -1,4 +1,4 @@
-package cli
+package appruntime
 
 import (
 	"context"
@@ -81,9 +81,9 @@ func TestBuildHealthServiceMixedProviderWriteBackProbeUsesGraphToken(t *testing.
 		t.Fatalf("StoreToken() error = %v", err)
 	}
 
-	service, err := buildHealthService(cfg)
+	service, err := BuildHealthService(cfg)
 	if err != nil {
-		t.Fatalf("buildHealthService() error = %v", err)
+		t.Fatalf("BuildHealthService() error = %v", err)
 	}
 	if service.WriteBack == nil {
 		t.Fatalf("WriteBack = nil")

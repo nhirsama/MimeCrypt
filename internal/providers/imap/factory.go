@@ -37,7 +37,7 @@ func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
 	return BuildSourceClientsWithSession(cfg, session)
 }
 
-func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.ScopedSession) (provider.SourceClients, error) {
+func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.SourceClients, error) {
 	if session == nil {
 		return provider.SourceClients{}, fmt.Errorf("session 不能为空")
 	}
@@ -54,7 +54,7 @@ func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Scoped
 	}, nil
 }
 
-func NewWriterClients(cfg appconfig.Config, tokenSource provider.ScopedSession) (provider.SinkClients, error) {
+func NewWriterClients(cfg appconfig.Config, tokenSource provider.Session) (provider.SinkClients, error) {
 	authCfg := cfg.Auth
 	authCfg.GraphScopes = nil
 	authCfg.EWSScopes = nil
@@ -140,4 +140,4 @@ func (*writer) DeleteSemantics() provider.DeleteSemantics {
 }
 
 // Keep compiler honest about the auth session interface used by the IMAP client.
-var _ provider.ScopedSession = (*auth.Session)(nil)
+var _ provider.Session = (*auth.Session)(nil)

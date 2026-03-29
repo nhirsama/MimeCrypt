@@ -9,16 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
-	"mimecrypt/internal/auth"
 	"mimecrypt/internal/mailflow"
-	"mimecrypt/internal/modules/download"
-	"mimecrypt/internal/modules/health"
-	"mimecrypt/internal/modules/list"
-	"mimecrypt/internal/modules/login"
-	"mimecrypt/internal/modules/logout"
-	"mimecrypt/internal/modules/tokenstate"
-	"mimecrypt/internal/provider"
-	"mimecrypt/internal/providers"
 )
 
 func newErrorCommand(use, short string, err error) *cobra.Command {
@@ -29,90 +20,6 @@ func newErrorCommand(use, short string, err error) *cobra.Command {
 			return err
 		},
 	}
-}
-
-func buildLoginService(cfg appconfig.Config) (*login.Service, error) {
-	session, err := auth.NewSession(cfg.Auth, nil)
-	if err != nil {
-		return nil, err
-	}
-	sourceClients, err := providers.BuildSourceClientsWithSession(cfg, session)
-	if err != nil {
-		return nil, err
-	}
-
-	return &login.Service{
-		Session:  sourceClients.Session,
-		Mail:     sourceClients.Reader,
-		StateDir: cfg.Auth.StateDir,
-	}, nil
-}
-
-func buildLogoutService(cfg appconfig.Config) (*logout.Service, error) {
-	session, err := auth.NewSession(cfg.Auth, nil)
-	if err != nil {
-		return nil, err
-	}
-	return &logout.Service{Session: session}, nil
-}
-
-func buildDownloadService(cfg appconfig.Config) (*download.Service, error) {
-	sourceClients, err := providers.BuildSourceClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return buildDownloadServiceWithReader(sourceClients.Reader), nil
-}
-
-func buildListService(cfg appconfig.Config) (*list.Service, error) {
-	sourceClients, err := providers.BuildSourceClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return buildListServiceWithReader(sourceClients.Reader), nil
-}
-
-func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
-	sourceClients, err := providers.BuildSourceClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-	sinkClients, err := providers.BuildWriteBackClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-
-	return &health.Service{
-		StateDir:          cfg.Auth.StateDir,
-		Folder:            cfg.Mail.Sync.Folder,
-		Provider:          cfg.Provider,
-		WriteBackProvider: cfg.Mail.Pipeline.WriteBackProvider,
-		Session:           sourceClients.Session,
-		Reader:            sourceClients.Reader,
-		WriteBack:         sinkClients.Health,
-	}, nil
-}
-
-func buildTokenStateService(cfg appconfig.Config) (*tokenstate.Service, error) {
-	session, err := auth.NewSession(cfg.Auth, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return &tokenstate.Service{
-		Session:        session,
-		StateDir:       cfg.Auth.StateDir,
-		TokenStore:     cfg.Auth.TokenStoreMode(),
-		KeyringService: cfg.Auth.KeyringServiceName(),
-	}, nil
-}
-
-func buildDownloadServiceWithReader(reader provider.Reader) *download.Service {
-	return &download.Service{Client: reader}
-}
-
-func buildListServiceWithReader(reader provider.Reader) *list.Service {
-	return &list.Service{Client: reader}
 }
 
 func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL, ewsBaseURL, imapAddr, imapUsername string) appconfig.Config {

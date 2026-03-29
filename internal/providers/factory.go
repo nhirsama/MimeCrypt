@@ -27,11 +27,7 @@ func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Sessio
 	case "graph":
 		return graph.BuildSourceClientsWithSession(cfg, session)
 	case "imap":
-		scoped, ok := session.(provider.ScopedSession)
-		if !ok {
-			return provider.SourceClients{}, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
-		}
-		return imap.BuildSourceClientsWithSession(cfg, scoped)
+		return imap.BuildSourceClientsWithSession(cfg, session)
 	default:
 		return provider.SourceClients{}, fmt.Errorf("不支持的邮件服务提供方: %s", cfg.Provider)
 	}
@@ -55,17 +51,9 @@ func BuildWriteBackClientsWithSession(cfg appconfig.Config, session provider.Ses
 	case "graph":
 		return graph.NewWriterClients(cfg, session)
 	case "ews":
-		scoped, ok := session.(provider.ScopedSession)
-		if !ok {
-			return provider.SinkClients{}, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
-		}
-		return graph.NewEWSWriterClients(cfg, scoped)
+		return graph.NewEWSWriterClients(cfg, session)
 	case "imap":
-		scoped, ok := session.(provider.ScopedSession)
-		if !ok {
-			return provider.SinkClients{}, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
-		}
-		return imap.NewWriterClients(cfg, scoped)
+		return imap.NewWriterClients(cfg, session)
 	default:
 		return provider.SinkClients{}, fmt.Errorf("不支持的回写后端: %s", cfg.Mail.Pipeline.WriteBackProvider)
 	}

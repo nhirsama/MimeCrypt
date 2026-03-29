@@ -16,12 +16,24 @@ import (
 
 type fakeTokenSource struct{}
 
+func (fakeTokenSource) Login(context.Context, io.Writer) (provider.Token, error) {
+	return provider.Token{}, nil
+}
+
 func (fakeTokenSource) AccessToken(context.Context) (string, error) {
 	return "token", nil
 }
 
 func (fakeTokenSource) AccessTokenForScopes(context.Context, []string) (string, error) {
 	return "token", nil
+}
+
+func (fakeTokenSource) LoadCachedToken() (provider.Token, error) {
+	return provider.Token{}, nil
+}
+
+func (fakeTokenSource) Logout() error {
+	return nil
 }
 
 func TestWriterWriteMessageUsesSourceFolderByDefault(t *testing.T) {

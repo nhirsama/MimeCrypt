@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/appruntime"
 )
 
 func newLoginCmd() *cobra.Command {
@@ -30,7 +31,7 @@ func newLoginCmd() *cobra.Command {
 			cfg = credentialFlags.apply(cfg)
 			cfg = applyLoginIMAPUsernameArg(cfg, cmd, args)
 
-			resolved, err := resolveCredentialConfig(cfg, credentialFlags)
+			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
@@ -42,7 +43,7 @@ func newLoginCmd() *cobra.Command {
 			loginCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
 			defer cancel()
 
-			service, err := buildLoginService(cfg)
+			service, err := appruntime.BuildLoginService(cfg)
 			if err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
@@ -58,7 +59,7 @@ func newLoginCmd() *cobra.Command {
 			}
 
 			fmt.Printf("登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
-			if resolved.Custom {
+			if resolved.Custom && strings.TrimSpace(resolved.CredentialName) != "" {
 				fmt.Printf("credential=%s\n", resolved.CredentialName)
 			}
 			fmt.Printf("token 已缓存到 %s\n", result.StateDir)

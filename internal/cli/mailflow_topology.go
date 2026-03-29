@@ -7,13 +7,13 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/appruntime"
 	"mimecrypt/internal/flowruntime"
 )
 
 type resolvedMailflowTopology struct {
 	flowruntime.SourceRun
-	Topology appconfig.Topology
-	Custom   bool
+	Custom bool
 }
 
 type resolvedMailflowRoutePlan struct {
@@ -22,14 +22,6 @@ type resolvedMailflowRoutePlan struct {
 
 type resolvedTopologySource struct {
 	flowruntime.SourcePlan
-}
-
-type resolvedCredentialConfig struct {
-	Topology       appconfig.Topology
-	Credential     appconfig.Credential
-	CredentialName string
-	Config         appconfig.Config
-	Custom         bool
 }
 
 func resolveMailflowTopology(cfg appconfig.Config, topologyFlags topologyConfigFlags, legacyOptions appconfig.TopologyOptions) (resolvedMailflowTopology, error) {
@@ -46,7 +38,6 @@ func resolveMailflowTopology(cfg appconfig.Config, topologyFlags topologyConfigF
 	}
 	return resolvedMailflowTopology{
 		SourceRun: plan.Runs[0],
-		Topology:  plan.Topology,
 		Custom:    plan.Custom,
 	}, nil
 }
@@ -75,7 +66,7 @@ func validateCustomTopologyFlags(cmd *cobra.Command, custom bool, flags ...strin
 	return nil
 }
 
-func validateCustomCredentialFlags(cmd *cobra.Command, resolved resolvedCredentialConfig, flags ...string) error {
+func validateCustomCredentialFlags(cmd *cobra.Command, resolved appruntime.CredentialPlan, flags ...string) error {
 	if !resolved.Custom || cmd == nil {
 		return nil
 	}
@@ -97,74 +88,4 @@ func resolveTopologySource(cfg appconfig.Config, topologyFlags topologyConfigFla
 		return resolvedTopologySource{}, err
 	}
 	return resolvedTopologySource{SourcePlan: plan}, nil
-}
-
-func inferSingleName(kind string, values []string) (string, error) {
-	switch len(values) {
-	case 0:
-		return "", fmt.Errorf("topology 至少需要一个 %s", kind)
-	case 1:
-		return values[0], nil
-	default:
-		return "", fmt.Errorf("topology 存在多个 %s，请显式指定 --%s", kind, kind)
-	}
-}
-
-func topologyCredentialNames(credentials map[string]appconfig.Credential) []string {
-	names := make([]string, 0, len(credentials))
-	for name := range credentials {
-		names = append(names, strings.TrimSpace(name))
-	}
-	return names
-}
-
-func inferDefaultCredential(topology appconfig.Topology) (string, error) {
-	if _, ok := topology.Credentials["default"]; ok {
-		return "default", nil
-	}
-	return inferSingleName("credential", topologyCredentialNames(topology.Credentials))
-}
-
-func resolveCredentialConfig(cfg appconfig.Config, credentialFlags credentialConfigFlags) (resolvedCredentialConfig, error) {
-	cfg = credentialFlags.apply(cfg)
-	topologyPath := strings.TrimSpace(cfg.TopologyPath)
-	if topologyPath == "" {
-		if value := strings.TrimSpace(credentialFlags.credentialName); value != "" && value != "default" {
-			return resolvedCredentialConfig{}, fmt.Errorf("legacy 模式只支持 credential=default")
-		}
-		return resolvedCredentialConfig{
-			CredentialName: "default",
-			Config:         cfg,
-		}, nil
-	}
-
-	topology, err := appconfig.LoadTopologyFile(topologyPath)
-	if err != nil {
-		return resolvedCredentialConfig{}, err
-	}
-	if strings.TrimSpace(credentialFlags.credentialName) != "" {
-		topology.DefaultCredential = strings.TrimSpace(credentialFlags.credentialName)
-	}
-	if strings.TrimSpace(topology.DefaultCredential) == "" {
-		name, err := inferDefaultCredential(topology)
-		if err != nil {
-			return resolvedCredentialConfig{}, err
-		}
-		topology.DefaultCredential = name
-	}
-	credential, err := topology.DefaultCredentialConfig()
-	if err != nil {
-		return resolvedCredentialConfig{}, err
-	}
-	if err := credential.Validate(credential.Name); err != nil {
-		return resolvedCredentialConfig{}, err
-	}
-	cfg = cfg.WithCredential(credential.Name, credential)
-	return resolvedCredentialConfig{
-		Topology:       topology,
-		Credential:     credential,
-		CredentialName: credential.Name,
-		Config:         cfg,
-		Custom:         true,
-	}, nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/appruntime"
 	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/health"
 )
@@ -35,7 +36,7 @@ func newHealthCmd() *cobra.Command {
 			cfg = syncFlags.apply(cfg)
 
 			if strings.TrimSpace(cfg.TopologyPath) == "" {
-				service, err := buildHealthService(cfg)
+				service, err := appruntime.BuildHealthService(cfg)
 				if err != nil {
 					return fmt.Errorf("health 失败: %w", err)
 				}

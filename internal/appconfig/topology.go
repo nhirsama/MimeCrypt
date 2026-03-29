@@ -229,7 +229,7 @@ func (c Config) BuildTopology(options TopologyOptions) (Topology, error) {
 	return topology, nil
 }
 
-func (t Topology) Validate() error {
+func (t Topology) ValidateStructure() error {
 	if len(t.Sources) == 0 {
 		return fmt.Errorf("至少需要一个 source")
 	}
@@ -241,11 +241,15 @@ func (t Topology) Validate() error {
 			return err
 		}
 	}
-	if _, err := t.DefaultSourceConfig(); err != nil {
-		return err
+	if strings.TrimSpace(t.DefaultSource) != "" {
+		if _, err := t.DefaultSourceConfig(); err != nil {
+			return err
+		}
 	}
-	if _, err := t.DefaultRouteConfig(); err != nil {
-		return err
+	if strings.TrimSpace(t.DefaultRoute) != "" {
+		if _, err := t.DefaultRouteConfig(); err != nil {
+			return err
+		}
 	}
 	for name, credential := range t.Credentials {
 		if err := credential.Validate(name); err != nil {
@@ -270,16 +274,64 @@ func (t Topology) Validate() error {
 	return nil
 }
 
+func (t Topology) Validate() error {
+	if err := t.ValidateStructure(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(t.DefaultSource) == "" {
+		return fmt.Errorf("default source 未配置")
+	}
+	if strings.TrimSpace(t.DefaultRoute) == "" {
+		return fmt.Errorf("default route 未配置")
+	}
+	return nil
+}
+
+func (t Topology) CredentialConfig(name string) (Credential, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return Credential{}, fmt.Errorf("credential 未配置")
+	}
+	credential, ok := t.Credentials[name]
+	if !ok {
+		return Credential{}, fmt.Errorf("credential 不存在: %s", name)
+	}
+	return credential, nil
+}
+
+func (t Topology) ResolveCredentialRef(explicit string) (string, error) {
+	if value := strings.TrimSpace(explicit); value != "" {
+		if _, err := t.CredentialConfig(value); err != nil {
+			return "", err
+		}
+		return value, nil
+	}
+	if value := strings.TrimSpace(t.DefaultCredential); value != "" {
+		if _, err := t.CredentialConfig(value); err != nil {
+			return "", err
+		}
+		return value, nil
+	}
+	if len(t.Credentials) == 0 {
+		return "", nil
+	}
+	if _, ok := t.Credentials[defaultTopologyCredentialName]; ok {
+		return defaultTopologyCredentialName, nil
+	}
+	if len(t.Credentials) == 1 {
+		for name := range t.Credentials {
+			return strings.TrimSpace(name), nil
+		}
+	}
+	return "", fmt.Errorf("topology 存在多个 credential，请显式设置 credential_ref 或 default_credential")
+}
+
 func (t Topology) DefaultCredentialConfig() (Credential, error) {
 	name := strings.TrimSpace(t.DefaultCredential)
 	if name == "" {
 		return Credential{}, fmt.Errorf("default credential 未配置")
 	}
-	credential, ok := t.Credentials[name]
-	if !ok {
-		return Credential{}, fmt.Errorf("default credential 不存在: %s", name)
-	}
-	return credential, nil
+	return t.CredentialConfig(name)
 }
 
 func (t Topology) DefaultSourceConfig() (Source, error) {

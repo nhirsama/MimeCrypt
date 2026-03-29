@@ -363,6 +363,53 @@ func TestResolveSourcePlanRejectsAmbiguousImplicitCredential(t *testing.T) {
 	}
 }
 
+func TestResolveSourcePlanDoesNotRequireRouteSelectionWhenMultipleRoutesExist(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		Sources: map[string]appconfig.Source{
+			"archive": {
+				Name:         "archive",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Archive/2026",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"primary": {
+				Name:       "primary",
+				SourceRefs: []string{"archive"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+			"audit": {
+				Name:       "audit",
+				SourceRefs: []string{"archive"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard-audit", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	plan, err := ResolveSourcePlan(testRuntimeConfig(stateDir, topologyPath), Selector{})
+	if err != nil {
+		t.Fatalf("ResolveSourcePlan() error = %v", err)
+	}
+	if plan.Source.Name != "archive" {
+		t.Fatalf("Source.Name = %q, want archive", plan.Source.Name)
+	}
+}
+
 func testRuntimeConfig(stateDir, topologyPath string) appconfig.Config {
 	return appconfig.Config{
 		Provider:     "imap",

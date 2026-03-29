@@ -20,10 +20,6 @@ import (
 	"mimecrypt/internal/provider"
 )
 
-type scopedAccessTokenSource interface {
-	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
-}
-
 type dialTLSFunc func(ctx context.Context, addr string) (net.Conn, error)
 
 type client struct {
@@ -31,11 +27,11 @@ type client struct {
 	username      string
 	defaultFolder string
 	scopes        []string
-	tokenSource   scopedAccessTokenSource
+	tokenSource   provider.Session
 	dialTLS       dialTLSFunc
 }
 
-func newClient(cfg appconfig.MailClientConfig, authCfg appconfig.AuthConfig, defaultFolder string, tokenSource scopedAccessTokenSource, dialTLS dialTLSFunc) (*client, error) {
+func newClient(cfg appconfig.MailClientConfig, authCfg appconfig.AuthConfig, defaultFolder string, tokenSource provider.Session, dialTLS dialTLSFunc) (*client, error) {
 	if err := cfg.ValidateIMAP(); err != nil {
 		return nil, err
 	}

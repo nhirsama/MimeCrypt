@@ -104,14 +104,7 @@ func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, er
 	return service, nil
 }
 
-func BuildEnvelopeBuilder(ctx context.Context, run SourceRun) (*adapters.ReaderEnvelopeBuilder, error) {
-	source, err := buildSourceBundle(SourcePlan{
-		Source: run.Source,
-		Config: run.Config,
-	})
-	if err != nil {
-		return nil, err
-	}
+func buildEnvelopeBuilderFromSourceBundle(ctx context.Context, run SourceRun, source sourceBundle) (*adapters.ReaderEnvelopeBuilder, error) {
 	sourceStore, err := buildMailflowSourceStore(ctx, run.Config, source.Clients.Reader, run.Source, run.Route.DeleteSource.Enabled)
 	if err != nil {
 		return nil, err
@@ -126,14 +119,6 @@ func BuildEnvelopeBuilder(ctx context.Context, run SourceRun) (*adapters.ReaderE
 	}, nil
 }
 
-func BuildSourceClients(plan SourcePlan) (provider.SourceClients, error) {
-	bundle, err := buildSourceBundle(plan)
-	if err != nil {
-		return provider.SourceClients{}, err
-	}
-	return bundle.Clients, nil
-}
-
 func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 	if !strings.EqualFold(run.Source.Mode, "poll") {
 		return nil, fmt.Errorf("run 仅支持 polling source，当前 source=%s mode=%s", run.Source.Name, run.Source.Mode)
@@ -145,7 +130,7 @@ func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	coordinator, err := BuildCoordinator(ctx, run)
+	coordinator, err := buildCoordinatorForMode(ctx, run, TransactionModePersistent)
 	if err != nil {
 		return nil, err
 	}
@@ -169,11 +154,7 @@ func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 	}, nil
 }
 
-func BuildCoordinator(ctx context.Context, run SourceRun) (*mailflow.Coordinator, error) {
-	return BuildCoordinatorWithStore(ctx, run, nil)
-}
-
-func BuildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflow.StateStore) (*mailflow.Coordinator, error) {
+func buildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflow.StateStore) (*mailflow.Coordinator, error) {
 	plan, err := buildMailflowPlan(run.Route)
 	if err != nil {
 		return nil, err

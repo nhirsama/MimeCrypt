@@ -114,15 +114,14 @@ func TestLogoutCommandExposesCredentialFlags(t *testing.T) {
 	}
 }
 
-func TestFlowRunCommandIsHiddenDeprecatedAlias(t *testing.T) {
+func TestRootCommandDoesNotExposeLegacyFlowRunAlias(t *testing.T) {
 	t.Parallel()
 
-	cmd := newFlowRunCmd()
-	if !cmd.Hidden {
-		t.Fatalf("Hidden = false, want true")
-	}
-	if cmd.Deprecated == "" || !strings.Contains(cmd.Deprecated, "请改用 run") {
-		t.Fatalf("Deprecated = %q, want migration hint", cmd.Deprecated)
+	root := newRootCmd()
+	for _, cmd := range root.Commands() {
+		if cmd.Name() == "flow-run" {
+			t.Fatalf("unexpected legacy command: %s", cmd.Name())
+		}
 	}
 }
 
@@ -477,87 +476,6 @@ func TestResolveTopologySourceRejectsRouteSelection(t *testing.T) {
 	_, err := resolveTopologySource(appconfig.Config{}, topologyConfigFlags{routeName: "archive"})
 	if err == nil || !strings.Contains(err.Error(), "该命令不支持 route 选择") {
 		t.Fatalf("resolveTopologySource() error = %v, want route selection error", err)
-	}
-}
-
-func TestResolveCredentialConfigLoadsConfiguredCredential(t *testing.T) {
-	t.Parallel()
-
-	stateDir := t.TempDir()
-	topologyPath := filepath.Join(stateDir, "topology.json")
-	content, err := json.Marshal(appconfig.Topology{
-		DefaultCredential: "archive-auth",
-		DefaultSource:     "default",
-		DefaultRoute:      "default",
-		Credentials: map[string]appconfig.Credential{
-			"archive-auth": {
-				Name:           "archive-auth",
-				Kind:           "oauth",
-				TokenStore:     "keyring",
-				KeyringService: "archive-keyring",
-			},
-		},
-		Sources: map[string]appconfig.Source{
-			"default": {
-				Name:         "default",
-				Driver:       "imap",
-				Mode:         "poll",
-				Folder:       "INBOX",
-				PollInterval: time.Minute,
-				CycleTimeout: 2 * time.Minute,
-			},
-		},
-		Sinks: map[string]appconfig.Sink{
-			"discard": {
-				Name:   "discard",
-				Driver: "discard",
-			},
-		},
-		Routes: map[string]appconfig.Route{
-			"default": {
-				Name:       "default",
-				SourceRefs: []string{"default"},
-				Targets: []appconfig.RouteTarget{
-					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
-				},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	resolved, err := resolveCredentialConfig(appconfig.Config{
-		TopologyPath: topologyPath,
-		Auth: appconfig.AuthConfig{
-			StateDir:       stateDir,
-			TokenStore:     "file",
-			KeyringService: "mimecrypt",
-		},
-	}, credentialConfigFlags{topologyFile: topologyPath})
-	if err != nil {
-		t.Fatalf("resolveCredentialConfig() error = %v", err)
-	}
-	if !resolved.Custom || resolved.CredentialName != "archive-auth" {
-		t.Fatalf("unexpected resolved credential config: %+v", resolved)
-	}
-	if got, want := resolved.Config.Auth.StateDir, filepath.Join(stateDir, "credentials", "archive-auth"); got != want {
-		t.Fatalf("Auth.StateDir = %q, want %q", got, want)
-	}
-	if resolved.Config.Auth.TokenStore != "keyring" || resolved.Config.Auth.KeyringService != "archive-keyring" {
-		t.Fatalf("unexpected auth config: %+v", resolved.Config.Auth)
-	}
-}
-
-func TestResolveCredentialConfigRejectsNonDefaultSelectionInLegacyMode(t *testing.T) {
-	t.Parallel()
-
-	_, err := resolveCredentialConfig(appconfig.Config{}, credentialConfigFlags{credentialName: "archive-auth"})
-	if err == nil || !strings.Contains(err.Error(), "legacy 模式只支持 credential=default") {
-		t.Fatalf("resolveCredentialConfig() error = %v, want legacy selection error", err)
 	}
 }
 

@@ -15,11 +15,6 @@ import (
 	"mimecrypt/internal/provider"
 )
 
-type scopedAccessTokenSource interface {
-	accessTokenSource
-	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
-}
-
 type ewsWriter struct {
 	graphHelper *writer
 	ewsClient   *ewsClient
@@ -27,7 +22,7 @@ type ewsWriter struct {
 
 type ewsClient struct {
 	httpClient  *http.Client
-	tokenSource scopedAccessTokenSource
+	tokenSource provider.Session
 	baseURL     string
 	scopes      []string
 }
@@ -134,7 +129,7 @@ type ewsExtendedFieldURI struct {
 	PropertyType string `xml:"PropertyType,attr"`
 }
 
-func newEWSWriter(cfg appconfig.Config, tokenSource scopedAccessTokenSource, httpClient *http.Client) (*ewsWriter, error) {
+func newEWSWriter(cfg appconfig.Config, tokenSource provider.Session, httpClient *http.Client) (*ewsWriter, error) {
 	if tokenSource == nil {
 		return nil, fmt.Errorf("token source 不能为空")
 	}
@@ -161,7 +156,7 @@ func newEWSWriter(cfg appconfig.Config, tokenSource scopedAccessTokenSource, htt
 	}, nil
 }
 
-func newEWSClient(cfg appconfig.MailClientConfig, scopes []string, tokenSource scopedAccessTokenSource, httpClient *http.Client) (*ewsClient, error) {
+func newEWSClient(cfg appconfig.MailClientConfig, scopes []string, tokenSource provider.Session, httpClient *http.Client) (*ewsClient, error) {
 	if err := cfg.ValidateEWS(); err != nil {
 		return nil, err
 	}

@@ -16,29 +16,9 @@ import (
 )
 
 func newRunCmd() *cobra.Command {
-	return newMailflowLoopCmd(mailflowLoopCmdOptions{
-		use:              "run",
-		short:            "执行邮件发现、处理与回写流程",
-		errorPrefix:      "run",
-		includeDebug:     true,
-		hidden:           false,
-		deprecatedNotice: "",
-	})
-}
-
-type mailflowLoopCmdOptions struct {
-	use              string
-	short            string
-	errorPrefix      string
-	includeDebug     bool
-	hidden           bool
-	deprecatedNotice string
-}
-
-func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 	cfg, err := appconfig.LoadFromEnv()
 	if err != nil {
-		return newErrorCommand(options.use, options.short, err)
+		return newErrorCommand("run", "执行邮件发现、处理与回写流程", err)
 	}
 
 	providerFlags := newProviderConfigFlags(cfg)
@@ -53,11 +33,9 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 	var deleteSource bool
 
 	cmd := &cobra.Command{
-		Use:        options.use,
-		Short:      options.short,
-		Deprecated: options.deprecatedNotice,
-		Hidden:     options.hidden,
-		Args:       noArgs(),
+		Use:   "run",
+		Short: "执行邮件发现、处理与回写流程",
+		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
 			cfg = topologyFlags.apply(cfg)
@@ -71,7 +49,7 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 				DeleteSource:    deleteSource,
 			})
 			if err != nil {
-				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+				return fmt.Errorf("run 失败: %w", err)
 			}
 			if resolved.Custom {
 				if err := validateCustomTopologyFlags(cmd, resolved.Custom,
@@ -87,45 +65,44 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 					"cycle-timeout",
 					"include-existing",
 				); err != nil {
-					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+					return fmt.Errorf("run 失败: %w", err)
 				}
 				if err := cfg.Mail.ValidatePipelineBase(); err != nil {
-					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+					return fmt.Errorf("run 失败: %w", err)
 				}
 			} else {
 				if err := validateMailflowFlags(cfg.Mail.Pipeline.SaveOutput, writeBack, verifyWriteBack, deleteSource, processingFlags.writeBackFolder); err != nil {
-					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+					return fmt.Errorf("run 失败: %w", err)
 				}
 				if err := cfg.Mail.ValidateSync(); err != nil {
-					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+					return fmt.Errorf("run 失败: %w", err)
 				}
 			}
 			locks, err := acquireRouteLocks(resolved.Runs)
 			if err != nil {
-				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+				return fmt.Errorf("run 失败: %w", err)
 			}
 			defer func() {
 				releaseRouteLocks(locks)
 			}()
 
-			if options.includeDebug && debugSaveFirst {
+			if debugSaveFirst {
 				if len(resolved.Runs) != 1 {
-					return fmt.Errorf("%s 失败: --debug-save-first 需要显式选择单个 source", options.errorPrefix)
+					return fmt.Errorf("run 失败: --debug-save-first 需要显式选择单个 source")
 				}
 				return runDebugSaveFirst(cmd.Context(), resolvedMailflowTopology{
 					SourceRun: resolved.Runs[0],
-					Topology:  resolved.Topology,
 					Custom:    resolved.Custom,
 				})
 			}
 
 			configuredRuns, err := buildConfiguredRuns(cmd.Context(), resolved.Runs)
 			if err != nil {
-				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+				return fmt.Errorf("run 失败: %w", err)
 			}
 
 			if err := runAllSourcesOnce(cmd.Context(), configuredRuns); err != nil {
-				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+				return fmt.Errorf("run 失败: %w", err)
 			}
 			if once {
 				return nil
@@ -141,9 +118,7 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 	syncFlags.addFlags(cmd)
 	cmd.Flags().BoolVar(&once, "once", false, "执行一个同步周期后退出")
 	cmd.Flags().BoolVar(&includeExisting, "include-existing", false, "首次启动时也下载现有历史邮件")
-	if options.includeDebug {
-		cmd.Flags().BoolVar(&debugSaveFirst, "debug-save-first", false, "调试模式下处理当前文件夹中最新的一封邮件并退出")
-	}
+	cmd.Flags().BoolVar(&debugSaveFirst, "debug-save-first", false, "调试模式下处理当前文件夹中最新的一封邮件并退出")
 	cmd.Flags().BoolVar(&writeBack, "write-back", false, "处理后把邮件回写到邮箱")
 	cmd.Flags().BoolVar(&verifyWriteBack, "verify-write-back", false, "回写后校验邮件是否成功写入")
 	cmd.Flags().BoolVar(&deleteSource, "delete-source", false, "当写入目标与来源属于同一逻辑邮箱存储时删除源邮件")
@@ -155,6 +130,34 @@ type configuredSourceRun struct {
 	Run    flowruntime.SourceRun
 	Runner interface {
 		RunOnce(context.Context) (mailflow.Result, bool, error)
+	}
+}
+
+func runMailflowCycle(ctx context.Context, cycleTimeout time.Duration, runner interface {
+	RunOnce(context.Context) (mailflow.Result, bool, error)
+}) (int, int, int, error) {
+	cycleCtx, cancel := context.WithTimeout(ctx, cycleTimeout)
+	defer cancel()
+
+	processedCount := 0
+	skippedCount := 0
+	deletedCount := 0
+	for {
+		result, processed, err := runner.RunOnce(cycleCtx)
+		if err != nil {
+			return processedCount, skippedCount, deletedCount, err
+		}
+		if !processed {
+			return processedCount, skippedCount, deletedCount, nil
+		}
+		if result.Skipped {
+			skippedCount++
+		} else {
+			processedCount++
+		}
+		if result.SourceDeleted {
+			deletedCount++
+		}
 	}
 }
 

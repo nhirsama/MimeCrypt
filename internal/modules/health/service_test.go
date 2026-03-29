@@ -26,6 +26,10 @@ func (f fakeSession) AccessToken(context.Context) (string, error) {
 	return f.accessToken, f.accessErr
 }
 
+func (f fakeSession) AccessTokenForScopes(context.Context, []string) (string, error) {
+	return f.accessToken, f.accessErr
+}
+
 func (f fakeSession) LoadCachedToken() (provider.Token, error) {
 	return f.loadToken, f.loadErr
 }

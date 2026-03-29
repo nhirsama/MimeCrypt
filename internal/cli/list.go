@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/appruntime"
 	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/list"
 	"mimecrypt/internal/provider"
@@ -54,7 +55,7 @@ func newListCmd() *cobra.Command {
 				if strings.TrimSpace(cfg.Mail.Sync.Folder) == "" {
 					return fmt.Errorf("list 失败: folder 不能为空")
 				}
-				service, err = buildListService(cfg)
+				service, err = appruntime.BuildListService(cfg)
 				if err != nil {
 					return fmt.Errorf("list 失败: %w", err)
 				}
