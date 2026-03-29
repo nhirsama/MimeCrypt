@@ -22,6 +22,7 @@ MimeCrypt 的核心职责如下：
 - 明文暴露收敛：缩短邮件以明文形式驻留于磁盘、内存和中间工件中的时间窗口
 - 模块解耦：登录、发现、下载、加密、回写、审计等能力分别建模
 - 协议抽象：provider 接口与具体协议实现分离，便于扩展新的邮件服务
+- 邮件级事务：以“单封邮件”为最小处理单元，显式建模幂等、确认与源端删除
 - 审计可追踪：关键步骤以 JSONL 形式记录，便于留痕与排障
 
 ## 代码结构
@@ -38,6 +39,8 @@ MimeCrypt 的核心职责如下：
 - `internal/modules/writeback`：回写与幂等对账抽象
 - `internal/modules/process`：单封邮件处理链路编排
 - `internal/modules/discover`：增量发现与循环处理
+- `internal/mailflow`：邮件级事务模型、执行计划、协调器与状态存储
+- `internal/mailflow/adapters`：基于现有 provider / writeback 的 mailflow 适配层
 - `internal/modules/audit`：关键流程审计日志写入
 - `internal/modules/backup`：本地备份落盘
 - `internal/modules/health`：运行环境与连通性检查
@@ -52,6 +55,50 @@ MimeCrypt 的核心职责如下：
 - `internal/mimeutil`：MIME 头部识别与 MimeCrypt 标记校验
 
 该结构围绕“模块编排依赖接口，协议实现封装于 provider”这一原则组织，便于在保持主链路稳定的前提下扩展新的接入方式。
+
+## Mailflow 架构演进
+
+项目当前正在从“单一 provider + 单一处理链路”演进到以邮件为中心的三层模型：
+
+1. 邮件生产 `Producer`
+   - 负责从 Graph、IMAP、Gmail API、HTTP webhook、SMTP ingress 等来源产出统一邮件对象。
+   - 输出统一的 `MailEnvelope`，其中包含原始 MIME 打开器、`MailTrace` 追踪上下文，以及可选的来源句柄。
+2. 邮件处理 `Processor`
+   - 负责以单封邮件为单位执行加密、备份、补头、审计，并根据规则生成该邮件的 `ExecutionPlan`。
+   - 处理层不关心底层协议，只处理 MIME、邮件级上下文和执行计划。
+3. 邮件消费 `Consumer`
+   - 负责将处理结果写入一个或多个出口，并返回幂等写入的 `DeliveryReceipt`。
+   - 消费层只负责“写成功、可校验、可重试”，不负责删除源邮件。
+
+在三层之外，`TransactionCoordinator` 负责邮件级事务推进：持久化状态、驱动多个消费目标、在满足条件后确认来源、并在显式启用且满足同邮箱约束时删除源邮件。当前 `internal/mailflow` 已经实现了这套核心骨架，并提供：
+
+- `MailEnvelope` / `MailTrace` / `ExecutionPlan` / `DeliveryReceipt`
+- 基于文件系统的 `FileStateStore`
+- 基于现有 `provider.Reader` 的 polling producer
+- 基于现有加密 / 备份 / 审计模块的 encrypting processor
+- 基于本地目录的 file consumer
+- 基于现有 `writeback.Service` 的 consumer 适配器
+
+这套模型背后的关键约束如下：
+
+- 幂等与状态推进以“单封邮件事务”为单位，而不是以同步周期或 provider 为单位。
+- 删除源邮件不再作为 sink / writer 的隐式副作用，而是协调层的显式步骤。
+- 只有当删除策略启用、必需出口已提交成功，并且目标 receipt 证明与来源属于同一逻辑邮箱存储时，才允许删除源邮件。
+- 处理计划一旦针对某封邮件持久化，就不应在重试过程中被新的规则结果覆盖，避免路由漂移。
+- 已加密邮件在 `mailflow` 中属于终态跳过：记录审计后确认来源，不再无限重试。
+
+### Source / Sink Driver 方向
+
+后续配置模型会继续向类似 `rclone remote` 的命名驱动方式收敛。设计方向如下：
+
+- `credential`：命名凭据，封装 OAuth、basic auth、bearer token、证书等秘密材料。
+- `source`：命名邮件来源，声明 `driver`、`credential_ref`、监听或轮询参数。
+- `sink`：命名邮件出口，声明 `driver`、`credential_ref`、目标邮箱或目标文件夹。
+- `route`：按邮件规则将一个 source 过来的邮件事务路由到一个或多个 sink。
+
+也就是说，未来会以“命名 source / sink driver”而不是单一全局 provider 作为主要配置单位。这样同一个实例可以同时接入多个来源和多个出口。
+
+当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织；`mailflow` 是正在进行中的迁移目标，而不是已经完全替换旧路径的最终形态。
 
 ## 当前能力范围
 
@@ -71,11 +118,14 @@ MimeCrypt 的核心职责如下：
 - 原始 MIME 的加密备份
 - 关键步骤 JSONL 审计日志
 - 单实例运行锁与只读 / 深度两级健康检查
+- `mailflow` 事务骨架、文件状态存储以及 producer / processor / consumer 适配层
 
 后续规划方向包括：
 
-- `google` provider
-- webhook 驱动的邮件发现入口
+- 将现有 `run` / `process` 链路逐步迁移到 `mailflow`
+- `google` / `gmail` 来源驱动
+- HTTP webhook 与 SMTP ingress 等 push 型来源
+- 命名 source / sink / route / credential 配置模型
 - 更细粒度的邮件路由与密钥选择策略
 
 ## Provider 与回写后端
@@ -180,6 +230,15 @@ go run ./cmd/mimecrypt run --once --protect-subject
 
 ```bash
 go run ./cmd/mimecrypt run --debug-save-first --save-output --output-dir ./output
+```
+
+基于 `mailflow` 执行邮件级事务处理：
+
+```bash
+go run ./cmd/mimecrypt flow-run --once --save-output --output-dir ./output
+go run ./cmd/mimecrypt flow-run --once --write-back --verify-write-back
+go run ./cmd/mimecrypt flow-run --once --write-back --delete-source
+go run ./cmd/mimecrypt flow-run --poll-interval 1m --save-output --write-back
 ```
 
 ## 配置

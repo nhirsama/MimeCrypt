@@ -2,6 +2,7 @@ package mailflow
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -46,11 +47,21 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 	if len(state.Plan.Targets) == 0 || !hasRequiredDeliveries(state, state.Plan) {
 		processed, err := c.Processor.Process(ctx, envelope)
 		if err != nil {
+			if errors.Is(err, ErrSkipMessage) {
+				state.Trace = envelope.Trace
+				if err := c.ackAndComplete(ctx, &state, envelope.Source); err != nil {
+					return Result{}, err
+				}
+				return c.result(state), nil
+			}
 			return Result{}, err
 		}
 		if err := processed.Validate(); err != nil {
 			return Result{}, err
 		}
+		defer func() {
+			_ = processed.Release()
+		}()
 		if processed.Trace.TransactionKey != key {
 			return Result{}, fmt.Errorf("processor 返回的 transaction key 与入口不一致")
 		}
@@ -125,20 +136,7 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 		}
 	}
 
-	if !state.SourceAcked {
-		if envelope.Source != nil {
-			if err := envelope.Source.Acknowledge(ctx); err != nil {
-				return Result{}, fmt.Errorf("确认来源邮件完成失败: %w", err)
-			}
-		}
-		state.SourceAcked = true
-		if err := c.Store.Save(ctx, state); err != nil {
-			return Result{}, err
-		}
-	}
-
-	state.Completed = true
-	if err := c.Store.Save(ctx, state); err != nil {
+	if err := c.ackAndComplete(ctx, &state, envelope.Source); err != nil {
 		return Result{}, err
 	}
 
@@ -209,4 +207,27 @@ func shouldDeleteSource(state TxState, policy DeleteSourcePolicy) bool {
 	}
 
 	return false
+}
+
+func (c *Coordinator) ackAndComplete(ctx context.Context, state *TxState, source SourceHandle) error {
+	if state == nil {
+		return fmt.Errorf("transaction state 不能为空")
+	}
+	if !state.SourceAcked {
+		if source != nil {
+			if err := source.Acknowledge(ctx); err != nil {
+				return fmt.Errorf("确认来源邮件完成失败: %w", err)
+			}
+		}
+		state.SourceAcked = true
+		if err := c.Store.Save(ctx, *state); err != nil {
+			return err
+		}
+	}
+
+	state.Completed = true
+	if err := c.Store.Save(ctx, *state); err != nil {
+		return err
+	}
+	return nil
 }

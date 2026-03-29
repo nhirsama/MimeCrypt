@@ -311,6 +311,14 @@ func (c MailConfig) SyncStatePath() string {
 	return filepath.Join(c.Sync.StateDir, "sync-"+sanitizeFileComponent(c.Sync.Folder)+".json")
 }
 
+func (c MailConfig) FlowProducerStatePath() string {
+	return filepath.Join(c.Sync.StateDir, "flow-sync-"+sanitizeFileComponent(c.Sync.Folder)+".json")
+}
+
+func (c MailConfig) FlowStateDir() string {
+	return filepath.Join(c.Sync.StateDir, "flow-state", sanitizeFileComponent(c.Sync.Folder))
+}
+
 func (c Config) RunLockPath() string {
 	return filepath.Join(c.Auth.StateDir, "run-"+sanitizeFileComponent(c.Provider)+"-"+sanitizeFileComponent(c.Mail.Sync.Folder)+".lock")
 }

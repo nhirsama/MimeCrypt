@@ -246,6 +246,42 @@ func TestCoordinatorKeepsSourceWhenStoreDiffers(t *testing.T) {
 	}
 }
 
+func TestCoordinatorAcknowledgesSourceWhenProcessorSkipsMessage(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{}
+	source := &fakeSource{}
+	processor := &fakeProcessor{
+		err: ErrSkipMessage,
+	}
+
+	coordinator := &Coordinator{
+		Processor: processor,
+		Store:     store,
+	}
+
+	result, err := coordinator.Run(context.Background(), MailEnvelope{
+		MIME:   bytesOpener("source"),
+		Trace:  MailTrace{TransactionKey: "tx-skip"},
+		Source: source,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !result.Completed {
+		t.Fatalf("Completed = false, want true")
+	}
+	if !result.SourceAcked {
+		t.Fatalf("SourceAcked = false, want true")
+	}
+	if source.ackCalls != 1 {
+		t.Fatalf("ackCalls = %d, want 1", source.ackCalls)
+	}
+	if source.deleteCalls != 0 {
+		t.Fatalf("deleteCalls = %d, want 0", source.deleteCalls)
+	}
+}
+
 func TestCoordinatorSkipsCommittedDeliveriesOnRetry(t *testing.T) {
 	t.Parallel()
 

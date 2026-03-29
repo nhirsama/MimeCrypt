@@ -485,6 +485,24 @@ func TestMailConfigSyncStatePathSanitizesFolder(t *testing.T) {
 	}
 }
 
+func TestMailConfigFlowPathsSanitizeFolder(t *testing.T) {
+	t.Parallel()
+
+	cfg := MailConfig{
+		Sync: MailSyncConfig{
+			Folder:   "Archive/2026:April",
+			StateDir: "/state",
+		},
+	}
+
+	if got, want := cfg.FlowProducerStatePath(), filepath.Join("/state", "flow-sync-Archive_2026_April.json"); got != want {
+		t.Fatalf("FlowProducerStatePath() = %q, want %q", got, want)
+	}
+	if got, want := cfg.FlowStateDir(), filepath.Join("/state", "flow-state", "Archive_2026_April"); got != want {
+		t.Fatalf("FlowStateDir() = %q, want %q", got, want)
+	}
+}
+
 func resetMimeCryptEnv(t *testing.T) {
 	t.Helper()
 

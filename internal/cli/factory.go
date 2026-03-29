@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
+	"mimecrypt/internal/mailflow"
+	"mimecrypt/internal/mailflow/adapters"
 	"mimecrypt/internal/modules/audit"
 	"mimecrypt/internal/modules/backup"
 	"mimecrypt/internal/modules/discover"
@@ -175,6 +178,100 @@ func buildDiscoverService(cfg appconfig.Config) (*discover.Service, error) {
 	}, nil
 }
 
+func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, includeExisting, writeBack, verifyWriteBack, deleteSource bool) (*mailflow.Runner, error) {
+	clients, err := buildProviderClients(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	plan, err := buildMailflowPlan(cfg.Mail.Pipeline.SaveOutput, writeBack, deleteSource)
+	if err != nil {
+		return nil, err
+	}
+
+	backupEncryptor, err := buildCatchAllBackupEncryptor(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	sourceDriver := normalizeDriver(cfg.Provider, "imap")
+	sourceAccount := ""
+	if deleteSource {
+		sourceAccount, err = resolveStoreAccount(ctx, sourceDriver, cfg, clients.Reader)
+		if err != nil {
+			return nil, err
+		}
+	}
+	sourceStore := mailflow.StoreRef{
+		Driver:  sourceDriver,
+		Account: sourceAccount,
+		Mailbox: cfg.Mail.Sync.Folder,
+	}
+
+	consumers := make(map[string]mailflow.Consumer)
+	if cfg.Mail.Pipeline.SaveOutput {
+		consumers["local-output"] = &adapters.FileConsumer{
+			OutputDir: cfg.Mail.Pipeline.OutputDir,
+		}
+	}
+	if writeBack {
+		sinkDriver := normalizeDriver(cfg.Mail.Pipeline.WriteBackProvider, "imap")
+		sinkAccount := ""
+		if deleteSource {
+			sinkAccount, err = resolveStoreAccount(ctx, sinkDriver, cfg, clients.Reader)
+			if err != nil {
+				return nil, err
+			}
+		}
+		destinationFolder := strings.TrimSpace(cfg.Mail.Pipeline.WriteBackFolder)
+		if destinationFolder == "" {
+			destinationFolder = cfg.Mail.Sync.Folder
+		}
+		consumers["write-back"] = &adapters.WritebackConsumer{
+			Service:             &writeback.Service{Writer: clients.Writer},
+			DestinationFolderID: cfg.Mail.Pipeline.WriteBackFolder,
+			Verify:              verifyWriteBack,
+			Store: mailflow.StoreRef{
+				Driver:  sinkDriver,
+				Account: sinkAccount,
+				Mailbox: destinationFolder,
+			},
+		}
+	}
+
+	return &mailflow.Runner{
+		Producer: &adapters.PollingProducer{
+			Name:            "default",
+			Driver:          sourceDriver,
+			Folder:          cfg.Mail.Sync.Folder,
+			StatePath:       cfg.Mail.FlowProducerStatePath(),
+			IncludeExisting: includeExisting,
+			Store:           sourceStore,
+			Reader:          clients.Reader,
+			Deleter:         clients.Deleter,
+		},
+		Coordinator: &mailflow.Coordinator{
+			Processor: &adapters.EncryptingProcessor{
+				Encryptor:       &encrypt.Service{ProtectSubject: cfg.Mail.Pipeline.ProtectSubject},
+				BackupEncryptor: backupEncryptor,
+				Backupper:       &backup.Service{},
+				Auditor: &audit.Service{
+					Path:   cfg.Mail.Pipeline.AuditLogPath,
+					Stdout: cfg.Mail.Pipeline.AuditStdout,
+					Writer: os.Stdout,
+				},
+				WorkDir:    cfg.Mail.Pipeline.WorkDir,
+				BackupDir:  cfg.Mail.Pipeline.BackupDir,
+				StaticPlan: plan,
+			},
+			Store: mailflow.FileStateStore{
+				Dir: cfg.Mail.FlowStateDir(),
+			},
+			Consumers: consumers,
+		},
+	}, nil
+}
+
 func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL, ewsBaseURL, imapAddr, imapUsername string) appconfig.Config {
 	cfg := defaults
 	previousStateDir := cfg.Mail.Sync.StateDir
@@ -205,6 +302,80 @@ func validateWriteBackFlags(writeBack, verifyWriteBack bool, writeBackFolder str
 	}
 
 	return nil
+}
+
+func validateMailflowFlags(saveOutput, writeBack, verifyWriteBack, deleteSource bool, writeBackFolder string) error {
+	if err := validateWriteBackFlags(writeBack, verifyWriteBack, writeBackFolder); err != nil {
+		return err
+	}
+	if deleteSource && !writeBack {
+		return fmt.Errorf("--delete-source 依赖 --write-back")
+	}
+	if !saveOutput && !writeBack {
+		return fmt.Errorf("至少需要一个消费目标：--save-output 或 --write-back")
+	}
+	return nil
+}
+
+func buildMailflowPlan(saveOutput, writeBack, deleteSource bool) (mailflow.ExecutionPlan, error) {
+	targets := make([]mailflow.DeliveryTarget, 0, 2)
+	if saveOutput {
+		targets = append(targets, mailflow.DeliveryTarget{
+			Name:     "local-output",
+			Consumer: "local-output",
+			Artifact: "primary",
+			Required: true,
+		})
+	}
+	if writeBack {
+		targets = append(targets, mailflow.DeliveryTarget{
+			Name:     "write-back",
+			Consumer: "write-back",
+			Artifact: "primary",
+			Required: true,
+		})
+	}
+
+	plan := mailflow.ExecutionPlan{
+		Targets: targets,
+	}
+	if deleteSource {
+		plan.DeleteSource = mailflow.DeleteSourcePolicy{
+			Enabled:           true,
+			RequireSameStore:  true,
+			EligibleConsumers: []string{"write-back"},
+		}
+	}
+	if err := plan.Validate(); err != nil {
+		return mailflow.ExecutionPlan{}, err
+	}
+	return plan, nil
+}
+
+func resolveStoreAccount(ctx context.Context, driver string, cfg appconfig.Config, reader provider.Reader) (string, error) {
+	driver = normalizeDriver(driver, "")
+	if driver == "imap" {
+		return strings.TrimSpace(cfg.Mail.Client.IMAPUsername), nil
+	}
+	if reader == nil {
+		return "", nil
+	}
+	user, err := reader.Me(ctx)
+	if err != nil {
+		return "", fmt.Errorf("查询当前邮箱账号失败: %w", err)
+	}
+	if account := strings.TrimSpace(user.Account()); account != "" {
+		return account, nil
+	}
+	return strings.TrimSpace(user.ID), nil
+}
+
+func normalizeDriver(value, fallback string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return strings.ToLower(strings.TrimSpace(fallback))
+	}
+	return value
 }
 
 func buildCatchAllBackupEncryptor(cfg appconfig.Config) (*encrypt.Service, error) {

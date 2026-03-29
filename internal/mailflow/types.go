@@ -9,12 +9,16 @@ import (
 	"time"
 )
 
-var ErrNoMessages = errors.New("暂无待处理邮件")
+var (
+	ErrNoMessages  = errors.New("暂无待处理邮件")
+	ErrSkipMessage = errors.New("当前邮件无需继续投递")
+)
 
 // MIMEOpener 以流的形式提供一封邮件或产物的 MIME 内容。
 type MIMEOpener func() (io.ReadCloser, error)
 
 // StoreRef 表示某个邮件来源或去处背后的逻辑邮箱存储。
+// Mailbox 仅作为附加定位信息，不参与“是否属于同一逻辑邮箱存储”的判断。
 type StoreRef struct {
 	Driver  string `json:"driver,omitempty"`
 	Account string `json:"account,omitempty"`
@@ -27,8 +31,7 @@ func (r StoreRef) Valid() bool {
 
 func (r StoreRef) Equal(other StoreRef) bool {
 	return strings.EqualFold(strings.TrimSpace(r.Driver), strings.TrimSpace(other.Driver)) &&
-		strings.TrimSpace(r.Account) == strings.TrimSpace(other.Account) &&
-		strings.TrimSpace(r.Mailbox) == strings.TrimSpace(other.Mailbox)
+		strings.TrimSpace(r.Account) == strings.TrimSpace(other.Account)
 }
 
 // MailTrace 保存邮件处理过程中需要稳定透传的追踪上下文。
@@ -154,6 +157,7 @@ type ProcessedMail struct {
 	Trace     MailTrace               `json:"trace"`
 	Plan      ExecutionPlan           `json:"plan"`
 	Artifacts map[string]MailArtifact `json:"-"`
+	Cleanup   func() error            `json:"-"`
 }
 
 func (m ProcessedMail) Validate() error {
@@ -189,6 +193,13 @@ func (m ProcessedMail) Artifact(name string) (MailArtifact, error) {
 		return MailArtifact{}, fmt.Errorf("找不到产物: %s", name)
 	}
 	return artifact, nil
+}
+
+func (m ProcessedMail) Release() error {
+	if m.Cleanup != nil {
+		return m.Cleanup()
+	}
+	return nil
 }
 
 type Producer interface {
