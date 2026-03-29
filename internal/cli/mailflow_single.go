@@ -7,61 +7,52 @@ import (
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/mailflow/adapters"
-	"mimecrypt/internal/provider"
 )
 
-func buildMailflowEnvelopeBuilder(ctx context.Context, cfg appconfig.Config, clients provider.Clients, deleteSource bool) (*adapters.ReaderEnvelopeBuilder, error) {
-	topology, err := cfg.BuildTopology(appconfig.TopologyOptions{DeleteSource: deleteSource})
+func buildMailflowEnvelopeBuilder(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*adapters.ReaderEnvelopeBuilder, error) {
+	sourceClients, err := buildSourceProviderClients(cfg, resolved.Source)
 	if err != nil {
 		return nil, err
 	}
-	source, err := topology.DefaultSourceConfig()
-	if err != nil {
-		return nil, err
-	}
-	sourceStore, err := buildMailflowSourceStore(ctx, cfg, clients.Reader, source, deleteSource)
+	sourceStore, err := buildMailflowSourceStore(ctx, cfg, sourceClients.Reader, resolved.Source, resolved.Route.DeleteSource.Enabled)
 	if err != nil {
 		return nil, err
 	}
 	return &adapters.ReaderEnvelopeBuilder{
-		Name:    source.Name,
-		Driver:  normalizeDriver(source.Driver, "imap"),
-		Folder:  source.Folder,
+		Name:    resolved.Source.Name,
+		Driver:  normalizeDriver(resolved.Source.Driver, "imap"),
+		Folder:  resolved.Source.Folder,
 		Store:   sourceStore,
-		Reader:  clients.Reader,
-		Deleter: clients.Deleter,
+		Reader:  sourceClients.Reader,
+		Deleter: sourceClients.Deleter,
 	}, nil
 }
 
-func runMailflowMessageByID(ctx context.Context, cfg appconfig.Config, messageID string, writeBack, verifyWriteBack, deleteSource bool) (mailflowSummary, error) {
-	clients, err := buildProviderClients(cfg)
+func runMailflowMessageByID(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology, messageID string) (mailflowSummary, error) {
+	builder, err := buildMailflowEnvelopeBuilder(ctx, cfg, resolved)
 	if err != nil {
 		return mailflowSummary{}, err
 	}
-	builder, err := buildMailflowEnvelopeBuilder(ctx, cfg, clients, deleteSource)
+	envelope, err := builder.EnvelopeForID(ctx, messageID, resolved.Source.Folder)
 	if err != nil {
 		return mailflowSummary{}, err
 	}
-	envelope, err := builder.EnvelopeForID(ctx, messageID, cfg.Mail.Sync.Folder)
-	if err != nil {
-		return mailflowSummary{}, err
-	}
-	return runMailflowEnvelope(ctx, cfg, clients, envelope, writeBack, verifyWriteBack, deleteSource)
+	return runMailflowEnvelope(ctx, cfg, resolved, envelope)
 }
 
-func runMailflowFirstMessage(ctx context.Context, cfg appconfig.Config, writeBack, verifyWriteBack, deleteSource bool) (mailflowSummary, bool, error) {
-	clients, err := buildProviderClients(cfg)
+func runMailflowFirstMessage(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (mailflowSummary, bool, error) {
+	sourceClients, err := buildSourceProviderClients(cfg, resolved.Source)
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
-	message, found, err := clients.Reader.FirstMessageInFolder(ctx, cfg.Mail.Sync.Folder)
+	message, found, err := sourceClients.Reader.FirstMessageInFolder(ctx, resolved.Source.Folder)
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
 	if !found {
 		return mailflowSummary{}, false, nil
 	}
-	builder, err := buildMailflowEnvelopeBuilder(ctx, cfg, clients, deleteSource)
+	builder, err := buildMailflowEnvelopeBuilder(ctx, cfg, resolved)
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
@@ -69,23 +60,15 @@ func runMailflowFirstMessage(ctx context.Context, cfg appconfig.Config, writeBac
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
-	summary, err := runMailflowEnvelope(ctx, cfg, clients, envelope, writeBack, verifyWriteBack, deleteSource)
+	summary, err := runMailflowEnvelope(ctx, cfg, resolved, envelope)
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
 	return summary, true, nil
 }
 
-func runMailflowEnvelope(ctx context.Context, cfg appconfig.Config, clients provider.Clients, envelope mailflow.MailEnvelope, writeBack, verifyWriteBack, deleteSource bool) (mailflowSummary, error) {
-	topology, err := cfg.BuildTopology(appconfig.TopologyOptions{
-		WriteBack:       writeBack,
-		VerifyWriteBack: verifyWriteBack,
-		DeleteSource:    deleteSource,
-	})
-	if err != nil {
-		return mailflowSummary{}, err
-	}
-	coordinator, err := buildMailflowCoordinatorWithStore(ctx, cfg, clients, topology, &mailflow.MemoryStateStore{})
+func runMailflowEnvelope(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology, envelope mailflow.MailEnvelope) (mailflowSummary, error) {
+	coordinator, err := buildMailflowCoordinatorWithStore(ctx, cfg, resolved, &mailflow.MemoryStateStore{})
 	if err != nil {
 		return mailflowSummary{}, err
 	}

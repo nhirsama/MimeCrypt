@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,6 +19,7 @@ func newHealthCmd() *cobra.Command {
 	}
 
 	providerFlags := newProviderConfigFlags(cfg)
+	topologyFlags := newTopologyConfigFlags(cfg)
 	syncFlags := newSyncConfigFlags(cfg)
 	timeout := 30 * time.Second
 	deep := false
@@ -28,11 +30,27 @@ func newHealthCmd() *cobra.Command {
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
+			cfg = topologyFlags.apply(cfg)
 			cfg = syncFlags.apply(cfg)
 
-			service, err := buildHealthService(cfg)
-			if err != nil {
-				return fmt.Errorf("health 失败: %w", err)
+			var service *health.Service
+			if strings.TrimSpace(cfg.TopologyPath) == "" {
+				service, err = buildHealthService(cfg)
+				if err != nil {
+					return fmt.Errorf("health 失败: %w", err)
+				}
+			} else {
+				resolved, err := resolveMailflowTopology(cfg, topologyFlags, appconfig.TopologyOptions{})
+				if err != nil {
+					return fmt.Errorf("health 失败: %w", err)
+				}
+				if err := validateCustomTopologyFlags(cmd, resolved, "folder", "poll-interval", "cycle-timeout"); err != nil {
+					return fmt.Errorf("health 失败: %w", err)
+				}
+				service, err = buildTopologyHealthService(cmd.Context(), cfg, resolved)
+				if err != nil {
+					return fmt.Errorf("health 失败: %w", err)
+				}
 			}
 			service.Deep = deep
 
@@ -53,6 +71,7 @@ func newHealthCmd() *cobra.Command {
 	}
 
 	providerFlags.addFlags(cmd)
+	topologyFlags.addFlags(cmd)
 	syncFlags.addFlags(cmd)
 	cmd.Flags().BoolVar(&deep, "deep", deep, "执行包含 token 刷新与 provider 连通性探测的深度检查")
 	cmd.Flags().DurationVar(&timeout, "timeout", timeout, "健康检查总超时时间")

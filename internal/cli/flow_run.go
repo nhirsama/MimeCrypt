@@ -2,10 +2,10 @@ package cli
 
 import (
 	"context"
+	"time"
 
 	"github.com/spf13/cobra"
 
-	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
 )
 
@@ -20,10 +20,10 @@ func newFlowRunCmd() *cobra.Command {
 	})
 }
 
-func runMailflowCycle(ctx context.Context, cfg appconfig.Config, runner interface {
+func runMailflowCycle(ctx context.Context, cycleTimeout time.Duration, runner interface {
 	RunOnce(context.Context) (mailflow.Result, bool, error)
 }) (int, int, int, error) {
-	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.Sync.CycleTimeout)
+	cycleCtx, cancel := context.WithTimeout(ctx, cycleTimeout)
 	defer cancel()
 
 	processedCount := 0

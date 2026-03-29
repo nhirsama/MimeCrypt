@@ -63,6 +63,33 @@ func resolveIMAPUsernameForCommand(stateDir, fallback string, cmd *cobra.Command
 	return strings.TrimSpace(fallback)
 }
 
+type topologyConfigFlags struct {
+	topologyFile string
+	sourceName   string
+	routeName    string
+}
+
+func newTopologyConfigFlags(cfg appconfig.Config) topologyConfigFlags {
+	return topologyConfigFlags{
+		topologyFile: cfg.TopologyPath,
+	}
+}
+
+func (f *topologyConfigFlags) addFlags(cmd *cobra.Command) {
+	f.addSourceFlags(cmd)
+	cmd.Flags().StringVar(&f.routeName, "route", f.routeName, "选择 topology 中的 route 名称")
+}
+
+func (f *topologyConfigFlags) addSourceFlags(cmd *cobra.Command) {
+	cmd.Flags().StringVar(&f.topologyFile, "topology-file", f.topologyFile, "命名 source / sink / route 配置文件路径（JSON）")
+	cmd.Flags().StringVar(&f.sourceName, "source", f.sourceName, "选择 topology 中的 source 名称")
+}
+
+func (f topologyConfigFlags) apply(cfg appconfig.Config) appconfig.Config {
+	cfg.TopologyPath = strings.TrimSpace(f.topologyFile)
+	return cfg
+}
+
 type processingConfigFlags struct {
 	outputDir         string
 	saveOutput        bool

@@ -83,7 +83,7 @@ MimeCrypt 的核心职责如下：
 
 - 幂等与状态推进以“单封邮件事务”为单位，而不是以同步周期或 provider 为单位。
 - 删除源邮件不再作为 sink / writer 的隐式副作用，而是协调层的显式步骤。
-- 只有当删除策略启用、必需出口已提交成功，并且目标 receipt 证明与来源属于同一逻辑邮箱存储时，才允许删除源邮件。
+- 默认 topology 自动生成的删除源邮件策略会启用“同一逻辑邮箱存储”约束；自定义 route 也可以显式放宽这一条件，但删除动作仍只会在必需出口已提交成功后发生。
 - 处理计划一旦针对某封邮件持久化，就不应在重试过程中被新的规则结果覆盖，避免路由漂移。
 - 已加密邮件在 `mailflow` 中属于终态跳过：记录审计后确认来源，不再无限重试。
 
@@ -98,7 +98,7 @@ MimeCrypt 的核心职责如下：
 
 也就是说，未来会以“命名 source / sink driver”而不是单一全局 provider 作为主要配置单位。这样同一个实例可以同时接入多个来源和多个出口。
 
-当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及共享认证上下文。当前 `run` 与 `process` 已经共用 `mailflow` 编排，`flow-run` 仅保留为兼容别名；多实例 source / sink / route / credential 的用户可配置入口仍未落地，因此 `mailflow` 还没有完全演进到最终形态。
+当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织，但内部已经先编译为一个默认 topology：`default` source、按需启用的 sink 集合、`default` route，以及共享认证上下文。当前 `run` 与 `process` 已经共用 `mailflow` 编排，`flow-run` 仅保留为兼容别名；`download`、`list`、`health` 也已经支持基于 JSON topology 文件选择命名 `source`，其中 `health` 在 topology 模式下还可以结合命名 `route` 逐个探测远端 sink。
 
 ## 当前能力范围
 
@@ -120,6 +120,7 @@ MimeCrypt 的核心职责如下：
 - 单实例运行锁与只读 / 深度两级健康检查
 - `mailflow` 事务骨架、文件状态存储以及 producer / processor / consumer 适配层
 - 单 provider 环境变量配置编译为默认 `source / sink / route / credential` topology
+- `run` / `process` / `download` / `list` / `health` 可通过 topology 文件选择命名 `source`；其中 `run` / `process` / `health` 还支持命名 `route`
 - `run` / `process` 共用 `mailflow` 协调器，`flow-run` 为兼容别名
 
 后续规划方向包括：
@@ -127,7 +128,7 @@ MimeCrypt 的核心职责如下：
 - 继续收敛 CLI / 配置层中的单 provider 假设，向命名 source / sink / route 模型推进
 - `google` / `gmail` 来源驱动
 - HTTP webhook 与 SMTP ingress 等 push 型来源
-- 将命名 source / sink / route / credential topology 暴露为用户可配置入口
+- 继续把登录、token 管理等辅助命令迁到真正的命名 topology / credential 模型
 - 更细粒度的邮件路由与密钥选择策略
 
 ## Provider 与回写后端
@@ -235,6 +236,16 @@ go run ./cmd/mimecrypt run --once --protect-subject
 go run ./cmd/mimecrypt run --debug-save-first --save-output --output-dir ./output
 ```
 
+使用命名 topology 文件：
+
+```bash
+go run ./cmd/mimecrypt run --topology-file ./topology.json --route default --source office-inbox
+go run ./cmd/mimecrypt process <message-id> --topology-file ./topology.json --source office-inbox
+go run ./cmd/mimecrypt download <message-id> --topology-file ./topology.json --source office-inbox --output-dir ./output
+go run ./cmd/mimecrypt list 0 10 --topology-file ./topology.json --source office-inbox
+go run ./cmd/mimecrypt health --topology-file ./topology.json --route default --source office-inbox --deep
+```
+
 补充说明：`flow-run` 仍可用，但现在只是 `run` 的兼容别名，后续应优先使用 `run`。
 
 ## 配置
@@ -249,6 +260,7 @@ export MIMECRYPT_CLIENT_ID="你的应用 Client ID"
 
 ```bash
 export MIMECRYPT_PROVIDER="imap"
+export MIMECRYPT_TOPOLOGY_PATH=""
 export MIMECRYPT_TENANT="organizations"
 export MIMECRYPT_STATE_DIR="$HOME/.config/mimecrypt"
 export MIMECRYPT_OUTPUT_DIR="./output"
@@ -278,7 +290,45 @@ export MIMECRYPT_KEYRING_SERVICE="mimecrypt"
 - `default` route：把单封邮件路由到当前启用的 sink 集合
 - `default` credential：表示当前共享的认证上下文，而不是最终形态的多凭据注册表
 
-也就是说，现阶段已经有了 `source / sink / route / credential` 的内部边界，但还没有向用户暴露多实例配置文件或驱动注册表。
+也就是说，现阶段已经有了 `source / sink / route / credential` 的内部边界，并且 `run` / `process` / `download` / `list` / `health` 已支持实验性的 topology 文件；但多凭据注册、登录与 token 命令的 topology 化以及真正的驱动注册表仍未完成。
+
+如果设置了 `MIMECRYPT_TOPOLOGY_PATH` 或命令行 `--topology-file`，`run` / `process` / `download` / `list` / `health` 会改用显式 topology 文件，而不是继续根据 `MIMECRYPT_PROVIDER`、`MIMECRYPT_WRITEBACK_PROVIDER`、`--write-back`、`--save-output` 这些 legacy 路由参数现场编译默认 topology。
+
+一个最小 topology 文件示例如下：
+
+```json
+{
+  "default_source": "office-inbox",
+  "default_route": "default",
+  "sources": {
+    "office-inbox": {
+      "driver": "imap",
+      "mode": "poll",
+      "folder": "INBOX",
+      "poll_interval": 60000000000,
+      "cycle_timeout": 120000000000
+    }
+  },
+  "sinks": {
+    "archive": {
+      "driver": "file",
+      "output_dir": "./output"
+    }
+  },
+  "routes": {
+    "default": {
+      "source_refs": ["office-inbox"],
+      "targets": [
+        {
+          "sink_ref": "archive",
+          "artifact": "primary",
+          "required": true
+        }
+      ]
+    }
+  }
+}
+```
 
 加密相关配置示例如下：
 
@@ -292,6 +342,7 @@ export MIMECRYPT_WORK_DIR=""
 各项配置含义如下：
 
 - `MIMECRYPT_PROVIDER`：收信 provider。可选 `imap`、`graph`；缺省值 `imap`。
+- `MIMECRYPT_TOPOLOGY_PATH`：命名 topology 配置文件路径；设置后 `run`、`process`、`download`、`list`、`health` 会优先使用 topology 文件。
 - `MIMECRYPT_CLIENT_ID`：Microsoft Entra 应用 Client ID。缺省值为项目内置应用 ID。
 - `MIMECRYPT_STATE_DIR`：状态目录，保存 token、本地配置与同步状态。
 - `MIMECRYPT_OUTPUT_DIR`：加密后 `.eml` 的本地输出目录，仅在启用 `save-output` 时生效。
@@ -328,8 +379,11 @@ export MIMECRYPT_WORK_DIR=""
 - 加密输出的外层包装会增加 `X-MimeCrypt-Processed: yes`，用于标记该邮件经过 MimeCrypt 处理；解密后的原始 MIME 不包含该头部。
 - IMAP 回写阶段优先保留源邮件的 `INTERNALDATE`；当源元数据缺失时，使用 MIME `Date` 头作为回退值。
 - 早期版本生成的 token 可能不包含 IMAP scopes；升级后可执行 `logout` 与 `login` 以重新获取令牌。
-- `run` 按 `provider + folder` 维度申请单实例运行锁；同一状态目录下的重复任务会被拒绝启动。
-- `health` 缺省执行只读检查；`health --deep` 追加 provider 与 writeback 连通性探测，并可能触发 token 刷新。
+- token 默认存储在状态目录下的 `token.json`；只有显式设置 `MIMECRYPT_TOKEN_STORE=keyring` 时，系统 keyring 才会成为主存储。
+- 文件 token 写入当前采用“临时文件 + rename”落盘，不等同于统一经过 `internal/fileutil.WriteFileAtomic`。
+- `run` 的运行锁、producer 状态和事务状态会按作用域文件名隔离。legacy 单 source 配置下作用域主要体现为 `provider + folder`；topology 模式会额外纳入 `source + driver + folder`。
+- topology 模式下，`run` 与 `process` 不再混用 `--write-back`、`--save-output`、`--write-back-provider`、`--folder` 这类 legacy 路由参数；`download` / `list` 也不会再允许 `--folder` 覆盖 topology source。
+- `health` 缺省执行只读检查；`health --deep` 追加来源连通性探测，并在 topology 模式下按选定 route 的远端 sink 逐个执行 writeback 健康探测。
 - `token status` 用于读取当前 token 状态；`token import` 用于从 JSON 文件或标准输入导入 token。
 - `logout` 会同时清理文件 token 与 keyring token。
 
@@ -377,13 +431,13 @@ export MIMECRYPT_WORK_DIR=""
 
 运行过程中可能生成以下文件：
 
-- `token.json`：文件模式下的 token 缓存文件
+- `token.json`：文件模式下的 token 缓存文件，也是缺省 token store
 - `sync-<folder>.json`：增量同步状态文件
 - `audit.jsonl`：关键流程审计日志
 - `output/*.eml`：显式启用 `save-output` 后生成的 PGP/MIME 文件
 - `backup/*.pgp`：原始 MIME 的本地密文备份
 
-当 `MIMECRYPT_TOKEN_STORE=keyring` 时，主存储切换为系统 keyring，旧的文件 token 会在迁移完成后清理。
+当 `MIMECRYPT_TOKEN_STORE=keyring` 时，主存储才会切换为系统 keyring；文件后备 token 会在迁移完成后清理。也就是说，“避免明文 token 驻留磁盘”依赖显式配置，不是框架默认保证。
 
 ## Docker 部署
 

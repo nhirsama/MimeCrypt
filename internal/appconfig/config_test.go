@@ -24,6 +24,9 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.Provider != defaultProvider {
 		t.Fatalf("Provider = %q, want %q", cfg.Provider, defaultProvider)
 	}
+	if cfg.TopologyPath != "" {
+		t.Fatalf("TopologyPath = %q, want empty", cfg.TopologyPath)
+	}
 	if cfg.Auth.ClientID != defaultClientID {
 		t.Fatalf("Auth.ClientID = %q, want %q", cfg.Auth.ClientID, defaultClientID)
 	}
@@ -109,6 +112,7 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 	t.Setenv("MIMECRYPT_EWS_SCOPES", "scope-ews")
 	t.Setenv("MIMECRYPT_IMAP_SCOPES", "scope-imap offline_access")
 	t.Setenv("MIMECRYPT_STATE_DIR", "/state")
+	t.Setenv("MIMECRYPT_TOPOLOGY_PATH", "/state/topology.json")
 	t.Setenv("MIMECRYPT_TOKEN_STORE", "keyring")
 	t.Setenv("MIMECRYPT_KEYRING_SERVICE", "mimecrypt-test")
 	t.Setenv("MIMECRYPT_GRAPH_BASE_URL", "https://graph.example.com/v1.0")
@@ -134,6 +138,9 @@ func TestLoadFromEnvOverrides(t *testing.T) {
 
 	if cfg.Provider != "custom" {
 		t.Fatalf("Provider = %q, want custom", cfg.Provider)
+	}
+	if cfg.TopologyPath != "/state/topology.json" {
+		t.Fatalf("TopologyPath = %q, want /state/topology.json", cfg.TopologyPath)
 	}
 	if cfg.Auth.ClientID != "client-id" {
 		t.Fatalf("Auth.ClientID = %q, want client-id", cfg.Auth.ClientID)
@@ -622,14 +629,29 @@ func TestMailConfigFlowPathsForSourceIncludeDriverScope(t *testing.T) {
 		},
 	}
 
-	if got, want := cfg.FlowProducerStatePathFor("default", "graph"), filepath.Join("/state", "flow-sync-graph-Archive_2026_April.json"); got != want {
+	if got, want := cfg.FlowProducerStatePathFor("default", "graph", "Archive/2026:April"), filepath.Join("/state", "flow-sync-graph-Archive_2026_April.json"); got != want {
 		t.Fatalf("FlowProducerStatePathFor() = %q, want %q", got, want)
 	}
-	if got, want := cfg.FlowStateDirFor("default", "default", "imap"), filepath.Join("/state", "flow-state", "imap-Archive_2026_April"); got != want {
+	if got, want := cfg.FlowStateDirFor("default", "default", "imap", "Archive/2026:April"), filepath.Join("/state", "flow-state", "imap-Archive_2026_April"); got != want {
 		t.Fatalf("FlowStateDirFor() = %q, want %q", got, want)
 	}
-	if got, want := cfg.FlowStateDirFor("archive", "office-source", "imap"), filepath.Join("/state", "flow-state", "archive-office-source-imap-Archive_2026_April"); got != want {
+	if got, want := cfg.FlowStateDirFor("archive", "office-source", "imap", "Archive/2026:April"), filepath.Join("/state", "flow-state", "archive-office-source-imap-Archive_2026_April"); got != want {
 		t.Fatalf("FlowStateDirFor(custom) = %q, want %q", got, want)
+	}
+}
+
+func TestConfigRunLockPathForIncludesSourceScope(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Auth: AuthConfig{StateDir: "/state"},
+		Mail: MailConfig{
+			Sync: MailSyncConfig{Folder: "INBOX"},
+		},
+	}
+
+	if got, want := cfg.RunLockPathFor("office-source", "imap", "Archive/2026:April"), filepath.Join("/state", "run-office-source-imap-Archive_2026_April.lock"); got != want {
+		t.Fatalf("RunLockPathFor() = %q, want %q", got, want)
 	}
 }
 
@@ -645,6 +667,7 @@ func resetMimeCryptEnv(t *testing.T) {
 		"MIMECRYPT_EWS_SCOPES",
 		"MIMECRYPT_IMAP_SCOPES",
 		"MIMECRYPT_STATE_DIR",
+		"MIMECRYPT_TOPOLOGY_PATH",
 		"MIMECRYPT_GRAPH_BASE_URL",
 		"MIMECRYPT_EWS_BASE_URL",
 		"MIMECRYPT_IMAP_ADDR",

@@ -82,6 +82,42 @@ type DeleteSourcePolicy struct {
 	EligibleSinks    []string `json:"eligible_sinks,omitempty"`
 }
 
+func (t Topology) Normalize() Topology {
+	if t.Credentials != nil {
+		for name, credential := range t.Credentials {
+			if strings.TrimSpace(credential.Name) == "" {
+				credential.Name = strings.TrimSpace(name)
+				t.Credentials[name] = credential
+			}
+		}
+	}
+	if t.Sources != nil {
+		for name, source := range t.Sources {
+			if strings.TrimSpace(source.Name) == "" {
+				source.Name = strings.TrimSpace(name)
+				t.Sources[name] = source
+			}
+		}
+	}
+	if t.Sinks != nil {
+		for name, sink := range t.Sinks {
+			if strings.TrimSpace(sink.Name) == "" {
+				sink.Name = strings.TrimSpace(name)
+				t.Sinks[name] = sink
+			}
+		}
+	}
+	if t.Routes != nil {
+		for name, route := range t.Routes {
+			if strings.TrimSpace(route.Name) == "" {
+				route.Name = strings.TrimSpace(name)
+				t.Routes[name] = route
+			}
+		}
+	}
+	return t
+}
+
 func (c Config) BuildTopology(options TopologyOptions) (Topology, error) {
 	if options.VerifyWriteBack && !options.WriteBack {
 		return Topology{}, fmt.Errorf("verify write back 依赖 write back")
@@ -120,10 +156,10 @@ func (c Config) BuildTopology(options TopologyOptions) (Topology, error) {
 		DefaultRoute:  defaultTopologyRouteName,
 	}
 	source := topology.Sources[defaultTopologySourceName]
-	source.StatePath = c.Mail.FlowProducerStatePathFor(source.Name, source.Driver)
+	source.StatePath = c.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)
 	topology.Sources[defaultTopologySourceName] = source
 	route := topology.Routes[defaultTopologyRouteName]
-	route.StateDir = c.Mail.FlowStateDirFor(route.Name, source.Name, source.Driver)
+	route.StateDir = c.Mail.FlowStateDirFor(route.Name, source.Name, source.Driver, source.Folder)
 	topology.Routes[defaultTopologyRouteName] = route
 
 	if !c.Mail.Pipeline.SaveOutput && !options.WriteBack {

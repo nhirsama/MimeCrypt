@@ -238,3 +238,21 @@ func TestSyncConfigFlagsApply(t *testing.T) {
 		t.Fatalf("CycleTimeout = %s, want 5m", got.Mail.Sync.CycleTimeout)
 	}
 }
+
+func TestTopologyConfigFlagsApply(t *testing.T) {
+	t.Parallel()
+
+	cfg := appconfig.Config{TopologyPath: "/old/topology.json"}
+	flags := newTopologyConfigFlags(cfg)
+	flags.topologyFile = "/new/topology.json"
+	flags.sourceName = "office"
+	flags.routeName = "archive"
+
+	got := flags.apply(cfg)
+	if got.TopologyPath != "/new/topology.json" {
+		t.Fatalf("TopologyPath = %q, want /new/topology.json", got.TopologyPath)
+	}
+	if flags.sourceName != "office" || flags.routeName != "archive" {
+		t.Fatalf("unexpected topology selection flags: %+v", flags)
+	}
+}

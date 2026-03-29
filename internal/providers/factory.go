@@ -13,11 +13,11 @@ import (
 
 // Build 根据配置构造当前使用的邮件服务提供方实现。
 func Build(cfg appconfig.Config) (provider.Clients, error) {
-	clients, err := buildSourceClients(cfg)
+	clients, err := BuildSourceClients(cfg)
 	if err != nil {
 		return provider.Clients{}, err
 	}
-	writer, err := buildWriteBackWriter(cfg)
+	writer, err := BuildWriteBackWriter(cfg)
 	if err != nil {
 		return provider.Clients{}, err
 	}
@@ -25,7 +25,7 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 	return clients, nil
 }
 
-func buildSourceClients(cfg appconfig.Config) (provider.Clients, error) {
+func BuildSourceClients(cfg appconfig.Config) (provider.Clients, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
 	case "", "graph":
 		return graph.Build(cfg)
@@ -36,7 +36,7 @@ func buildSourceClients(cfg appconfig.Config) (provider.Clients, error) {
 	}
 }
 
-func buildWriteBackWriter(cfg appconfig.Config) (provider.Writer, error) {
+func BuildWriteBackWriter(cfg appconfig.Config) (provider.Writer, error) {
 	session, err := auth.NewSession(cfg.Auth, nil)
 	if err != nil {
 		return nil, err

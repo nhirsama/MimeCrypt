@@ -193,6 +193,44 @@ func TestServiceRunDeepFailsWhenWriterProbeUnsupported(t *testing.T) {
 	}
 }
 
+func TestServiceRunDeepSupportsMultipleNamedWriteBackProbes(t *testing.T) {
+	t.Parallel()
+
+	archiveWriter := &fakeWriter{healthDetail: "imap addr=imap.example.com:993"}
+	mirrorWriter := &fakeWriter{healthDetail: "user@example.com"}
+	service := Service{
+		StateDir: t.TempDir(),
+		Provider: "imap",
+		Folder:   "INBOX",
+		Deep:     true,
+		Session: fakeSession{
+			loadToken: provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
+		},
+		Reader: &fakeReader{},
+		WriteBacks: []WriteBackProbe{
+			{Name: "archive", Driver: "imap", Writer: archiveWriter},
+			{Name: "mirror", Driver: "graph", Writer: mirrorWriter},
+		},
+		LookPath: func(string) (string, error) {
+			return "/usr/bin/gpg", nil
+		},
+	}
+
+	result, err := service.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !result.OK() {
+		t.Fatalf("Run() = %+v, want all checks OK", result)
+	}
+	if archiveWriter.healthCalls != 1 || mirrorWriter.healthCalls != 1 {
+		t.Fatalf("unexpected writeback health calls: archive=%d mirror=%d", archiveWriter.healthCalls, mirrorWriter.healthCalls)
+	}
+	if got := FormatText(result); !strings.Contains(got, "writeback_probe[archive]") || !strings.Contains(got, "writeback_probe[mirror]") {
+		t.Fatalf("FormatText() = %q, want named writeback probes", got)
+	}
+}
+
 func TestServiceRunFailsCachedTokenWhenExpiredWithoutRefreshToken(t *testing.T) {
 	t.Parallel()
 

@@ -33,9 +33,10 @@ const (
 )
 
 type Config struct {
-	Provider string
-	Auth     AuthConfig
-	Mail     MailConfig
+	Provider     string
+	TopologyPath string
+	Auth         AuthConfig
+	Mail         MailConfig
 }
 
 type AuthConfig struct {
@@ -112,7 +113,8 @@ func LoadFromEnv() (Config, error) {
 	}
 
 	return Config{
-		Provider: getenvDefault("MIMECRYPT_PROVIDER", defaultProvider),
+		Provider:     getenvDefault("MIMECRYPT_PROVIDER", defaultProvider),
+		TopologyPath: strings.TrimSpace(os.Getenv("MIMECRYPT_TOPOLOGY_PATH")),
 		Auth: AuthConfig{
 			ClientID:         getenvDefault("MIMECRYPT_CLIENT_ID", defaultClientID),
 			Tenant:           getenvDefault("MIMECRYPT_TENANT", defaultTenant),
@@ -268,6 +270,19 @@ func (c MailConfig) ValidateSync() error {
 	return nil
 }
 
+func (c MailConfig) ValidatePipelineBase() error {
+	if strings.TrimSpace(c.Sync.StateDir) == "" {
+		return fmt.Errorf("state dir 不能为空")
+	}
+	if strings.TrimSpace(c.Pipeline.BackupDir) == "" {
+		return fmt.Errorf("backup dir 不能为空")
+	}
+	if !c.Pipeline.HasAuditOutput() {
+		return fmt.Errorf("至少需要一个审计输出：audit log path 或 audit stdout")
+	}
+	return nil
+}
+
 func (c MailPipelineConfig) HasAuditOutput() bool {
 	return strings.TrimSpace(c.AuditLogPath) != "" || c.AuditStdout
 }
@@ -319,18 +334,23 @@ func (c MailConfig) FlowStateDir() string {
 	return filepath.Join(c.Sync.StateDir, "flow-state", sanitizeFileComponent(c.Sync.Folder))
 }
 
-func (c MailConfig) FlowProducerStatePathFor(sourceName, driver string) string {
-	scope := flowStateScope("", sourceName, driver, c.Sync.Folder)
+func (c MailConfig) FlowProducerStatePathFor(sourceName, driver, folder string) string {
+	scope := flowStateScope("", sourceName, driver, folder)
 	return filepath.Join(c.Sync.StateDir, "flow-sync-"+sanitizeFileComponent(scope)+".json")
 }
 
-func (c MailConfig) FlowStateDirFor(routeName, sourceName, driver string) string {
-	scope := flowStateScope(routeName, sourceName, driver, c.Sync.Folder)
+func (c MailConfig) FlowStateDirFor(routeName, sourceName, driver, folder string) string {
+	scope := flowStateScope(routeName, sourceName, driver, folder)
 	return filepath.Join(c.Sync.StateDir, "flow-state", sanitizeFileComponent(scope))
 }
 
 func (c Config) RunLockPath() string {
-	return filepath.Join(c.Auth.StateDir, "run-"+sanitizeFileComponent(c.Provider)+"-"+sanitizeFileComponent(c.Mail.Sync.Folder)+".lock")
+	return c.RunLockPathFor("", c.Provider, c.Mail.Sync.Folder)
+}
+
+func (c Config) RunLockPathFor(sourceName, driver, folder string) string {
+	scope := flowStateScope("", sourceName, driver, folder)
+	return filepath.Join(c.Auth.StateDir, "run-"+sanitizeFileComponent(scope)+".lock")
 }
 
 func DefaultAuditLogPath(stateDir string) string {

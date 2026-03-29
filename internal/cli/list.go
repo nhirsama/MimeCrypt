@@ -20,6 +20,7 @@ func newListCmd() *cobra.Command {
 	}
 
 	providerFlags := newProviderConfigFlags(cfg)
+	topologyFlags := newTopologyConfigFlags(cfg)
 	folder := cfg.Mail.Sync.Folder
 
 	cmd := &cobra.Command{
@@ -34,26 +35,46 @@ func newListCmd() *cobra.Command {
 		Args: argRange(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
+			cfg = topologyFlags.apply(cfg)
 			cfg.Mail.Sync.Folder = folder
 
 			start, end, err := parseLatestRange(args)
 			if err != nil {
 				return fmt.Errorf("list 失败: %w", err)
 			}
-			if strings.TrimSpace(cfg.Mail.Sync.Folder) == "" {
-				return fmt.Errorf("list 失败: folder 不能为空")
-			}
 
-			service, err := buildListService(cfg)
-			if err != nil {
-				return fmt.Errorf("list 失败: %w", err)
-			}
-
-			result, err := service.Run(cmd.Context(), list.Request{
+			request := list.Request{
 				Folder: cfg.Mail.Sync.Folder,
 				Start:  start,
 				End:    end,
-			})
+			}
+			var service *list.Service
+			if strings.TrimSpace(cfg.TopologyPath) == "" {
+				if strings.TrimSpace(cfg.Mail.Sync.Folder) == "" {
+					return fmt.Errorf("list 失败: folder 不能为空")
+				}
+				service, err = buildListService(cfg)
+				if err != nil {
+					return fmt.Errorf("list 失败: %w", err)
+				}
+			} else {
+				resolved, err := resolveTopologySource(cfg, topologyFlags)
+				if err != nil {
+					return fmt.Errorf("list 失败: %w", err)
+				}
+				if resolved.Custom && cmd.Flags().Changed("folder") {
+					return fmt.Errorf("list 失败: --folder 与 --topology-file 不能同时覆盖 source 文件夹")
+				}
+
+				sourceClients, err := buildSourceProviderClients(cfg, resolved.Source)
+				if err != nil {
+					return fmt.Errorf("list 失败: %w", err)
+				}
+				service = buildListServiceWithReader(sourceClients.Reader)
+				request.Folder = resolved.Source.Folder
+			}
+
+			result, err := service.Run(cmd.Context(), request)
 			if err != nil {
 				return fmt.Errorf("list 失败: %w", err)
 			}
@@ -72,6 +93,7 @@ func newListCmd() *cobra.Command {
 	}
 
 	providerFlags.addFlags(cmd)
+	topologyFlags.addSourceFlags(cmd)
 	cmd.Flags().StringVar(&folder, "folder", folder, "待列出的邮件文件夹标识；Graph 使用 folder id，IMAP 使用 mailbox 名称")
 
 	return cmd

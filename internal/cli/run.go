@@ -37,6 +37,7 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 	}
 
 	providerFlags := newProviderConfigFlags(cfg)
+	topologyFlags := newTopologyConfigFlags(cfg)
 	processingFlags := newProcessingConfigFlags(cfg)
 	syncFlags := newSyncConfigFlags(cfg)
 	var once bool
@@ -54,16 +55,47 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 		Args:       noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
+			cfg = topologyFlags.apply(cfg)
 			cfg = processingFlags.apply(cfg, cmd)
 			cfg = syncFlags.apply(cfg)
 
-			if err := validateMailflowFlags(cfg.Mail.Pipeline.SaveOutput, writeBack, verifyWriteBack, deleteSource, processingFlags.writeBackFolder); err != nil {
+			resolved, err := resolveMailflowTopology(cfg, topologyFlags, appconfig.TopologyOptions{
+				IncludeExisting: includeExisting,
+				WriteBack:       writeBack,
+				VerifyWriteBack: verifyWriteBack,
+				DeleteSource:    deleteSource,
+			})
+			if err != nil {
 				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
 			}
-			if err := cfg.Mail.ValidateSync(); err != nil {
-				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+			if resolved.Custom {
+				if err := validateCustomTopologyFlags(cmd, resolved,
+					"save-output",
+					"output-dir",
+					"write-back",
+					"verify-write-back",
+					"delete-source",
+					"write-back-provider",
+					"write-back-folder",
+					"folder",
+					"poll-interval",
+					"cycle-timeout",
+					"include-existing",
+				); err != nil {
+					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+				}
+				if err := cfg.Mail.ValidatePipelineBase(); err != nil {
+					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+				}
+			} else {
+				if err := validateMailflowFlags(cfg.Mail.Pipeline.SaveOutput, writeBack, verifyWriteBack, deleteSource, processingFlags.writeBackFolder); err != nil {
+					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+				}
+				if err := cfg.Mail.ValidateSync(); err != nil {
+					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
+				}
 			}
-			lock, err := acquireRunLock(cfg.RunLockPath())
+			lock, err := acquireRunLock(cfg.RunLockPathFor(resolved.Source.Name, resolved.Source.Driver, resolved.Source.Folder))
 			if err != nil {
 				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
 			}
@@ -72,17 +104,16 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 			}()
 
 			if options.includeDebug && debugSaveFirst {
-				return runDebugSaveFirst(cmd.Context(), cfg, writeBack, verifyWriteBack, deleteSource)
+				return runDebugSaveFirst(cmd.Context(), cfg, resolved)
 			}
 
-			runner, err := buildMailflowRunner(cmd.Context(), cfg, includeExisting, writeBack, verifyWriteBack, deleteSource)
+			runner, err := buildMailflowRunner(cmd.Context(), cfg, resolved)
 			if err != nil {
 				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
 			}
 
 			runOnce := func() error {
-				processedCount, skippedCount, deletedCount, err := runMailflowCycle(cmd.Context(), cfg, runner)
-				includeExisting = false
+				processedCount, skippedCount, deletedCount, err := runMailflowCycle(cmd.Context(), resolved.Source.CycleTimeout, runner)
 				if err != nil {
 					return err
 				}
@@ -118,6 +149,7 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 	}
 
 	providerFlags.addFlags(cmd)
+	topologyFlags.addFlags(cmd)
 	processingFlags.addFlags(cmd)
 	syncFlags.addFlags(cmd)
 	cmd.Flags().BoolVar(&once, "once", false, "执行一个同步周期后退出")
@@ -132,16 +164,16 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 	return cmd
 }
 
-func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, writeBack bool, verifyWriteBack bool, deleteSource bool) error {
-	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.Sync.CycleTimeout)
+func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) error {
+	cycleCtx, cancel := context.WithTimeout(ctx, resolved.Source.CycleTimeout)
 	defer cancel()
 
-	result, found, err := runMailflowFirstMessage(cycleCtx, cfg, writeBack, verifyWriteBack, deleteSource)
+	result, found, err := runMailflowFirstMessage(cycleCtx, cfg, resolved)
 	if err != nil {
 		return err
 	}
 	if !found {
-		fmt.Printf("调试模式未找到可处理的邮件，folder=%s\n", cfg.Mail.Sync.Folder)
+		fmt.Printf("调试模式未找到可处理的邮件，source=%s folder=%s\n", resolved.Source.Name, resolved.Source.Folder)
 		return nil
 	}
 

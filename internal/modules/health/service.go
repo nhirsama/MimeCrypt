@@ -41,8 +41,15 @@ type Service struct {
 	Session           provider.Session
 	Reader            provider.Reader
 	Writer            provider.Writer
+	WriteBacks        []WriteBackProbe
 	LookPath          func(string) (string, error)
 	Getenv            func(string) string
+}
+
+type WriteBackProbe struct {
+	Name   string
+	Driver string
+	Writer provider.Writer
 }
 
 func (s *Service) Run(ctx context.Context) (Result, error) {
@@ -58,9 +65,6 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	if s.Deep && s.Reader == nil {
 		return Result{}, fmt.Errorf("deep health reader 不能为空")
 	}
-	if s.Deep && s.Writer == nil {
-		return Result{}, fmt.Errorf("deep health writer 不能为空")
-	}
 
 	checks := []Check{
 		s.checkStateDir(),
@@ -71,8 +75,8 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 		checks = append(checks,
 			s.checkStateDirWritable(),
 			s.checkProvider(ctx),
-			s.checkWriteBack(ctx),
 		)
+		checks = append(checks, s.checkWriteBacks(ctx)...)
 	}
 	return Result{Checks: checks}, nil
 }
@@ -168,6 +172,41 @@ func (s *Service) checkWriteBack(ctx context.Context) Check {
 		detail = normalizedWriteBackProvider(s.Provider, s.WriteBackProvider)
 	}
 	return Check{Name: "writeback_probe", OK: true, Detail: detail}
+}
+
+func (s *Service) checkWriteBacks(ctx context.Context) []Check {
+	if len(s.WriteBacks) == 0 {
+		if s.Writer == nil {
+			return nil
+		}
+		return []Check{s.checkWriteBack(ctx)}
+	}
+
+	checks := make([]Check, 0, len(s.WriteBacks))
+	for _, probe := range s.WriteBacks {
+		checks = append(checks, s.checkNamedWriteBack(ctx, probe))
+	}
+	return checks
+}
+
+func (s *Service) checkNamedWriteBack(ctx context.Context, probe WriteBackProbe) Check {
+	name := strings.TrimSpace(probe.Name)
+	if name == "" {
+		name = normalizedWriteBackProvider("", probe.Driver)
+	}
+
+	prober, ok := probe.Writer.(provider.HealthProber)
+	if !ok {
+		return Check{Name: "writeback_probe[" + name + "]", Detail: "该回写实现未提供健康探测能力"}
+	}
+	detail, err := prober.HealthCheck(ctx)
+	if err != nil {
+		return Check{Name: "writeback_probe[" + name + "]", Detail: err.Error()}
+	}
+	if strings.TrimSpace(detail) == "" {
+		detail = normalizedWriteBackProvider("", probe.Driver)
+	}
+	return Check{Name: "writeback_probe[" + name + "]", OK: true, Detail: detail}
 }
 
 func normalizedWriteBackProvider(providerName, writeBackProvider string) string {

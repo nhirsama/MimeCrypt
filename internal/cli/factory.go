@@ -78,7 +78,7 @@ func buildListService(cfg appconfig.Config) (*list.Service, error) {
 		return nil, err
 	}
 
-	return &list.Service{Client: clients.Reader}, nil
+	return buildListServiceWithReader(clients.Reader), nil
 }
 
 func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
@@ -96,6 +96,61 @@ func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
 		Reader:            clients.Reader,
 		Writer:            clients.Writer,
 	}, nil
+}
+
+func buildTopologyHealthService(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*health.Service, error) {
+	sourceClients, err := buildSourceProviderClients(cfg, resolved.Source)
+	if err != nil {
+		return nil, err
+	}
+
+	service := &health.Service{
+		StateDir: cfg.Auth.StateDir,
+		Folder:   resolved.Source.Folder,
+		Provider: normalizeDriver(resolved.Source.Driver, cfg.Provider),
+		Session:  sourceClients.Session,
+		Reader:   sourceClients.Reader,
+	}
+
+	probes := make([]health.WriteBackProbe, 0, len(resolved.Route.Targets))
+	seen := make(map[string]struct{}, len(resolved.Route.Targets))
+	for _, target := range resolved.Route.Targets {
+		sinkRef := strings.TrimSpace(target.SinkRef)
+		if sinkRef == "" {
+			continue
+		}
+		if _, exists := seen[sinkRef]; exists {
+			continue
+		}
+		seen[sinkRef] = struct{}{}
+
+		sink, ok := resolved.Topology.Sinks[sinkRef]
+		if !ok {
+			return nil, fmt.Errorf("route %s 引用了不存在的 sink: %s", resolved.Route.Name, sinkRef)
+		}
+		switch normalizeDriver(sink.Driver, "") {
+		case "file", "discard":
+			continue
+		}
+
+		sinkClients, err := buildSinkProviderClients(cfg, resolved.Source, sink)
+		if err != nil {
+			return nil, err
+		}
+		probes = append(probes, health.WriteBackProbe{
+			Name:   sink.Name,
+			Driver: sink.Driver,
+			Writer: sinkClients.Writer,
+		})
+	}
+
+	if len(probes) == 1 {
+		service.WriteBackProvider = normalizeDriver(probes[0].Driver, "")
+		service.Writer = probes[0].Writer
+	} else {
+		service.WriteBacks = probes
+	}
+	return service, nil
 }
 
 func buildTokenStateService(cfg appconfig.Config) (*tokenstate.Service, error) {
@@ -116,32 +171,24 @@ func buildDownloadServiceWithReader(reader provider.Reader) *download.Service {
 	return &download.Service{Client: reader}
 }
 
-func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, includeExisting, writeBack, verifyWriteBack, deleteSource bool) (*mailflow.Runner, error) {
-	topology, err := cfg.BuildTopology(appconfig.TopologyOptions{
-		IncludeExisting: includeExisting,
-		WriteBack:       writeBack,
-		VerifyWriteBack: verifyWriteBack,
-		DeleteSource:    deleteSource,
-	})
-	if err != nil {
-		return nil, err
-	}
-	source, err := topology.DefaultSourceConfig()
-	if err != nil {
-		return nil, err
-	}
+func buildListServiceWithReader(reader provider.Reader) *list.Service {
+	return &list.Service{Client: reader}
+}
+
+func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*mailflow.Runner, error) {
+	source := resolved.Source
 	if !strings.EqualFold(source.Mode, "poll") {
 		return nil, fmt.Errorf("run 仅支持 polling source，当前 source=%s mode=%s", source.Name, source.Mode)
 	}
-	clients, err := buildProviderClients(cfg)
+	sourceClients, err := buildSourceProviderClients(cfg, source)
 	if err != nil {
 		return nil, err
 	}
-	coordinator, err := buildMailflowCoordinator(ctx, cfg, clients, topology)
+	coordinator, err := buildMailflowCoordinator(ctx, cfg, resolved)
 	if err != nil {
 		return nil, err
 	}
-	sourceStore, err := buildMailflowSourceStore(ctx, cfg, clients.Reader, source, deleteSource)
+	sourceStore, err := buildMailflowSourceStore(ctx, cfg, sourceClients.Reader, source, resolved.Route.DeleteSource.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -154,22 +201,19 @@ func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, includeExist
 			StatePath:       source.StatePath,
 			IncludeExisting: source.IncludeExisting,
 			Store:           sourceStore,
-			Reader:          clients.Reader,
-			Deleter:         clients.Deleter,
+			Reader:          sourceClients.Reader,
+			Deleter:         sourceClients.Deleter,
 		},
 		Coordinator: coordinator,
 	}, nil
 }
 
-func buildMailflowCoordinator(ctx context.Context, cfg appconfig.Config, clients provider.Clients, topology appconfig.Topology) (*mailflow.Coordinator, error) {
-	return buildMailflowCoordinatorWithStore(ctx, cfg, clients, topology, nil)
+func buildMailflowCoordinator(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*mailflow.Coordinator, error) {
+	return buildMailflowCoordinatorWithStore(ctx, cfg, resolved, nil)
 }
 
-func buildMailflowCoordinatorWithStore(ctx context.Context, cfg appconfig.Config, clients provider.Clients, topology appconfig.Topology, store mailflow.StateStore) (*mailflow.Coordinator, error) {
-	route, err := topology.DefaultRouteConfig()
-	if err != nil {
-		return nil, err
-	}
+func buildMailflowCoordinatorWithStore(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology, store mailflow.StateStore) (*mailflow.Coordinator, error) {
+	route := resolved.Route
 	plan, err := buildMailflowPlan(route)
 	if err != nil {
 		return nil, err
@@ -180,7 +224,7 @@ func buildMailflowCoordinatorWithStore(ctx context.Context, cfg appconfig.Config
 		return nil, err
 	}
 
-	consumers, err := buildMailflowConsumers(ctx, cfg, clients, topology, route)
+	consumers, err := buildMailflowConsumers(ctx, cfg, resolved.Topology, resolved.Source, route)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +251,7 @@ func buildMailflowCoordinatorWithStore(ctx context.Context, cfg appconfig.Config
 	}, nil
 }
 
-func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, clients provider.Clients, topology appconfig.Topology, route appconfig.Route) (map[string]mailflow.Consumer, error) {
+func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source, route appconfig.Route) (map[string]mailflow.Consumer, error) {
 	consumers := make(map[string]mailflow.Consumer)
 	for _, target := range route.Targets {
 		sinkRef := strings.TrimSpace(target.SinkRef)
@@ -229,12 +273,16 @@ func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, clients p
 				OutputDir: sink.OutputDir,
 			}
 		default:
-			sinkStore, err := buildMailflowSinkStore(ctx, cfg, clients.Reader, sink, route.DeleteSource.Enabled)
+			sinkClients, err := buildSinkProviderClients(cfg, source, sink)
+			if err != nil {
+				return nil, err
+			}
+			sinkStore, err := buildMailflowSinkStore(ctx, cfg, sinkClients.Reader, sink, source.Folder, route.DeleteSource.Enabled)
 			if err != nil {
 				return nil, err
 			}
 			consumers[sinkRef] = &adapters.WritebackConsumer{
-				Service:             &writeback.Service{Writer: clients.Writer},
+				Service:             &writeback.Service{Writer: sinkClients.Writer},
 				DestinationFolderID: sink.Folder,
 				Verify:              sink.Verify,
 				Store:               sinkStore,
@@ -242,6 +290,25 @@ func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, clients p
 		}
 	}
 	return consumers, nil
+}
+
+func buildSourceProviderClients(cfg appconfig.Config, source appconfig.Source) (provider.Clients, error) {
+	sourceCfg := cfg
+	sourceCfg.Provider = normalizeDriver(source.Driver, "imap")
+	sourceCfg.Mail.Sync.Folder = source.Folder
+	return providers.BuildSourceClients(sourceCfg)
+}
+
+func buildSinkProviderClients(cfg appconfig.Config, source appconfig.Source, sink appconfig.Sink) (provider.Clients, error) {
+	sinkCfg := cfg
+	sinkDriver := normalizeDriver(sink.Driver, "imap")
+	sinkCfg.Provider = sourceProviderForSinkDriver(sinkDriver)
+	sinkCfg.Mail.Pipeline.WriteBackProvider = sinkDriver
+	sinkCfg.Mail.Sync.Folder = source.Folder
+	if folder := strings.TrimSpace(sink.Folder); folder != "" {
+		sinkCfg.Mail.Sync.Folder = folder
+	}
+	return buildProviderClients(sinkCfg)
 }
 
 func buildMailflowSourceStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, source appconfig.Source, resolveAccount bool) (mailflow.StoreRef, error) {
@@ -261,7 +328,7 @@ func buildMailflowSourceStore(ctx context.Context, cfg appconfig.Config, reader 
 	}, nil
 }
 
-func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, sink appconfig.Sink, resolveAccount bool) (mailflow.StoreRef, error) {
+func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, sink appconfig.Sink, fallbackMailbox string, resolveAccount bool) (mailflow.StoreRef, error) {
 	driver := normalizeDriver(sink.Driver, "imap")
 	account := ""
 	var err error
@@ -272,6 +339,9 @@ func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader pr
 		}
 	}
 	mailbox := strings.TrimSpace(sink.Folder)
+	if mailbox == "" {
+		mailbox = strings.TrimSpace(fallbackMailbox)
+	}
 	if mailbox == "" {
 		mailbox = cfg.Mail.Sync.Folder
 	}
@@ -378,6 +448,15 @@ func normalizeDriver(value, fallback string) string {
 		return strings.ToLower(strings.TrimSpace(fallback))
 	}
 	return value
+}
+
+func sourceProviderForSinkDriver(driver string) string {
+	switch normalizeDriver(driver, "imap") {
+	case "ews":
+		return "graph"
+	default:
+		return normalizeDriver(driver, "imap")
+	}
 }
 
 type mailflowSummary struct {

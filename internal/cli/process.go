@@ -15,6 +15,7 @@ func newProcessCmd() *cobra.Command {
 	}
 
 	providerFlags := newProviderConfigFlags(cfg)
+	topologyFlags := newTopologyConfigFlags(cfg)
 	processingFlags := newProcessingConfigFlags(cfg)
 	folder := cfg.Mail.Sync.Folder
 	writeBack := false
@@ -26,17 +27,42 @@ func newProcessCmd() *cobra.Command {
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = providerFlags.apply(cfg, cmd)
+			cfg = topologyFlags.apply(cfg)
 			cfg = processingFlags.apply(cfg, cmd)
 			cfg.Mail.Sync.Folder = folder
 
-			if err := validateMailflowFlags(cfg.Mail.Pipeline.SaveOutput, writeBack, verifyWriteBack, false, processingFlags.writeBackFolder); err != nil {
+			resolved, err := resolveMailflowTopology(cfg, topologyFlags, appconfig.TopologyOptions{
+				WriteBack:       writeBack,
+				VerifyWriteBack: verifyWriteBack,
+			})
+			if err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
-			if err := cfg.Mail.ValidateSync(); err != nil {
-				return fmt.Errorf("process 失败: %w", err)
+			if resolved.Custom {
+				if err := validateCustomTopologyFlags(cmd, resolved,
+					"save-output",
+					"output-dir",
+					"write-back",
+					"verify-write-back",
+					"write-back-provider",
+					"write-back-folder",
+					"folder",
+				); err != nil {
+					return fmt.Errorf("process 失败: %w", err)
+				}
+				if err := cfg.Mail.ValidatePipelineBase(); err != nil {
+					return fmt.Errorf("process 失败: %w", err)
+				}
+			} else {
+				if err := validateMailflowFlags(cfg.Mail.Pipeline.SaveOutput, writeBack, verifyWriteBack, false, processingFlags.writeBackFolder); err != nil {
+					return fmt.Errorf("process 失败: %w", err)
+				}
+				if err := cfg.Mail.ValidateSync(); err != nil {
+					return fmt.Errorf("process 失败: %w", err)
+				}
 			}
 
-			result, err := runMailflowMessageByID(cmd.Context(), cfg, args[0], writeBack, verifyWriteBack, false)
+			result, err := runMailflowMessageByID(cmd.Context(), cfg, resolved, args[0])
 			if err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
@@ -59,6 +85,7 @@ func newProcessCmd() *cobra.Command {
 	}
 
 	providerFlags.addFlags(cmd)
+	topologyFlags.addFlags(cmd)
 	processingFlags.addFlags(cmd)
 	cmd.Flags().StringVar(&folder, "folder", folder, "邮件所在文件夹；Graph 用 folder id，IMAP 用 mailbox 名称")
 	cmd.Flags().BoolVar(&writeBack, "write-back", writeBack, "处理完成后回写邮件至邮箱")
