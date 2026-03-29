@@ -81,6 +81,12 @@ type Session interface {
 	Logout() error
 }
 
+// ScopedSession 抽象按 protocol scopes 取 access token 的认证能力。
+type ScopedSession interface {
+	Session
+	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
+}
+
 // Reader 抽象收件相关的底层 API。
 type Reader interface {
 	Me(ctx context.Context) (User, error)
@@ -182,10 +188,26 @@ type HealthProber interface {
 	HealthCheck(ctx context.Context) (string, error)
 }
 
-// Clients 表示某个 provider 暴露的一组能力实现。
-type Clients struct {
+type SourceClients struct {
 	Session Session
 	Reader  Reader
-	Writer  Writer
 	Deleter Deleter
+}
+
+type SinkClients struct {
+	Session    Session
+	Reader     Reader
+	Writer     Writer
+	Reconciler Reconciler
+	Health     HealthProber
+}
+
+// Clients 表示某个 provider 暴露的一组能力实现。
+type Clients struct {
+	Session    Session
+	Reader     Reader
+	Writer     Writer
+	Deleter    Deleter
+	Reconciler Reconciler
+	Health     HealthProber
 }

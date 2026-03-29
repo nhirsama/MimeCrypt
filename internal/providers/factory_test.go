@@ -115,6 +115,57 @@ func TestSessionAuthConfigScopesFollowSourceAndWriteBackProviders(t *testing.T) 
 	}
 }
 
+func TestBuildWriteBackClientsExposeExplicitCapabilities(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name              string
+		sourceProvider    string
+		writeBackProvider string
+		wantReconciler    bool
+		wantHealth        bool
+	}{
+		{
+			name:              "graph writer exposes health only",
+			sourceProvider:    "imap",
+			writeBackProvider: "graph",
+			wantHealth:        true,
+		},
+		{
+			name:              "imap writer exposes health and reconciler",
+			sourceProvider:    "graph",
+			writeBackProvider: "imap",
+			wantReconciler:    true,
+			wantHealth:        true,
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := testProviderConfig(t, tc.sourceProvider, tc.writeBackProvider)
+			clients, err := BuildWriteBackClients(cfg)
+			if err != nil {
+				t.Fatalf("BuildWriteBackClients() error = %v", err)
+			}
+			if clients.Writer == nil {
+				t.Fatalf("Writer = nil")
+			}
+			if clients.Reader == nil {
+				t.Fatalf("Reader = nil")
+			}
+			if (clients.Reconciler != nil) != tc.wantReconciler {
+				t.Fatalf("Reconciler present = %t, want %t", clients.Reconciler != nil, tc.wantReconciler)
+			}
+			if (clients.Health != nil) != tc.wantHealth {
+				t.Fatalf("Health present = %t, want %t", clients.Health != nil, tc.wantHealth)
+			}
+		})
+	}
+}
+
 func testProviderConfig(t *testing.T, providerName, writeBackProvider string) appconfig.Config {
 	t.Helper()
 

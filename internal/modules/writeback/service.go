@@ -12,7 +12,8 @@ import (
 var ErrNotImplemented = errors.New("回写邮件并校验功能尚未实现")
 
 type Service struct {
-	Writer provider.Writer
+	Writer     provider.Writer
+	Reconciler provider.Reconciler
 }
 
 type Request struct {
@@ -67,12 +68,11 @@ func (s *Service) Reconcile(ctx context.Context, req Request) (Result, bool, err
 		return Result{}, false, ErrNotImplemented
 	}
 
-	reconciler, ok := s.Writer.(provider.Reconciler)
-	if !ok {
+	if s.Reconciler == nil {
 		return Result{}, false, ErrNotImplemented
 	}
 
-	result, found, err := reconciler.ReconcileMessage(ctx, provider.WriteRequest{
+	result, found, err := s.Reconciler.ReconcileMessage(ctx, provider.WriteRequest{
 		Source:              req.Source,
 		MIME:                req.MIME,
 		MIMEOpener:          req.MIMEOpener,

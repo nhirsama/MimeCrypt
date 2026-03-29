@@ -3,11 +3,16 @@ package cli
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/flowruntime"
+	"mimecrypt/internal/mailflow"
 )
 
 func newRunCmd() *cobra.Command {
@@ -59,7 +64,7 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 			cfg = processingFlags.apply(cfg, cmd)
 			cfg = syncFlags.apply(cfg)
 
-			resolved, err := resolveMailflowTopology(cfg, topologyFlags, appconfig.TopologyOptions{
+			resolved, err := resolveMailflowRoutePlan(cfg, topologyFlags, appconfig.TopologyOptions{
 				IncludeExisting: includeExisting,
 				WriteBack:       writeBack,
 				VerifyWriteBack: verifyWriteBack,
@@ -69,7 +74,7 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
 			}
 			if resolved.Custom {
-				if err := validateCustomTopologyFlags(cmd, resolved,
+				if err := validateCustomTopologyFlags(cmd, resolved.Custom,
 					"save-output",
 					"output-dir",
 					"write-back",
@@ -95,56 +100,38 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 					return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
 				}
 			}
-			lock, err := acquireRunLock(cfg.RunLockPathFor(resolved.Source.Name, resolved.Source.Driver, resolved.Source.Folder))
+			locks, err := acquireRouteLocks(resolved.Runs)
 			if err != nil {
 				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
 			}
 			defer func() {
-				_ = lock.Release()
+				releaseRouteLocks(locks)
 			}()
 
 			if options.includeDebug && debugSaveFirst {
-				return runDebugSaveFirst(cmd.Context(), cfg, resolved)
+				if len(resolved.Runs) != 1 {
+					return fmt.Errorf("%s 失败: --debug-save-first 需要显式选择单个 source", options.errorPrefix)
+				}
+				return runDebugSaveFirst(cmd.Context(), resolvedMailflowTopology{
+					SourceRun: resolved.Runs[0],
+					Topology:  resolved.Topology,
+					Custom:    resolved.Custom,
+				})
 			}
 
-			runner, err := buildMailflowRunner(cmd.Context(), cfg, resolved)
+			configuredRuns, err := buildConfiguredRuns(cmd.Context(), resolved.Runs)
 			if err != nil {
 				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
 			}
 
-			runOnce := func() error {
-				processedCount, skippedCount, deletedCount, err := runMailflowCycle(cmd.Context(), resolved.Source.CycleTimeout, runner)
-				if err != nil {
-					return err
-				}
-				if processedCount == 0 && skippedCount == 0 {
-					fmt.Printf("本轮无待处理邮件\n")
-					return nil
-				}
-				fmt.Printf("同步完成，本轮处理 %d 封邮件，跳过 %d 封，删除源邮件 %d 封\n", processedCount, skippedCount, deletedCount)
-				return nil
-			}
-
-			if err := runOnce(); err != nil {
+			if err := runAllSourcesOnce(cmd.Context(), configuredRuns); err != nil {
 				return fmt.Errorf("%s 失败: %w", options.errorPrefix, err)
 			}
 			if once {
 				return nil
 			}
 
-			ticker := time.NewTicker(resolved.Source.PollInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-cmd.Context().Done():
-					return cmd.Context().Err()
-				case <-ticker.C:
-					if err := runOnce(); err != nil {
-						fmt.Printf("本轮同步失败，下个周期继续重试: %v\n", err)
-					}
-				}
-			}
+			return runRouteLoops(cmd.Context(), configuredRuns)
 		},
 	}
 
@@ -164,11 +151,121 @@ func newMailflowLoopCmd(options mailflowLoopCmdOptions) *cobra.Command {
 	return cmd
 }
 
-func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) error {
+type configuredSourceRun struct {
+	Run    flowruntime.SourceRun
+	Runner interface {
+		RunOnce(context.Context) (mailflow.Result, bool, error)
+	}
+}
+
+func buildConfiguredRuns(ctx context.Context, runs []flowruntime.SourceRun) ([]configuredSourceRun, error) {
+	configured := make([]configuredSourceRun, 0, len(runs))
+	for _, run := range runs {
+		runner, err := flowruntime.BuildRunner(ctx, run)
+		if err != nil {
+			return nil, err
+		}
+		configured = append(configured, configuredSourceRun{
+			Run:    run,
+			Runner: runner,
+		})
+	}
+	return configured, nil
+}
+
+func runAllSourcesOnce(ctx context.Context, runs []configuredSourceRun) error {
+	includeSourcePrefix := len(runs) > 1
+	for _, run := range runs {
+		if err := runConfiguredSourceOnce(ctx, run, includeSourcePrefix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runRouteLoops(ctx context.Context, runs []configuredSourceRun) error {
+	includeSourcePrefix := len(runs) > 1
+	var wg sync.WaitGroup
+	for _, run := range runs {
+		run := run
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			ticker := time.NewTicker(run.Run.Source.PollInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := runConfiguredSourceOnce(ctx, run, includeSourcePrefix); err != nil {
+						fmt.Printf("source=%s 本轮同步失败，下个周期继续重试: %v\n", run.Run.Source.Name, err)
+					}
+				}
+			}
+		}()
+	}
+
+	<-ctx.Done()
+	wg.Wait()
+	return ctx.Err()
+}
+
+func runConfiguredSourceOnce(ctx context.Context, run configuredSourceRun, includeSourcePrefix bool) error {
+	processedCount, skippedCount, deletedCount, err := runMailflowCycle(ctx, run.Run.Source.CycleTimeout, run.Runner)
+	if err != nil {
+		return fmt.Errorf("source=%s: %w", run.Run.Source.Name, err)
+	}
+	if processedCount == 0 && skippedCount == 0 {
+		if !includeSourcePrefix || strings.TrimSpace(run.Run.Source.Name) == "" {
+			fmt.Printf("本轮无待处理邮件\n")
+		} else {
+			fmt.Printf("source=%s 本轮无待处理邮件\n", run.Run.Source.Name)
+		}
+		return nil
+	}
+	if !includeSourcePrefix || strings.TrimSpace(run.Run.Source.Name) == "" {
+		fmt.Printf("同步完成，本轮处理 %d 封邮件，跳过 %d 封，删除源邮件 %d 封\n", processedCount, skippedCount, deletedCount)
+		return nil
+	}
+	fmt.Printf("source=%s 同步完成，本轮处理 %d 封邮件，跳过 %d 封，删除源邮件 %d 封\n", run.Run.Source.Name, processedCount, skippedCount, deletedCount)
+	return nil
+}
+
+func acquireRouteLocks(runs []flowruntime.SourceRun) ([]*runLock, error) {
+	paths := make([]string, 0, len(runs))
+	for _, run := range runs {
+		if path := strings.TrimSpace(run.LockPath); path != "" {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+
+	locks := make([]*runLock, 0, len(paths))
+	for _, path := range paths {
+		lock, err := acquireRunLock(path)
+		if err != nil {
+			releaseRouteLocks(locks)
+			return nil, err
+		}
+		locks = append(locks, lock)
+	}
+	return locks, nil
+}
+
+func releaseRouteLocks(locks []*runLock) {
+	for i := len(locks) - 1; i >= 0; i-- {
+		_ = locks[i].Release()
+	}
+}
+
+func runDebugSaveFirst(ctx context.Context, resolved resolvedMailflowTopology) error {
 	cycleCtx, cancel := context.WithTimeout(ctx, resolved.Source.CycleTimeout)
 	defer cancel()
 
-	result, found, err := runMailflowFirstMessage(cycleCtx, cfg, resolved)
+	result, found, err := runMailflowFirstMessage(cycleCtx, resolved)
 	if err != nil {
 		return err
 	}

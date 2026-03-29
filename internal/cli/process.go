@@ -39,7 +39,7 @@ func newProcessCmd() *cobra.Command {
 				return fmt.Errorf("process 失败: %w", err)
 			}
 			if resolved.Custom {
-				if err := validateCustomTopologyFlags(cmd, resolved,
+				if err := validateCustomTopologyFlags(cmd, resolved.Custom,
 					"save-output",
 					"output-dir",
 					"write-back",
@@ -62,7 +62,7 @@ func newProcessCmd() *cobra.Command {
 				}
 			}
 
-			result, err := runMailflowMessageByID(cmd.Context(), cfg, resolved, args[0])
+			result, err := runMailflowMessageByID(cmd.Context(), resolved, args[0])
 			if err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}

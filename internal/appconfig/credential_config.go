@@ -23,7 +23,7 @@ func (c Config) WithCredential(name string, credential Credential) Config {
 	cfg := c
 
 	if stateDir := credential.ResolvedStateDir(cfg.Auth.StateDir, name); stateDir != "" {
-		cfg.Auth.StateDir = stateDir
+		cfg = cfg.WithStateDir(stateDir)
 	}
 	if value := strings.TrimSpace(credential.ClientID); value != "" {
 		cfg.Auth.ClientID = value

@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/health"
 )
 
@@ -33,40 +34,38 @@ func newHealthCmd() *cobra.Command {
 			cfg = topologyFlags.apply(cfg)
 			cfg = syncFlags.apply(cfg)
 
-			var service *health.Service
 			if strings.TrimSpace(cfg.TopologyPath) == "" {
-				service, err = buildHealthService(cfg)
+				service, err := buildHealthService(cfg)
 				if err != nil {
 					return fmt.Errorf("health 失败: %w", err)
 				}
-			} else {
-				resolved, err := resolveMailflowTopology(cfg, topologyFlags, appconfig.TopologyOptions{})
+				service.Deep = deep
+
+				healthCtx, cancel := context.WithTimeout(cmd.Context(), timeout)
+				defer cancel()
+
+				result, err := service.Run(healthCtx)
 				if err != nil {
 					return fmt.Errorf("health 失败: %w", err)
 				}
-				if err := validateCustomTopologyFlags(cmd, resolved, "folder", "poll-interval", "cycle-timeout"); err != nil {
-					return fmt.Errorf("health 失败: %w", err)
+
+				fmt.Println(health.FormatText(result))
+				if !result.OK() {
+					return fmt.Errorf("health 检查失败")
 				}
-				service, err = buildTopologyHealthService(cmd.Context(), cfg, resolved)
-				if err != nil {
-					return fmt.Errorf("health 失败: %w", err)
-				}
+				return nil
 			}
-			service.Deep = deep
 
-			healthCtx, cancel := context.WithTimeout(cmd.Context(), timeout)
-			defer cancel()
-
-			result, err := service.Run(healthCtx)
+			resolved, err := resolveMailflowRoutePlan(cfg, topologyFlags, appconfig.TopologyOptions{})
 			if err != nil {
 				return fmt.Errorf("health 失败: %w", err)
 			}
-
-			fmt.Println(health.FormatText(result))
-			if !result.OK() {
-				return fmt.Errorf("health 检查失败")
+			if err := validateCustomTopologyFlags(cmd, resolved.Custom, "folder", "poll-interval", "cycle-timeout"); err != nil {
+				return fmt.Errorf("health 失败: %w", err)
 			}
-			return nil
+			healthCtx, cancel := context.WithTimeout(cmd.Context(), timeout)
+			defer cancel()
+			return runRouteHealth(healthCtx, resolved, deep)
 		},
 	}
 
@@ -77,4 +76,34 @@ func newHealthCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&timeout, "timeout", timeout, "健康检查总超时时间")
 
 	return cmd
+}
+
+func runRouteHealth(ctx context.Context, plan resolvedMailflowRoutePlan, deep bool) error {
+	failures := false
+	for idx, run := range plan.Runs {
+		service, err := flowruntime.BuildHealthService(ctx, run)
+		if err != nil {
+			return err
+		}
+		service.Deep = deep
+
+		result, err := service.Run(ctx)
+		if err != nil {
+			return err
+		}
+		if len(plan.Runs) > 1 {
+			if idx > 0 {
+				fmt.Println()
+			}
+			fmt.Printf("[source=%s]\n", run.Source.Name)
+		}
+		fmt.Println(health.FormatText(result))
+		if !result.OK() {
+			failures = true
+		}
+	}
+	if failures {
+		return fmt.Errorf("health 检查失败")
+	}
+	return nil
 }

@@ -40,7 +40,7 @@ type Service struct {
 	Deep              bool
 	Session           provider.Session
 	Reader            provider.Reader
-	Writer            provider.Writer
+	WriteBack         provider.HealthProber
 	WriteBacks        []WriteBackProbe
 	LookPath          func(string) (string, error)
 	Getenv            func(string) string
@@ -49,7 +49,7 @@ type Service struct {
 type WriteBackProbe struct {
 	Name   string
 	Driver string
-	Writer provider.Writer
+	Health provider.HealthProber
 }
 
 func (s *Service) Run(ctx context.Context) (Result, error) {
@@ -160,11 +160,10 @@ func (s *Service) checkProvider(ctx context.Context) Check {
 }
 
 func (s *Service) checkWriteBack(ctx context.Context) Check {
-	probe, ok := s.Writer.(provider.HealthProber)
-	if !ok {
+	if s.WriteBack == nil {
 		return Check{Name: "writeback_probe", Detail: "该回写实现未提供健康探测能力"}
 	}
-	detail, err := probe.HealthCheck(ctx)
+	detail, err := s.WriteBack.HealthCheck(ctx)
 	if err != nil {
 		return Check{Name: "writeback_probe", Detail: err.Error()}
 	}
@@ -176,7 +175,7 @@ func (s *Service) checkWriteBack(ctx context.Context) Check {
 
 func (s *Service) checkWriteBacks(ctx context.Context) []Check {
 	if len(s.WriteBacks) == 0 {
-		if s.Writer == nil {
+		if s.WriteBack == nil {
 			return nil
 		}
 		return []Check{s.checkWriteBack(ctx)}
@@ -195,11 +194,10 @@ func (s *Service) checkNamedWriteBack(ctx context.Context, probe WriteBackProbe)
 		name = normalizedWriteBackProvider("", probe.Driver)
 	}
 
-	prober, ok := probe.Writer.(provider.HealthProber)
-	if !ok {
+	if probe.Health == nil {
 		return Check{Name: "writeback_probe[" + name + "]", Detail: "该回写实现未提供健康探测能力"}
 	}
-	detail, err := prober.HealthCheck(ctx)
+	detail, err := probe.Health.HealthCheck(ctx)
 	if err != nil {
 		return Check{Name: "writeback_probe[" + name + "]", Detail: err.Error()}
 	}

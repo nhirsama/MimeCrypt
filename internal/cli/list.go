@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/list"
 	"mimecrypt/internal/provider"
 )
@@ -66,11 +67,10 @@ func newListCmd() *cobra.Command {
 					return fmt.Errorf("list 失败: --folder 与 --topology-file 不能同时覆盖 source 文件夹")
 				}
 
-				sourceClients, err := buildSourceProviderClients(cfg, resolved.Topology, resolved.Source)
+				service, err = flowruntime.BuildListService(resolved.SourcePlan)
 				if err != nil {
 					return fmt.Errorf("list 失败: %w", err)
 				}
-				service = buildListServiceWithReader(sourceClients.Reader)
 				request.Folder = resolved.Source.Folder
 			}
 

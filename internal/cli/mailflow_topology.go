@@ -7,19 +7,21 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/flowruntime"
 )
 
 type resolvedMailflowTopology struct {
+	flowruntime.SourceRun
 	Topology appconfig.Topology
-	Source   appconfig.Source
-	Route    appconfig.Route
 	Custom   bool
 }
 
+type resolvedMailflowRoutePlan struct {
+	flowruntime.RoutePlan
+}
+
 type resolvedTopologySource struct {
-	Topology appconfig.Topology
-	Source   appconfig.Source
-	Custom   bool
+	flowruntime.SourcePlan
 }
 
 type resolvedCredentialConfig struct {
@@ -32,92 +34,37 @@ type resolvedCredentialConfig struct {
 
 func resolveMailflowTopology(cfg appconfig.Config, topologyFlags topologyConfigFlags, legacyOptions appconfig.TopologyOptions) (resolvedMailflowTopology, error) {
 	cfg = topologyFlags.apply(cfg)
-	topologyPath := strings.TrimSpace(cfg.TopologyPath)
-	if topologyPath == "" {
-		topology, err := cfg.BuildTopology(legacyOptions)
-		if err != nil {
-			return resolvedMailflowTopology{}, err
-		}
-		if value := strings.TrimSpace(topologyFlags.routeName); value != "" && value != topology.DefaultRoute {
-			return resolvedMailflowTopology{}, fmt.Errorf("legacy 模式只支持 route=%s", topology.DefaultRoute)
-		}
-		if value := strings.TrimSpace(topologyFlags.sourceName); value != "" && value != topology.DefaultSource {
-			return resolvedMailflowTopology{}, fmt.Errorf("legacy 模式只支持 source=%s", topology.DefaultSource)
-		}
-		source, err := topology.DefaultSourceConfig()
-		if err != nil {
-			return resolvedMailflowTopology{}, err
-		}
-		route, err := topology.DefaultRouteConfig()
-		if err != nil {
-			return resolvedMailflowTopology{}, err
-		}
-		return resolvedMailflowTopology{
-			Topology: topology,
-			Source:   source,
-			Route:    route,
-		}, nil
-	}
-
-	topology, err := appconfig.LoadTopologyFile(topologyPath)
+	plan, err := flowruntime.ResolveRoutePlan(cfg, flowruntime.Selector{
+		RouteName:  strings.TrimSpace(topologyFlags.routeName),
+		SourceName: strings.TrimSpace(topologyFlags.sourceName),
+	}, legacyOptions, flowruntime.RoutePlanSingleSource)
 	if err != nil {
 		return resolvedMailflowTopology{}, err
 	}
-	if strings.TrimSpace(topologyFlags.routeName) != "" {
-		topology.DefaultRoute = strings.TrimSpace(topologyFlags.routeName)
-	}
-	if strings.TrimSpace(topology.DefaultRoute) == "" {
-		name, err := inferSingleName("route", topologyRouteNames(topology.Routes))
-		if err != nil {
-			return resolvedMailflowTopology{}, err
-		}
-		topology.DefaultRoute = name
-	}
-
-	route, ok := topology.Routes[topology.DefaultRoute]
-	if !ok {
-		return resolvedMailflowTopology{}, fmt.Errorf("topology route 不存在: %s", topology.DefaultRoute)
-	}
-	if strings.TrimSpace(topologyFlags.sourceName) != "" {
-		topology.DefaultSource = strings.TrimSpace(topologyFlags.sourceName)
-	}
-	if strings.TrimSpace(topology.DefaultSource) == "" {
-		name, err := inferDefaultSourceForRoute(route)
-		if err != nil {
-			return resolvedMailflowTopology{}, err
-		}
-		topology.DefaultSource = name
-	}
-
-	source, ok := topology.Sources[topology.DefaultSource]
-	if !ok {
-		return resolvedMailflowTopology{}, fmt.Errorf("topology source 不存在: %s", topology.DefaultSource)
-	}
-	if !routeContainsSource(route, source.Name) {
-		return resolvedMailflowTopology{}, fmt.Errorf("route %s 不包含 source %s", route.Name, source.Name)
-	}
-
-	if strings.TrimSpace(source.StatePath) == "" {
-		source.StatePath = cfg.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)
-		topology.Sources[source.Name] = source
-	}
-	if strings.TrimSpace(route.StateDir) == "" {
-		route.StateDir = cfg.Mail.FlowStateDirFor(route.Name, source.Name, source.Driver, source.Folder)
-		topology.Routes[route.Name] = route
-	}
-	if err := topology.Validate(); err != nil {
-		return resolvedMailflowTopology{}, err
+	if len(plan.Runs) != 1 {
+		return resolvedMailflowTopology{}, fmt.Errorf("mailflow 单源解析结果无效: runs=%d", len(plan.Runs))
 	}
 	return resolvedMailflowTopology{
-		Topology: topology,
-		Source:   source,
-		Route:    route,
-		Custom:   true,
+		SourceRun: plan.Runs[0],
+		Topology:  plan.Topology,
+		Custom:    plan.Custom,
 	}, nil
 }
 
-func validateCustomTopologyFlags(cmd *cobra.Command, topology resolvedMailflowTopology, flags ...string) error {
-	if !topology.Custom || cmd == nil {
+func resolveMailflowRoutePlan(cfg appconfig.Config, topologyFlags topologyConfigFlags, legacyOptions appconfig.TopologyOptions) (resolvedMailflowRoutePlan, error) {
+	cfg = topologyFlags.apply(cfg)
+	plan, err := flowruntime.ResolveRoutePlan(cfg, flowruntime.Selector{
+		RouteName:  strings.TrimSpace(topologyFlags.routeName),
+		SourceName: strings.TrimSpace(topologyFlags.sourceName),
+	}, legacyOptions, flowruntime.RoutePlanAllSources)
+	if err != nil {
+		return resolvedMailflowRoutePlan{}, err
+	}
+	return resolvedMailflowRoutePlan{RoutePlan: plan}, nil
+}
+
+func validateCustomTopologyFlags(cmd *cobra.Command, custom bool, flags ...string) error {
+	if !custom || cmd == nil {
 		return nil
 	}
 	for _, name := range flags {
@@ -142,58 +89,14 @@ func validateCustomCredentialFlags(cmd *cobra.Command, resolved resolvedCredenti
 
 func resolveTopologySource(cfg appconfig.Config, topologyFlags topologyConfigFlags) (resolvedTopologySource, error) {
 	cfg = topologyFlags.apply(cfg)
-	if value := strings.TrimSpace(topologyFlags.routeName); value != "" {
-		return resolvedTopologySource{}, fmt.Errorf("该命令不支持 route 选择: %s", value)
-	}
-	topologyPath := strings.TrimSpace(cfg.TopologyPath)
-	if topologyPath == "" {
-		topology, err := cfg.BuildTopology(appconfig.TopologyOptions{})
-		if err != nil {
-			return resolvedTopologySource{}, err
-		}
-		if value := strings.TrimSpace(topologyFlags.sourceName); value != "" && value != topology.DefaultSource {
-			return resolvedTopologySource{}, fmt.Errorf("legacy 模式只支持 source=%s", topology.DefaultSource)
-		}
-		source, err := topology.DefaultSourceConfig()
-		if err != nil {
-			return resolvedTopologySource{}, err
-		}
-		return resolvedTopologySource{
-			Topology: topology,
-			Source:   source,
-		}, nil
-	}
-
-	topology, err := appconfig.LoadTopologyFile(topologyPath)
+	plan, err := flowruntime.ResolveSourcePlan(cfg, flowruntime.Selector{
+		RouteName:  strings.TrimSpace(topologyFlags.routeName),
+		SourceName: strings.TrimSpace(topologyFlags.sourceName),
+	})
 	if err != nil {
 		return resolvedTopologySource{}, err
 	}
-	if strings.TrimSpace(topologyFlags.sourceName) != "" {
-		topology.DefaultSource = strings.TrimSpace(topologyFlags.sourceName)
-	}
-	if strings.TrimSpace(topology.DefaultSource) == "" {
-		name, err := inferSingleName("source", topologySourceNames(topology.Sources))
-		if err != nil {
-			return resolvedTopologySource{}, err
-		}
-		topology.DefaultSource = name
-	}
-	source, ok := topology.Sources[topology.DefaultSource]
-	if !ok {
-		return resolvedTopologySource{}, fmt.Errorf("topology source 不存在: %s", topology.DefaultSource)
-	}
-	if strings.TrimSpace(source.StatePath) == "" {
-		source.StatePath = cfg.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)
-		topology.Sources[source.Name] = source
-	}
-	if err := topology.Validate(); err != nil {
-		return resolvedTopologySource{}, err
-	}
-	return resolvedTopologySource{
-		Topology: topology,
-		Source:   source,
-		Custom:   true,
-	}, nil
+	return resolvedTopologySource{SourcePlan: plan}, nil
 }
 
 func inferSingleName(kind string, values []string) (string, error) {
@@ -205,6 +108,21 @@ func inferSingleName(kind string, values []string) (string, error) {
 	default:
 		return "", fmt.Errorf("topology 存在多个 %s，请显式指定 --%s", kind, kind)
 	}
+}
+
+func topologyCredentialNames(credentials map[string]appconfig.Credential) []string {
+	names := make([]string, 0, len(credentials))
+	for name := range credentials {
+		names = append(names, strings.TrimSpace(name))
+	}
+	return names
+}
+
+func inferDefaultCredential(topology appconfig.Topology) (string, error) {
+	if _, ok := topology.Credentials["default"]; ok {
+		return "default", nil
+	}
+	return inferSingleName("credential", topologyCredentialNames(topology.Credentials))
 }
 
 func resolveCredentialConfig(cfg appconfig.Config, credentialFlags credentialConfigFlags) (resolvedCredentialConfig, error) {
@@ -249,55 +167,4 @@ func resolveCredentialConfig(cfg appconfig.Config, credentialFlags credentialCon
 		Config:         cfg,
 		Custom:         true,
 	}, nil
-}
-
-func inferDefaultSourceForRoute(route appconfig.Route) (string, error) {
-	sourceRefs := make([]string, 0, len(route.SourceRefs))
-	for _, ref := range route.SourceRefs {
-		if value := strings.TrimSpace(ref); value != "" {
-			sourceRefs = append(sourceRefs, value)
-		}
-	}
-	return inferSingleName("source", sourceRefs)
-}
-
-func routeContainsSource(route appconfig.Route, sourceName string) bool {
-	sourceName = strings.TrimSpace(sourceName)
-	for _, ref := range route.SourceRefs {
-		if strings.TrimSpace(ref) == sourceName {
-			return true
-		}
-	}
-	return false
-}
-
-func topologyRouteNames(routes map[string]appconfig.Route) []string {
-	names := make([]string, 0, len(routes))
-	for name := range routes {
-		names = append(names, strings.TrimSpace(name))
-	}
-	return names
-}
-
-func topologySourceNames(sources map[string]appconfig.Source) []string {
-	names := make([]string, 0, len(sources))
-	for name := range sources {
-		names = append(names, strings.TrimSpace(name))
-	}
-	return names
-}
-
-func topologyCredentialNames(credentials map[string]appconfig.Credential) []string {
-	names := make([]string, 0, len(credentials))
-	for name := range credentials {
-		names = append(names, strings.TrimSpace(name))
-	}
-	return names
-}
-
-func inferDefaultCredential(topology appconfig.Topology) (string, error) {
-	if _, ok := topology.Credentials["default"]; ok {
-		return "default", nil
-	}
-	return inferSingleName("credential", topologyCredentialNames(topology.Credentials))
 }

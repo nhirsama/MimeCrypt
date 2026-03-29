@@ -4,32 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/mailflow/adapters"
 )
 
-func buildMailflowEnvelopeBuilder(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*adapters.ReaderEnvelopeBuilder, error) {
-	sourceBundle, err := buildSourceProviderBundle(cfg, resolved.Topology, resolved.Source)
-	if err != nil {
-		return nil, err
-	}
-	sourceStore, err := buildMailflowSourceStore(ctx, sourceBundle.Config, sourceBundle.Clients.Reader, resolved.Source, resolved.Route.DeleteSource.Enabled)
-	if err != nil {
-		return nil, err
-	}
-	return &adapters.ReaderEnvelopeBuilder{
-		Name:    resolved.Source.Name,
-		Driver:  normalizeDriver(resolved.Source.Driver, "imap"),
-		Folder:  resolved.Source.Folder,
-		Store:   sourceStore,
-		Reader:  sourceBundle.Clients.Reader,
-		Deleter: sourceBundle.Clients.Deleter,
-	}, nil
+func buildMailflowEnvelopeBuilder(ctx context.Context, resolved resolvedMailflowTopology) (*adapters.ReaderEnvelopeBuilder, error) {
+	return flowruntime.BuildEnvelopeBuilder(ctx, resolved.SourceRun)
 }
 
-func runMailflowMessageByID(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology, messageID string) (mailflowSummary, error) {
-	builder, err := buildMailflowEnvelopeBuilder(ctx, cfg, resolved)
+func runMailflowMessageByID(ctx context.Context, resolved resolvedMailflowTopology, messageID string) (mailflowSummary, error) {
+	builder, err := buildMailflowEnvelopeBuilder(ctx, resolved)
 	if err != nil {
 		return mailflowSummary{}, err
 	}
@@ -37,11 +22,16 @@ func runMailflowMessageByID(ctx context.Context, cfg appconfig.Config, resolved 
 	if err != nil {
 		return mailflowSummary{}, err
 	}
-	return runMailflowEnvelope(ctx, cfg, resolved, envelope)
+	return runMailflowEnvelope(ctx, resolved, envelope)
 }
 
-func runMailflowFirstMessage(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (mailflowSummary, bool, error) {
-	sourceClients, err := buildSourceProviderClients(cfg, resolved.Topology, resolved.Source)
+func runMailflowFirstMessage(ctx context.Context, resolved resolvedMailflowTopology) (mailflowSummary, bool, error) {
+	sourceClients, err := flowruntime.BuildSourceClients(flowruntime.SourcePlan{
+		Topology: resolved.Topology,
+		Source:   resolved.Source,
+		Config:   resolved.Config,
+		Custom:   resolved.Custom,
+	})
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
@@ -52,7 +42,7 @@ func runMailflowFirstMessage(ctx context.Context, cfg appconfig.Config, resolved
 	if !found {
 		return mailflowSummary{}, false, nil
 	}
-	builder, err := buildMailflowEnvelopeBuilder(ctx, cfg, resolved)
+	builder, err := buildMailflowEnvelopeBuilder(ctx, resolved)
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
@@ -60,15 +50,15 @@ func runMailflowFirstMessage(ctx context.Context, cfg appconfig.Config, resolved
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
-	summary, err := runMailflowEnvelope(ctx, cfg, resolved, envelope)
+	summary, err := runMailflowEnvelope(ctx, resolved, envelope)
 	if err != nil {
 		return mailflowSummary{}, false, err
 	}
 	return summary, true, nil
 }
 
-func runMailflowEnvelope(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology, envelope mailflow.MailEnvelope) (mailflowSummary, error) {
-	coordinator, err := buildMailflowCoordinatorWithStore(ctx, cfg, resolved, &mailflow.MemoryStateStore{})
+func runMailflowEnvelope(ctx context.Context, resolved resolvedMailflowTopology, envelope mailflow.MailEnvelope) (mailflowSummary, error) {
+	coordinator, err := flowruntime.BuildCoordinatorWithStore(ctx, resolved.SourceRun, &mailflow.MemoryStateStore{})
 	if err != nil {
 		return mailflowSummary{}, err
 	}

@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -22,32 +21,33 @@ func Build(cfg appconfig.Config) (provider.Clients, error) {
 	if err != nil {
 		return provider.Clients{}, err
 	}
-	writer, err := BuildWriteBackWriterWithSession(cfg, clients.Session)
+	sink, err := BuildWriteBackClientsWithSession(cfg, session)
 	if err != nil {
 		return provider.Clients{}, err
 	}
-	clients.Writer = writer
+	clients.Writer = sink.Writer
+	clients.Reconciler = sink.Reconciler
+	clients.Health = sink.Health
 	return clients, nil
 }
 
-func BuildSourceClients(cfg appconfig.Config) (provider.Clients, error) {
+func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
 	case "", "graph":
-		return graph.Build(cfg)
+		return graph.BuildSourceClients(cfg)
 	case "imap":
-		return imap.Build(cfg)
+		return imap.BuildSourceClients(cfg)
 	default:
-		return provider.Clients{}, fmt.Errorf("不支持的邮件服务提供方: %s", cfg.Provider)
+		return provider.SourceClients{}, fmt.Errorf("不支持的邮件服务提供方: %s", cfg.Provider)
 	}
 }
 
 func BuildWriteBackWriter(cfg appconfig.Config) (provider.Writer, error) {
-	return BuildWriteBackWriterWithSession(cfg, nil)
-}
-
-type scopedAccessSession interface {
-	provider.Session
-	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
+	clients, err := BuildWriteBackClients(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return clients.Writer, nil
 }
 
 func buildSourceClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.Clients, error) {
@@ -55,7 +55,7 @@ func buildSourceClientsWithSession(cfg appconfig.Config, session provider.Sessio
 	case "graph":
 		return graph.BuildWithSession(cfg, session)
 	case "imap":
-		scoped, ok := session.(scopedAccessSession)
+		scoped, ok := session.(provider.ScopedSession)
 		if !ok {
 			return provider.Clients{}, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
 		}
@@ -65,34 +65,46 @@ func buildSourceClientsWithSession(cfg appconfig.Config, session provider.Sessio
 	}
 }
 
-func BuildWriteBackWriterWithSession(cfg appconfig.Config, session provider.Session) (provider.Writer, error) {
+func BuildWriteBackClients(cfg appconfig.Config) (provider.SinkClients, error) {
+	return BuildWriteBackClientsWithSession(cfg, nil)
+}
+
+func BuildWriteBackClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.SinkClients, error) {
 	providerName := normalizedWriteBackProvider(cfg.Provider, cfg.Mail.Pipeline.WriteBackProvider)
 	if session == nil {
 		var err error
 		session, err = auth.NewSession(cfg.Auth, nil)
 		if err != nil {
-			return nil, err
+			return provider.SinkClients{}, err
 		}
 	}
 
 	switch providerName {
 	case "graph":
-		return graph.NewWriter(cfg, session)
+		return graph.NewWriterClients(cfg, session)
 	case "ews":
-		scoped, ok := session.(scopedAccessSession)
+		scoped, ok := session.(provider.ScopedSession)
 		if !ok {
-			return nil, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
+			return provider.SinkClients{}, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
 		}
-		return graph.NewEWSWriter(cfg, scoped)
+		return graph.NewEWSWriterClients(cfg, scoped)
 	case "imap":
-		scoped, ok := session.(scopedAccessSession)
+		scoped, ok := session.(provider.ScopedSession)
 		if !ok {
-			return nil, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
+			return provider.SinkClients{}, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
 		}
-		return imap.NewWriter(cfg, scoped)
+		return imap.NewWriterClients(cfg, scoped)
 	default:
-		return nil, fmt.Errorf("不支持的回写后端: %s", cfg.Mail.Pipeline.WriteBackProvider)
+		return provider.SinkClients{}, fmt.Errorf("不支持的回写后端: %s", cfg.Mail.Pipeline.WriteBackProvider)
 	}
+}
+
+func BuildWriteBackWriterWithSession(cfg appconfig.Config, session provider.Session) (provider.Writer, error) {
+	clients, err := BuildWriteBackClientsWithSession(cfg, session)
+	if err != nil {
+		return nil, err
+	}
+	return clients.Writer, nil
 }
 
 func sessionAuthConfig(cfg appconfig.Config) appconfig.AuthConfig {

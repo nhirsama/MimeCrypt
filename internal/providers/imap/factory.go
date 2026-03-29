@@ -26,57 +26,98 @@ var _ provider.Deleter = (*writer)(nil)
 var _ provider.DeleteSemanticReporter = (*writer)(nil)
 
 func Build(cfg appconfig.Config) (provider.Clients, error) {
+	source, err := BuildSourceClients(cfg)
+	if err != nil {
+		return provider.Clients{}, err
+	}
+	sink, err := NewWriterClients(cfg, source.Session.(provider.ScopedSession))
+	if err != nil {
+		return provider.Clients{}, err
+	}
+	return provider.Clients{
+		Session:    source.Session,
+		Reader:     source.Reader,
+		Writer:     sink.Writer,
+		Deleter:    source.Deleter,
+		Reconciler: sink.Reconciler,
+		Health:     sink.Health,
+	}, nil
+}
+
+func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
 	authCfg := cfg.Auth
 	authCfg.GraphScopes = nil
 	authCfg.EWSScopes = nil
 
 	session, err := auth.NewSession(authCfg, nil)
 	if err != nil {
-		return provider.Clients{}, err
+		return provider.SourceClients{}, err
 	}
-
-	imapClient, err := newClient(cfg.Mail.Client, authCfg, cfg.Mail.Sync.Folder, session, nil)
-	if err != nil {
-		return provider.Clients{}, err
-	}
-
-	return provider.Clients{
-		Session: session,
-		Reader:  &reader{client: imapClient},
-		Writer:  &writer{client: imapClient},
-		Deleter: &writer{client: imapClient},
-	}, nil
+	return BuildSourceClientsWithSession(cfg, session)
 }
 
-func BuildWithSession(cfg appconfig.Config, session scopedSession) (provider.Clients, error) {
+func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.ScopedSession) (provider.SourceClients, error) {
 	if session == nil {
-		return provider.Clients{}, fmt.Errorf("session 不能为空")
+		return provider.SourceClients{}, fmt.Errorf("session 不能为空")
 	}
 
 	imapClient, err := newClient(cfg.Mail.Client, cfg.Auth, cfg.Mail.Sync.Folder, session, nil)
 	if err != nil {
-		return provider.Clients{}, err
+		return provider.SourceClients{}, err
 	}
 
-	return provider.Clients{
+	return provider.SourceClients{
 		Session: session,
 		Reader:  &reader{client: imapClient},
-		Writer:  &writer{client: imapClient},
 		Deleter: &writer{client: imapClient},
 	}, nil
 }
 
-func NewWriter(cfg appconfig.Config, tokenSource scopedAccessTokenSource) (provider.Writer, error) {
+func NewWriterClients(cfg appconfig.Config, tokenSource provider.ScopedSession) (provider.SinkClients, error) {
 	authCfg := cfg.Auth
 	authCfg.GraphScopes = nil
 	authCfg.EWSScopes = nil
 
 	imapClient, err := newClient(cfg.Mail.Client, authCfg, cfg.Mail.Sync.Folder, tokenSource, nil)
 	if err != nil {
-		return nil, err
+		return provider.SinkClients{}, err
 	}
 
-	return &writer{client: imapClient}, nil
+	writer := &writer{client: imapClient}
+	return provider.SinkClients{
+		Session:    tokenSource,
+		Reader:     &reader{client: imapClient},
+		Writer:     writer,
+		Reconciler: writer,
+		Health:     writer,
+	}, nil
+}
+
+func BuildWithSession(cfg appconfig.Config, session provider.ScopedSession) (provider.Clients, error) {
+	source, err := BuildSourceClientsWithSession(cfg, session)
+	if err != nil {
+		return provider.Clients{}, err
+	}
+	sink, err := NewWriterClients(cfg, session)
+	if err != nil {
+		return provider.Clients{}, err
+	}
+	return provider.Clients{
+		Session:    source.Session,
+		Reader:     source.Reader,
+		Writer:     sink.Writer,
+		Deleter:    source.Deleter,
+		Reconciler: sink.Reconciler,
+		Health:     sink.Health,
+	}, nil
+}
+
+func NewWriter(cfg appconfig.Config, tokenSource provider.ScopedSession) (provider.Writer, error) {
+	clients, err := NewWriterClients(cfg, tokenSource)
+	if err != nil {
+		return nil, err
+	}
+	return clients.Writer, nil
 }
 
 func (r *reader) Me(context.Context) (provider.User, error) {
@@ -145,9 +186,4 @@ func (*writer) DeleteSemantics() provider.DeleteSemantics {
 }
 
 // Keep compiler honest about the auth session interface used by the IMAP client.
-type scopedSession interface {
-	provider.Session
-	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
-}
-
-var _ scopedSession = (*auth.Session)(nil)
+var _ provider.ScopedSession = (*auth.Session)(nil)

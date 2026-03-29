@@ -100,8 +100,8 @@ func TestServiceRunDefaultChecksReadonlyOnly(t *testing.T) {
 		Session: fakeSession{
 			loadToken: provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
 		},
-		Reader: reader,
-		Writer: writer,
+		Reader:    reader,
+		WriteBack: writer,
 		LookPath: func(string) (string, error) {
 			return "/usr/bin/gpg", nil
 		},
@@ -142,8 +142,8 @@ func TestServiceRunDeepUsesReaderAndWriterProbes(t *testing.T) {
 		Session: fakeSession{
 			loadToken: provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
 		},
-		Reader: reader,
-		Writer: writer,
+		Reader:    reader,
+		WriteBack: writer,
 		LookPath: func(string) (string, error) {
 			return "/usr/bin/gpg", nil
 		},
@@ -175,7 +175,9 @@ func TestServiceRunDeepFailsWhenWriterProbeUnsupported(t *testing.T) {
 			loadToken: provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
 		},
 		Reader: &fakeReader{meUser: provider.User{Mail: "user@example.com"}},
-		Writer: writeOnlyWriter{},
+		WriteBacks: []WriteBackProbe{
+			{Name: "archive", Driver: "graph", Health: nil},
+		},
 		LookPath: func(string) (string, error) {
 			return "/usr/bin/gpg", nil
 		},
@@ -208,8 +210,8 @@ func TestServiceRunDeepSupportsMultipleNamedWriteBackProbes(t *testing.T) {
 		},
 		Reader: &fakeReader{},
 		WriteBacks: []WriteBackProbe{
-			{Name: "archive", Driver: "imap", Writer: archiveWriter},
-			{Name: "mirror", Driver: "graph", Writer: mirrorWriter},
+			{Name: "archive", Driver: "imap", Health: archiveWriter},
+			{Name: "mirror", Driver: "graph", Health: mirrorWriter},
 		},
 		LookPath: func(string) (string, error) {
 			return "/usr/bin/gpg", nil
@@ -263,8 +265,8 @@ func TestServiceRunReportsMultipleFailedChecks(t *testing.T) {
 		Session: fakeSession{
 			loadErr: errors.New("missing token"),
 		},
-		Reader: &fakeReader{meErr: errors.New("provider unavailable")},
-		Writer: &fakeWriter{healthErr: errors.New("writer unavailable")},
+		Reader:    &fakeReader{meErr: errors.New("provider unavailable")},
+		WriteBack: &fakeWriter{healthErr: errors.New("writer unavailable")},
 		LookPath: func(string) (string, error) {
 			return "", errors.New("gpg not found")
 		},

@@ -7,6 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/download"
 )
 
@@ -50,11 +51,10 @@ func newDownloadCmd() *cobra.Command {
 					return fmt.Errorf("download 失败: --folder 与 --topology-file 不能同时覆盖 source 文件夹")
 				}
 
-				sourceClients, err := buildSourceProviderClients(cfg, resolved.Topology, resolved.Source)
+				service, err = flowruntime.BuildDownloadService(resolved.SourcePlan)
 				if err != nil {
 					return fmt.Errorf("download 失败: %w", err)
 				}
-				service = buildDownloadServiceWithReader(sourceClients.Reader)
 			}
 
 			result, err := service.Save(cmd.Context(), args[0], cfg.Mail.Pipeline.OutputDir)

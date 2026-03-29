@@ -355,6 +355,9 @@ func TestConfigWithCredentialUsesDerivedStateDirAndStoredIMAPUsername(t *testing
 	if got.Auth.StateDir != credentialStateDir {
 		t.Fatalf("Auth.StateDir = %q, want %q", got.Auth.StateDir, credentialStateDir)
 	}
+	if got.Mail.Sync.StateDir != credentialStateDir {
+		t.Fatalf("Mail.Sync.StateDir = %q, want %q", got.Mail.Sync.StateDir, credentialStateDir)
+	}
 	if got.Auth.ClientID != "credential-client" {
 		t.Fatalf("Auth.ClientID = %q, want credential-client", got.Auth.ClientID)
 	}
@@ -366,6 +369,63 @@ func TestConfigWithCredentialUsesDerivedStateDirAndStoredIMAPUsername(t *testing
 	}
 	if got.Mail.Client.IMAPUsername != "archive@example.com" {
 		t.Fatalf("IMAPUsername = %q, want archive@example.com", got.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestConfigWithCredentialUpdatesDefaultAuditLogPathWithStateDir(t *testing.T) {
+	t.Parallel()
+
+	baseStateDir := t.TempDir()
+	credentialStateDir := DefaultCredentialStateDir(baseStateDir, "archive")
+
+	cfg := Config{
+		Auth: AuthConfig{
+			StateDir: baseStateDir,
+		},
+		Mail: MailConfig{
+			Pipeline: MailPipelineConfig{
+				AuditLogPath: DefaultAuditLogPath(baseStateDir),
+			},
+			Sync: MailSyncConfig{
+				StateDir: baseStateDir,
+			},
+		},
+	}
+
+	got := cfg.WithCredential("archive", Credential{
+		Name: "archive",
+		Kind: "oauth",
+	})
+
+	if got.Mail.Pipeline.AuditLogPath != DefaultAuditLogPath(credentialStateDir) {
+		t.Fatalf("AuditLogPath = %q, want %q", got.Mail.Pipeline.AuditLogPath, DefaultAuditLogPath(credentialStateDir))
+	}
+}
+
+func TestConfigWithStateDirKeepsCustomAuditLogPath(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Auth: AuthConfig{
+			StateDir: "/state",
+		},
+		Mail: MailConfig{
+			Pipeline: MailPipelineConfig{
+				AuditLogPath: "/logs/custom-audit.jsonl",
+			},
+			Sync: MailSyncConfig{
+				StateDir: "/state",
+			},
+		},
+	}
+
+	got := cfg.WithStateDir("/next-state")
+
+	if got.Auth.StateDir != "/next-state" || got.Mail.Sync.StateDir != "/next-state" {
+		t.Fatalf("unexpected state dirs: auth=%q sync=%q", got.Auth.StateDir, got.Mail.Sync.StateDir)
+	}
+	if got.Mail.Pipeline.AuditLogPath != "/logs/custom-audit.jsonl" {
+		t.Fatalf("AuditLogPath = %q, want custom path preserved", got.Mail.Pipeline.AuditLogPath)
 	}
 }
 

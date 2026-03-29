@@ -65,7 +65,7 @@ func TestRunAllowsMissingMessageIDWhenDeleteDisabled(t *testing.T) {
 	t.Parallel()
 
 	writer := &fakeProviderWriter{}
-	service := Service{Writer: writer}
+	service := Service{Writer: writer, Reconciler: writer}
 
 	if _, err := service.Run(context.Background(), Request{MIME: []byte("encrypted")}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -136,7 +136,7 @@ func TestRunForwardsRequestAndResult(t *testing.T) {
 	writer := &fakeProviderWriter{
 		writeResult: provider.WriteResult{Verified: true},
 	}
-	service := Service{Writer: writer}
+	service := Service{Writer: writer, Reconciler: writer}
 
 	result, err := service.Run(context.Background(), Request{
 		Source:              provider.MessageRef{ID: "m1", FolderID: "source-folder"},
@@ -172,7 +172,7 @@ func TestRunAcceptsMIMEOpener(t *testing.T) {
 	t.Parallel()
 
 	writer := &fakeProviderWriter{}
-	service := Service{Writer: writer}
+	service := Service{Writer: writer, Reconciler: writer}
 
 	result, err := service.Run(context.Background(), Request{
 		Source: provider.MessageRef{ID: "m1"},
@@ -240,9 +240,8 @@ func TestReconcileReturnsNotImplementedWhenWriterDoesNotSupportReconcile(t *test
 func TestReconcileMapsProviderNotSupportedToNotImplemented(t *testing.T) {
 	t.Parallel()
 
-	service := Service{
-		Writer: &fakeProviderWriter{reconcileErr: provider.ErrNotSupported},
-	}
+	writer := &fakeProviderWriter{reconcileErr: provider.ErrNotSupported}
+	service := Service{Writer: writer, Reconciler: writer}
 	_, _, err := service.Reconcile(context.Background(), Request{
 		Source: provider.MessageRef{ID: "m1"},
 	})
@@ -254,9 +253,8 @@ func TestReconcileMapsProviderNotSupportedToNotImplemented(t *testing.T) {
 func TestReconcileReturnsProviderError(t *testing.T) {
 	t.Parallel()
 
-	service := Service{
-		Writer: &fakeProviderWriter{reconcileErr: errors.New("reconcile failed")},
-	}
+	writer := &fakeProviderWriter{reconcileErr: errors.New("reconcile failed")}
+	service := Service{Writer: writer, Reconciler: writer}
 	_, _, err := service.Reconcile(context.Background(), Request{
 		Source: provider.MessageRef{ID: "m1"},
 	})
@@ -272,7 +270,7 @@ func TestReconcileForwardsRequestAndResult(t *testing.T) {
 		reconcileResult: provider.WriteResult{Verified: true},
 		reconcileFound:  true,
 	}
-	service := Service{Writer: writer}
+	service := Service{Writer: writer, Reconciler: writer}
 
 	result, found, err := service.Reconcile(context.Background(), Request{
 		Source:              provider.MessageRef{ID: "m1", FolderID: "source-folder"},

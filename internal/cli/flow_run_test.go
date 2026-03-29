@@ -331,6 +331,171 @@ func TestResolveMailflowTopologyLoadsConfiguredSourceAndRoute(t *testing.T) {
 	}
 }
 
+func TestResolveMailflowRoutePlanLoadsAllSourcesForRoute(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	content, err := json.Marshal(appconfig.Topology{
+		DefaultRoute: "archive",
+		Credentials: map[string]appconfig.Credential{
+			"default": {Name: "default", Kind: "shared-session"},
+			"vault":   {Name: "vault", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:         "office",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Inbox",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+			"vault": {
+				Name:          "vault",
+				Driver:        "imap",
+				Mode:          "poll",
+				CredentialRef: "vault",
+				Folder:        "Archive/Sub",
+				PollInterval:  2 * time.Minute,
+				CycleTimeout:  3 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"archive": {
+				Name:       "archive",
+				SourceRefs: []string{"office", "vault"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	resolved, err := resolveMailflowRoutePlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Provider:     "imap",
+		Auth: appconfig.AuthConfig{
+			ClientID:         "client-id",
+			Tenant:           "organizations",
+			AuthorityBaseURL: "https://login.microsoftonline.com",
+			IMAPScopes:       []string{"imap.read"},
+			StateDir:         stateDir,
+			TokenStore:       "file",
+		},
+		Mail: appconfig.MailConfig{
+			Client: appconfig.MailClientConfig{
+				IMAPAddr:     "imap.example.com:993",
+				IMAPUsername: "user@example.com",
+			},
+			Sync: appconfig.MailSyncConfig{
+				StateDir: stateDir,
+			},
+		},
+	}, topologyConfigFlags{topologyFile: topologyPath}, appconfig.TopologyOptions{})
+	if err != nil {
+		t.Fatalf("resolveMailflowRoutePlan() error = %v", err)
+	}
+	if !resolved.Custom {
+		t.Fatalf("Custom = false, want true")
+	}
+	if len(resolved.Runs) != 2 {
+		t.Fatalf("len(Runs) = %d, want 2", len(resolved.Runs))
+	}
+	if resolved.Runs[0].Source.Name != "office" || resolved.Runs[1].Source.Name != "vault" {
+		t.Fatalf("unexpected run order: %#v", []string{resolved.Runs[0].Source.Name, resolved.Runs[1].Source.Name})
+	}
+	if resolved.Runs[0].Route.StateDir != filepath.Join(stateDir, "flow-state", "archive-office-imap-Inbox") {
+		t.Fatalf("office route state dir = %q", resolved.Runs[0].Route.StateDir)
+	}
+	if resolved.Runs[1].Route.StateDir != filepath.Join(stateDir, "credentials", "vault", "flow-state", "archive-vault-imap-Archive_Sub") {
+		t.Fatalf("vault route state dir = %q", resolved.Runs[1].Route.StateDir)
+	}
+}
+
+func TestResolveMailflowTopologyRejectsAmbiguousRouteWithoutExplicitSource(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	content, err := json.Marshal(appconfig.Topology{
+		DefaultRoute: "archive",
+		Credentials: map[string]appconfig.Credential{
+			"default": {Name: "default", Kind: "shared-session"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:         "office",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Inbox",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+			"mirror": {
+				Name:         "mirror",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Mirror",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"archive": {
+				Name:       "archive",
+				SourceRefs: []string{"office", "mirror"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(topologyPath, content, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err = resolveMailflowTopology(appconfig.Config{
+		TopologyPath: topologyPath,
+		Provider:     "imap",
+		Auth: appconfig.AuthConfig{
+			ClientID:         "client-id",
+			Tenant:           "organizations",
+			AuthorityBaseURL: "https://login.microsoftonline.com",
+			IMAPScopes:       []string{"imap.read"},
+			StateDir:         stateDir,
+			TokenStore:       "file",
+		},
+		Mail: appconfig.MailConfig{
+			Client: appconfig.MailClientConfig{
+				IMAPAddr:     "imap.example.com:993",
+				IMAPUsername: "user@example.com",
+			},
+			Sync: appconfig.MailSyncConfig{
+				StateDir: stateDir,
+			},
+		},
+	}, topologyConfigFlags{topologyFile: topologyPath}, appconfig.TopologyOptions{})
+	if err == nil || !strings.Contains(err.Error(), "显式指定 --source") {
+		t.Fatalf("resolveMailflowTopology() error = %v, want explicit source selection", err)
+	}
+}
+
 func TestResolveMailflowTopologyRejectsNonDefaultSelectionInLegacyMode(t *testing.T) {
 	t.Parallel()
 
@@ -495,6 +660,9 @@ func TestApplyTopologyCredentialUsesNamedStateDir(t *testing.T) {
 	}
 	if got.Auth.StateDir != filepath.Join("/state", "credentials", "archive-auth") {
 		t.Fatalf("Auth.StateDir = %q", got.Auth.StateDir)
+	}
+	if got.Mail.Sync.StateDir != filepath.Join("/state", "credentials", "archive-auth") {
+		t.Fatalf("Mail.Sync.StateDir = %q", got.Mail.Sync.StateDir)
 	}
 	if got.Auth.TokenStore != "keyring" {
 		t.Fatalf("TokenStore = %q, want keyring", got.Auth.TokenStore)
