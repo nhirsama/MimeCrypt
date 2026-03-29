@@ -218,6 +218,151 @@ func TestResolveSourcePlanUsesCredentialScopedConfigAndStatePath(t *testing.T) {
 	}
 }
 
+func TestResolveSourcePlanFallsBackToSingleCredentialWhenCredentialRefEmpty(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		Credentials: map[string]appconfig.Credential{
+			"archive-auth": {Name: "archive-auth", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"archive": {
+				Name:         "archive",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Archive/2026",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"archive"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	plan, err := ResolveSourcePlan(testRuntimeConfig(stateDir, topologyPath), Selector{})
+	if err != nil {
+		t.Fatalf("ResolveSourcePlan() error = %v", err)
+	}
+
+	credentialStateDir := filepath.Join(stateDir, "credentials", "archive-auth")
+	if plan.Config.Auth.StateDir != credentialStateDir {
+		t.Fatalf("Auth.StateDir = %q, want %q", plan.Config.Auth.StateDir, credentialStateDir)
+	}
+}
+
+func TestResolveRoutePlanUsesDefaultCredentialForSinkWithoutCredentialRef(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		DefaultCredential: "archive-auth",
+		Credentials: map[string]appconfig.Credential{
+			"default":      {Name: "default", Kind: "shared-session"},
+			"archive-auth": {Name: "archive-auth", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:          "office",
+				Driver:        "imap",
+				Mode:          "poll",
+				CredentialRef: "default",
+				Folder:        "Inbox",
+				PollInterval:  time.Minute,
+				CycleTimeout:  2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"archive": {
+				Name:   "archive",
+				Driver: "imap",
+				Folder: "Encrypted",
+			},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "archive", SinkRef: "archive", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{}, appconfig.TopologyOptions{}, RoutePlanSingleSource)
+	if err != nil {
+		t.Fatalf("ResolveRoutePlan() error = %v", err)
+	}
+	if len(plan.Runs) != 1 {
+		t.Fatalf("len(Runs) = %d, want 1", len(plan.Runs))
+	}
+
+	sink, ok := plan.Runs[0].Sinks["archive"]
+	if !ok {
+		t.Fatalf("missing archive sink")
+	}
+	wantStateDir := filepath.Join(stateDir, "credentials", "archive-auth")
+	if sink.Config.Auth.StateDir != wantStateDir {
+		t.Fatalf("sink Auth.StateDir = %q, want %q", sink.Config.Auth.StateDir, wantStateDir)
+	}
+}
+
+func TestResolveSourcePlanRejectsAmbiguousImplicitCredential(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		Credentials: map[string]appconfig.Credential{
+			"office-auth":  {Name: "office-auth", Kind: "oauth"},
+			"archive-auth": {Name: "archive-auth", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"archive": {
+				Name:         "archive",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Archive/2026",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"archive"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	_, err := ResolveSourcePlan(testRuntimeConfig(stateDir, topologyPath), Selector{})
+	if err == nil || !strings.Contains(err.Error(), "显式设置 credential_ref 或 default_credential") {
+		t.Fatalf("ResolveSourcePlan() error = %v, want ambiguous credential error", err)
+	}
+}
+
 func testRuntimeConfig(stateDir, topologyPath string) appconfig.Config {
 	return appconfig.Config{
 		Provider:     "imap",

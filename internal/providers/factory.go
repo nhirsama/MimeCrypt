@@ -11,26 +11,6 @@ import (
 	"mimecrypt/internal/providers/imap"
 )
 
-// Build 根据配置构造当前使用的邮件服务提供方实现。
-func Build(cfg appconfig.Config) (provider.Clients, error) {
-	session, err := auth.NewSession(sessionAuthConfig(cfg), nil)
-	if err != nil {
-		return provider.Clients{}, err
-	}
-	clients, err := buildSourceClientsWithSession(cfg, session)
-	if err != nil {
-		return provider.Clients{}, err
-	}
-	sink, err := BuildWriteBackClientsWithSession(cfg, session)
-	if err != nil {
-		return provider.Clients{}, err
-	}
-	clients.Writer = sink.Writer
-	clients.Reconciler = sink.Reconciler
-	clients.Health = sink.Health
-	return clients, nil
-}
-
 func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Provider)) {
 	case "", "graph":
@@ -42,26 +22,18 @@ func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
 	}
 }
 
-func BuildWriteBackWriter(cfg appconfig.Config) (provider.Writer, error) {
-	clients, err := BuildWriteBackClients(cfg)
-	if err != nil {
-		return nil, err
-	}
-	return clients.Writer, nil
-}
-
-func buildSourceClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.Clients, error) {
+func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.SourceClients, error) {
 	switch normalizedSourceProvider(cfg.Provider) {
 	case "graph":
-		return graph.BuildWithSession(cfg, session)
+		return graph.BuildSourceClientsWithSession(cfg, session)
 	case "imap":
 		scoped, ok := session.(provider.ScopedSession)
 		if !ok {
-			return provider.Clients{}, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
+			return provider.SourceClients{}, fmt.Errorf("当前 session 不支持按 scopes 获取 token")
 		}
-		return imap.BuildWithSession(cfg, scoped)
+		return imap.BuildSourceClientsWithSession(cfg, scoped)
 	default:
-		return provider.Clients{}, fmt.Errorf("不支持的邮件服务提供方: %s", cfg.Provider)
+		return provider.SourceClients{}, fmt.Errorf("不支持的邮件服务提供方: %s", cfg.Provider)
 	}
 }
 
@@ -73,7 +45,7 @@ func BuildWriteBackClientsWithSession(cfg appconfig.Config, session provider.Ses
 	providerName := normalizedWriteBackProvider(cfg.Provider, cfg.Mail.Pipeline.WriteBackProvider)
 	if session == nil {
 		var err error
-		session, err = auth.NewSession(cfg.Auth, nil)
+		session, err = auth.NewSession(sessionAuthConfig(cfg), nil)
 		if err != nil {
 			return provider.SinkClients{}, err
 		}
@@ -97,14 +69,6 @@ func BuildWriteBackClientsWithSession(cfg appconfig.Config, session provider.Ses
 	default:
 		return provider.SinkClients{}, fmt.Errorf("不支持的回写后端: %s", cfg.Mail.Pipeline.WriteBackProvider)
 	}
-}
-
-func BuildWriteBackWriterWithSession(cfg appconfig.Config, session provider.Session) (provider.Writer, error) {
-	clients, err := BuildWriteBackClientsWithSession(cfg, session)
-	if err != nil {
-		return nil, err
-	}
-	return clients.Writer, nil
 }
 
 func sessionAuthConfig(cfg appconfig.Config) appconfig.AuthConfig {

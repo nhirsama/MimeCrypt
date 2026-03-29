@@ -201,13 +201,3 @@ type SinkClients struct {
 	Reconciler Reconciler
 	Health     HealthProber
 }
-
-// Clients 表示某个 provider 暴露的一组能力实现。
-type Clients struct {
-	Session    Session
-	Reader     Reader
-	Writer     Writer
-	Deleter    Deleter
-	Reconciler Reconciler
-	Health     HealthProber
-}

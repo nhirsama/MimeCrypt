@@ -25,25 +25,6 @@ var _ provider.Reconciler = (*writer)(nil)
 var _ provider.Deleter = (*writer)(nil)
 var _ provider.DeleteSemanticReporter = (*writer)(nil)
 
-func Build(cfg appconfig.Config) (provider.Clients, error) {
-	source, err := BuildSourceClients(cfg)
-	if err != nil {
-		return provider.Clients{}, err
-	}
-	sink, err := NewWriterClients(cfg, source.Session.(provider.ScopedSession))
-	if err != nil {
-		return provider.Clients{}, err
-	}
-	return provider.Clients{
-		Session:    source.Session,
-		Reader:     source.Reader,
-		Writer:     sink.Writer,
-		Deleter:    source.Deleter,
-		Reconciler: sink.Reconciler,
-		Health:     sink.Health,
-	}, nil
-}
-
 func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
 	authCfg := cfg.Auth
 	authCfg.GraphScopes = nil
@@ -91,33 +72,6 @@ func NewWriterClients(cfg appconfig.Config, tokenSource provider.ScopedSession) 
 		Reconciler: writer,
 		Health:     writer,
 	}, nil
-}
-
-func BuildWithSession(cfg appconfig.Config, session provider.ScopedSession) (provider.Clients, error) {
-	source, err := BuildSourceClientsWithSession(cfg, session)
-	if err != nil {
-		return provider.Clients{}, err
-	}
-	sink, err := NewWriterClients(cfg, session)
-	if err != nil {
-		return provider.Clients{}, err
-	}
-	return provider.Clients{
-		Session:    source.Session,
-		Reader:     source.Reader,
-		Writer:     sink.Writer,
-		Deleter:    source.Deleter,
-		Reconciler: sink.Reconciler,
-		Health:     sink.Health,
-	}, nil
-}
-
-func NewWriter(cfg appconfig.Config, tokenSource provider.ScopedSession) (provider.Writer, error) {
-	clients, err := NewWriterClients(cfg, tokenSource)
-	if err != nil {
-		return nil, err
-	}
-	return clients.Writer, nil
 }
 
 func (r *reader) Me(context.Context) (provider.User, error) {

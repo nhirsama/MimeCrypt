@@ -391,15 +391,40 @@ func configForSink(cfg appconfig.Config, topology appconfig.Topology, source app
 }
 
 func applyTopologyCredential(cfg appconfig.Config, topology appconfig.Topology, credentialRef string) (appconfig.Config, error) {
-	credentialRef = strings.TrimSpace(credentialRef)
-	if credentialRef == "" {
+	resolvedRef, err := resolveTopologyCredentialRef(topology, credentialRef)
+	if err != nil {
+		return appconfig.Config{}, err
+	}
+	if resolvedRef == "" {
 		return cfg, nil
 	}
-	credential, ok := topology.Credentials[credentialRef]
+	credential, ok := topology.Credentials[resolvedRef]
 	if !ok {
-		return appconfig.Config{}, fmt.Errorf("credential 不存在: %s", credentialRef)
+		return appconfig.Config{}, fmt.Errorf("credential 不存在: %s", resolvedRef)
 	}
 	return cfg.WithCredential(credential.Name, credential), nil
+}
+
+func resolveTopologyCredentialRef(topology appconfig.Topology, credentialRef string) (string, error) {
+	credentialRef = strings.TrimSpace(credentialRef)
+	if credentialRef != "" {
+		return credentialRef, nil
+	}
+	if value := strings.TrimSpace(topology.DefaultCredential); value != "" {
+		return value, nil
+	}
+	if len(topology.Credentials) == 0 {
+		return "", nil
+	}
+	if _, ok := topology.Credentials["default"]; ok {
+		return "default", nil
+	}
+	if len(topology.Credentials) == 1 {
+		for name := range topology.Credentials {
+			return strings.TrimSpace(name), nil
+		}
+	}
+	return "", fmt.Errorf("topology 存在多个 credential，请显式设置 credential_ref 或 default_credential")
 }
 
 func normalizeDriver(value, fallback string) string {

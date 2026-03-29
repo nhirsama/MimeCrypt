@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -33,7 +32,11 @@ func newErrorCommand(use, short string, err error) *cobra.Command {
 }
 
 func buildLoginService(cfg appconfig.Config) (*login.Service, error) {
-	sourceClients, err := providers.BuildSourceClients(cfg)
+	session, err := auth.NewSession(cfg.Auth, nil)
+	if err != nil {
+		return nil, err
+	}
+	sourceClients, err := providers.BuildSourceClientsWithSession(cfg, session)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +77,7 @@ func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	sinkClients, err := providers.BuildWriteBackClientsWithSession(cfg, sourceClients.Session)
+	sinkClients, err := providers.BuildWriteBackClients(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -113,23 +116,14 @@ func buildListServiceWithReader(reader provider.Reader) *list.Service {
 }
 
 func syncConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL, ewsBaseURL, imapAddr, imapUsername string) appconfig.Config {
-	cfg := defaults
-	previousStateDir := cfg.Mail.Sync.StateDir
-	previousAuditLogPath := cfg.Mail.Pipeline.AuditLogPath
+	cfg := defaults.WithStateDir(stateDir)
 	cfg.Auth.ClientID = clientID
 	cfg.Auth.Tenant = tenant
-	cfg.Auth.StateDir = stateDir
 	cfg.Auth.AuthorityBaseURL = authorityBaseURL
 	cfg.Mail.Client.GraphBaseURL = graphBaseURL
 	cfg.Mail.Client.EWSBaseURL = ewsBaseURL
 	cfg.Mail.Client.IMAPAddr = imapAddr
 	cfg.Mail.Client.IMAPUsername = imapUsername
-	cfg.Mail.Sync.StateDir = stateDir
-	if strings.TrimSpace(previousAuditLogPath) == "" || previousAuditLogPath == appconfig.DefaultAuditLogPath(previousStateDir) {
-		cfg.Mail.Pipeline.AuditLogPath = appconfig.DefaultAuditLogPath(stateDir)
-	} else if !filepath.IsAbs(previousAuditLogPath) && previousAuditLogPath == filepath.Base(appconfig.DefaultAuditLogPath(previousStateDir)) {
-		cfg.Mail.Pipeline.AuditLogPath = filepath.Join(stateDir, previousAuditLogPath)
-	}
 	return cfg
 }
 
