@@ -5,21 +5,8 @@ import (
 	"fmt"
 
 	"mimecrypt/internal/appconfig"
-	"mimecrypt/internal/auth"
 	"mimecrypt/internal/provider"
 )
-
-func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
-	authCfg := cfg.Auth
-	authCfg.EWSScopes = nil
-	authCfg.IMAPScopes = nil
-
-	session, err := auth.NewSession(authCfg, nil)
-	if err != nil {
-		return provider.SourceClients{}, err
-	}
-	return BuildSourceClientsWithSession(cfg, session)
-}
 
 func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.SourceClients, error) {
 	if session == nil {

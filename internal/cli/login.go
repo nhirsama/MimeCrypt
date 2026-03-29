@@ -19,7 +19,6 @@ func newLoginCmd() *cobra.Command {
 		return newErrorCommand("login", "通过 device code 登录并缓存 token", err)
 	}
 
-	baseFlags := newBaseConfigFlags(cfg)
 	credentialFlags := newCredentialConfigFlags(cfg)
 
 	cmd := &cobra.Command{
@@ -27,15 +26,14 @@ func newLoginCmd() *cobra.Command {
 		Short: "执行 device code 登录并写入本地 token 缓存",
 		Args:  argRange(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = baseFlags.apply(cfg, cmd)
 			cfg = credentialFlags.apply(cfg)
-			cfg = applyLoginIMAPUsernameArg(cfg, cmd, args)
 
 			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
 			cfg = resolved.Config
+			cfg = applyLoginIMAPUsernameArg(cfg, args)
 
 			loginCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
 			defer cancel()
@@ -65,20 +63,16 @@ func newLoginCmd() *cobra.Command {
 		},
 	}
 
-	baseFlags.addFlags(cmd)
 	credentialFlags.addFlags(cmd)
 
 	return cmd
 }
 
-func applyLoginIMAPUsernameArg(cfg appconfig.Config, cmd *cobra.Command, args []string) appconfig.Config {
+func applyLoginIMAPUsernameArg(cfg appconfig.Config, args []string) appconfig.Config {
 	if len(args) != 1 {
 		return cfg
 	}
 	if os.Getenv("MIMECRYPT_IMAP_USERNAME") != "" {
-		return cfg
-	}
-	if cmd != nil && cmd.Flags().Changed("imap-username") {
 		return cfg
 	}
 	cfg.Mail.Client.IMAPUsername = strings.TrimSpace(args[0])

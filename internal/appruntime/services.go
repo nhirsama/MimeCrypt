@@ -34,7 +34,7 @@ func BuildLoginService(cfg appconfig.Config) (*login.Service, error) {
 func buildLoginIdentityProbe(cfg appconfig.Config, session provider.Session) (func(context.Context) (provider.User, error), error) {
 	switch {
 	case len(cfg.Auth.GraphScopes) > 0:
-		clients, err := providers.BuildSourceClientsWithSession(cfg, "graph", session)
+		clients, err := providers.BuildSourceClientsWithSession(cfg, "graph", "", session)
 		if err != nil {
 			return nil, err
 		}

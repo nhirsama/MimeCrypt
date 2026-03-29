@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -15,7 +16,6 @@ func newDownloadCmd() *cobra.Command {
 		return newErrorCommand("download", "按邮件 ID 下载原始 MIME", err)
 	}
 
-	baseFlags := newBaseConfigFlags(cfg)
 	topologyFlags := newTopologyConfigFlags(cfg)
 	outputDir := cfg.Mail.Pipeline.OutputDir
 
@@ -24,7 +24,6 @@ func newDownloadCmd() *cobra.Command {
 		Short: "按邮件标识下载原始 MIME",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = baseFlags.apply(cfg, cmd)
 			cfg = topologyFlags.apply(cfg)
 			cfg.Mail.Pipeline.OutputDir = outputDir
 
@@ -32,11 +31,14 @@ func newDownloadCmd() *cobra.Command {
 				return fmt.Errorf("download 失败: output-dir 不能为空")
 			}
 
-			resolved, err := resolveTopologySource(cfg, topologyFlags)
+			resolved, err := flowruntime.ResolveSourcePlan(cfg, flowruntime.Selector{
+				RouteName:  strings.TrimSpace(topologyFlags.routeName),
+				SourceName: strings.TrimSpace(topologyFlags.sourceName),
+			})
 			if err != nil {
 				return fmt.Errorf("download 失败: %w", err)
 			}
-			service, err := flowruntime.BuildDownloadService(resolved.SourcePlan)
+			service, err := flowruntime.BuildDownloadService(resolved)
 			if err != nil {
 				return fmt.Errorf("download 失败: %w", err)
 			}
@@ -51,7 +53,6 @@ func newDownloadCmd() *cobra.Command {
 		},
 	}
 
-	baseFlags.addFlags(cmd)
 	topologyFlags.addSourceFlags(cmd)
 	cmd.Flags().StringVar(&outputDir, "output-dir", outputDir, "MIME 文件输出目录")
 

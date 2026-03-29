@@ -45,7 +45,7 @@ func TestBuildSourceClientsWithSessionUsesExplicitDriver(t *testing.T) {
 		t.Fatalf("NewSession() error = %v", err)
 	}
 
-	clients, err := BuildSourceClientsWithSession(cfg, "imap", session)
+	clients, err := BuildSourceClientsWithSession(cfg, "imap", "INBOX", session)
 	if err != nil {
 		t.Fatalf("BuildSourceClientsWithSession() error = %v", err)
 	}
@@ -59,7 +59,7 @@ func TestBuildSinkClientsUsesExplicitDriver(t *testing.T) {
 
 	cfg := testProviderConfig(t)
 
-	clients, err := BuildSinkClients(cfg, "ews")
+	clients, err := BuildSinkClients(cfg, "ews", "")
 	if err != nil {
 		t.Fatalf("BuildSinkClients() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestBuildSinkClientsGraphHealthUsesGraphScopes(t *testing.T) {
 		t.Fatalf("StoreToken() error = %v", err)
 	}
 
-	clients, err := BuildSinkClientsWithSession(cfg, "graph", session)
+	clients, err := BuildSinkClientsWithSession(cfg, "graph", "", session)
 	if err != nil {
 		t.Fatalf("BuildSinkClientsWithSession() error = %v", err)
 	}
@@ -157,9 +157,7 @@ func testProviderConfig(t *testing.T) appconfig.Config {
 				IMAPAddr:     "imap.example.com:993",
 				IMAPUsername: "user@example.com",
 			},
-			Sync: appconfig.MailSyncConfig{
-				Folder: "INBOX",
-			},
+			Sync: appconfig.MailSyncConfig{},
 		},
 	}
 }

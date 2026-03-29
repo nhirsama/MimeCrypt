@@ -16,7 +16,6 @@ func newProcessCmd() *cobra.Command {
 		return newErrorCommand("process", "根据邮件 ID 和配置处理邮件", err)
 	}
 
-	baseFlags := newBaseConfigFlags(cfg)
 	topologyFlags := newTopologyConfigFlags(cfg)
 	pipelineFlags := newPipelineConfigFlags(cfg)
 	transactionMode := string(flowruntime.TransactionModeEphemeral)
@@ -26,7 +25,6 @@ func newProcessCmd() *cobra.Command {
 		Short: "按邮件标识执行单封邮件处理",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = baseFlags.apply(cfg, cmd)
 			cfg = topologyFlags.apply(cfg)
 			cfg = pipelineFlags.apply(cfg, cmd)
 
@@ -34,7 +32,10 @@ func newProcessCmd() *cobra.Command {
 				return fmt.Errorf("process 失败: %w", err)
 			}
 
-			resolved, err := resolveMailflowTopology(cfg, topologyFlags)
+			resolved, err := flowruntime.ResolveSingleSourceRun(cfg, flowruntime.Selector{
+				RouteName:  strings.TrimSpace(topologyFlags.routeName),
+				SourceName: strings.TrimSpace(topologyFlags.sourceName),
+			})
 			if err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
@@ -44,29 +45,36 @@ func newProcessCmd() *cobra.Command {
 				return fmt.Errorf("process 失败: %w", err)
 			}
 
-			result, err := runMailflowMessageByID(cmd.Context(), resolved, args[0], mode)
+			runner, err := flowruntime.BuildSingleMessageRunner(cmd.Context(), resolved, mode)
+			if err != nil {
+				return fmt.Errorf("process 失败: %w", err)
+			}
+			result, err := runner.RunMessageByID(cmd.Context(), args[0])
+			if err != nil {
+				return fmt.Errorf("process 失败: %w", err)
+			}
+			summary, err := summarizeSingleMessageResult(result)
 			if err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
 
 			fmt.Printf(
 				"处理完成，message_id=%s format=%s encrypted=%t already_encrypted=%t saved_output=%t backup_path=%s wrote_back=%t verified=%t path=%s bytes=%d\n",
-				result.MessageID,
-				result.Format,
-				result.Encrypted,
-				result.AlreadyEncrypted,
-				result.SavedOutput,
-				result.BackupPath,
-				result.WroteBack,
-				result.Verified,
-				result.Path,
-				result.Bytes,
+				summary.MessageID,
+				summary.Format,
+				summary.Encrypted,
+				summary.AlreadyEncrypted,
+				summary.SavedOutput,
+				summary.BackupPath,
+				summary.WroteBack,
+				summary.Verified,
+				summary.Path,
+				summary.Bytes,
 			)
 			return nil
 		},
 	}
 
-	baseFlags.addFlags(cmd)
 	topologyFlags.addFlags(cmd)
 	pipelineFlags.addFlags(cmd)
 	cmd.Flags().StringVar(&transactionMode, "transaction-mode", transactionMode, "单封处理事务状态模式：ephemeral 或 persistent")

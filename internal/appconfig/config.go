@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 )
 
@@ -20,9 +19,6 @@ const (
 	defaultEWSScopes        = "https://outlook.office365.com/EWS.AccessAsUser.All"
 	defaultIMAPAddr         = "outlook.office365.com:993"
 	defaultIMAPScopes       = "https://outlook.office.com/IMAP.AccessAsUser.All offline_access"
-	defaultFolder           = "INBOX"
-	defaultPollInterval     = time.Minute
-	defaultCycleTimeout     = 2 * time.Minute
 	defaultOutputDir        = "output"
 	defaultTokenFileName    = "token.json"
 	defaultTokenStore       = "file"
@@ -71,10 +67,7 @@ type MailPipelineConfig struct {
 }
 
 type MailSyncConfig struct {
-	Folder       string
-	StateDir     string
-	PollInterval time.Duration
-	CycleTimeout time.Duration
+	StateDir string
 }
 
 // LoadFromEnv 从环境变量加载 CLI 所需配置。
@@ -131,10 +124,7 @@ func LoadFromEnv() (Config, error) {
 				AuditStdout:    auditStdout,
 			},
 			Sync: MailSyncConfig{
-				Folder:       defaultFolder,
-				StateDir:     stateDir,
-				PollInterval: defaultPollInterval,
-				CycleTimeout: defaultCycleTimeout,
+				StateDir: stateDir,
 			},
 		},
 	}, nil
@@ -204,27 +194,6 @@ func (c MailClientConfig) ValidateIMAP() error {
 	}
 	if strings.TrimSpace(c.IMAPUsername) == "" {
 		return fmt.Errorf("imap username 不能为空")
-	}
-
-	return nil
-}
-
-// ValidateSync 校验邮件同步所需配置。
-func (c MailConfig) ValidateSync() error {
-	if strings.TrimSpace(c.Sync.StateDir) == "" {
-		return fmt.Errorf("state dir 不能为空")
-	}
-	if strings.TrimSpace(c.Pipeline.BackupDir) == "" {
-		return fmt.Errorf("backup dir 不能为空")
-	}
-	if !c.Pipeline.HasAuditOutput() {
-		return fmt.Errorf("至少需要一个审计输出：audit log path 或 audit stdout")
-	}
-	if c.Sync.PollInterval <= 0 {
-		return fmt.Errorf("poll interval 必须大于 0")
-	}
-	if c.Sync.CycleTimeout <= 0 {
-		return fmt.Errorf("cycle timeout 必须大于 0")
 	}
 
 	return nil

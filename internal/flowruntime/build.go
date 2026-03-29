@@ -218,7 +218,7 @@ func buildMailflowConsumers(ctx context.Context, run SourceRun) (map[string]mail
 			if err != nil {
 				return nil, err
 			}
-			sinkStore, err := buildMailflowSinkStore(ctx, sink.Config, sinkBundle.Clients.Reader, sink.Sink, run.Source.Folder, run.Route.DeleteSource.Enabled)
+			sinkStore, err := buildMailflowSinkStore(ctx, sink.Config, sinkBundle.Clients.Reader, sink.Sink.Driver, sink.Mailbox, run.Route.DeleteSource.Enabled)
 			if err != nil {
 				return nil, err
 			}
@@ -227,7 +227,7 @@ func buildMailflowConsumers(ctx context.Context, run SourceRun) (map[string]mail
 					Writer:     sinkBundle.Clients.Writer,
 					Reconciler: sinkBundle.Clients.Reconciler,
 				},
-				DestinationFolderID: sink.Sink.Folder,
+				DestinationFolderID: sink.Mailbox,
 				Verify:              sink.Sink.Verify,
 				Store:               sinkStore,
 			}
@@ -266,7 +266,7 @@ func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
 }
 
 func buildSourceBundle(plan SourcePlan) (sourceBundle, error) {
-	clients, err := providers.BuildSourceClients(plan.Config, plan.Source.Driver)
+	clients, err := providers.BuildSourceClients(plan.Config, plan.Source.Driver, plan.Source.Folder)
 	if err != nil {
 		return sourceBundle{}, err
 	}
@@ -277,7 +277,7 @@ func buildSourceBundle(plan SourcePlan) (sourceBundle, error) {
 }
 
 func buildSinkBundle(plan SinkPlan) (sinkBundle, error) {
-	clients, err := providers.BuildSinkClients(plan.Config, plan.Sink.Driver)
+	clients, err := providers.BuildSinkClients(plan.Config, plan.Sink.Driver, plan.Mailbox)
 	if err != nil {
 		return sinkBundle{}, err
 	}
@@ -304,8 +304,8 @@ func buildMailflowSourceStore(ctx context.Context, cfg appconfig.Config, reader 
 	}, nil
 }
 
-func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, sink appconfig.Sink, fallbackMailbox string, resolveAccount bool) (mailflow.StoreRef, error) {
-	driver := normalizeDriver(sink.Driver, "imap")
+func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader provider.Reader, sinkDriver, mailbox string, resolveAccount bool) (mailflow.StoreRef, error) {
+	driver := normalizeDriver(sinkDriver, "imap")
 	account := ""
 	var err error
 	if resolveAccount {
@@ -314,17 +314,10 @@ func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader pr
 			return mailflow.StoreRef{}, err
 		}
 	}
-	mailbox := strings.TrimSpace(sink.Folder)
-	if mailbox == "" {
-		mailbox = strings.TrimSpace(fallbackMailbox)
-	}
-	if mailbox == "" {
-		mailbox = cfg.Mail.Sync.Folder
-	}
 	return mailflow.StoreRef{
 		Driver:  driver,
 		Account: account,
-		Mailbox: mailbox,
+		Mailbox: strings.TrimSpace(mailbox),
 	}, nil
 }
 

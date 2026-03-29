@@ -57,17 +57,12 @@ func TestBuildMailflowPlanFallsBackToDiscardTarget(t *testing.T) {
 	}
 }
 
-func TestBuildMailflowSinkStoreFallsBackToSourceFolder(t *testing.T) {
+func TestBuildMailflowSinkStoreUsesExplicitMailbox(t *testing.T) {
 	t.Parallel()
 
 	store, err := buildMailflowSinkStore(context.Background(), appconfig.Config{
-		Mail: appconfig.MailConfig{
-			Sync: appconfig.MailSyncConfig{Folder: "legacy"},
-		},
-	}, nil, appconfig.Sink{
-		Name:   "archive",
-		Driver: "imap",
-	}, "archive-2026", false)
+		Mail: appconfig.MailConfig{},
+	}, nil, "imap", "archive-2026", false)
 	if err != nil {
 		t.Fatalf("buildMailflowSinkStore() error = %v", err)
 	}

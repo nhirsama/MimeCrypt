@@ -18,7 +18,6 @@ func newHealthCmd() *cobra.Command {
 		return newErrorCommand("health", "检查运行环境、认证状态和 provider 连通性", err)
 	}
 
-	baseFlags := newBaseConfigFlags(cfg)
 	topologyFlags := newTopologyConfigFlags(cfg)
 	timeout := 30 * time.Second
 	deep := false
@@ -28,10 +27,12 @@ func newHealthCmd() *cobra.Command {
 		Short: "检查运行环境、缓存凭据与可选连通性状态",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg = baseFlags.apply(cfg, cmd)
 			cfg = topologyFlags.apply(cfg)
 
-			resolved, err := resolveMailflowRoutePlan(cfg, topologyFlags)
+			resolved, err := flowruntime.ResolveRoutePlan(cfg, flowruntime.Selector{
+				RouteName:  topologyFlags.routeName,
+				SourceName: topologyFlags.sourceName,
+			}, flowruntime.RoutePlanAllSources)
 			if err != nil {
 				return fmt.Errorf("health 失败: %w", err)
 			}
@@ -41,7 +42,6 @@ func newHealthCmd() *cobra.Command {
 		},
 	}
 
-	baseFlags.addFlags(cmd)
 	topologyFlags.addFlags(cmd)
 	cmd.Flags().BoolVar(&deep, "deep", deep, "执行包含 token 刷新与 provider 连通性探测的深度检查")
 	cmd.Flags().DurationVar(&timeout, "timeout", timeout, "健康检查总超时时间")
@@ -49,7 +49,7 @@ func newHealthCmd() *cobra.Command {
 	return cmd
 }
 
-func runRouteHealth(ctx context.Context, plan resolvedMailflowRoutePlan, deep bool) error {
+func runRouteHealth(ctx context.Context, plan flowruntime.RoutePlan, deep bool) error {
 	failures := false
 	for idx, run := range plan.Runs {
 		service, err := flowruntime.BuildHealthService(ctx, run)

@@ -1,72 +1,12 @@
 package cli
 
 import (
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
 )
-
-type baseConfigFlags struct {
-	clientID         string
-	tenant           string
-	stateDir         string
-	authorityBaseURL string
-	graphBaseURL     string
-	ewsBaseURL       string
-	imapAddr         string
-	imapUsername     string
-}
-
-func newBaseConfigFlags(cfg appconfig.Config) baseConfigFlags {
-	return baseConfigFlags{
-		clientID:         cfg.Auth.ClientID,
-		tenant:           cfg.Auth.Tenant,
-		stateDir:         cfg.Auth.StateDir,
-		authorityBaseURL: cfg.Auth.AuthorityBaseURL,
-		graphBaseURL:     cfg.Mail.Client.GraphBaseURL,
-		ewsBaseURL:       cfg.Mail.Client.EWSBaseURL,
-		imapAddr:         cfg.Mail.Client.IMAPAddr,
-		imapUsername:     cfg.Mail.Client.IMAPUsername,
-	}
-}
-
-func (f *baseConfigFlags) addFlags(cmd *cobra.Command) {
-	cmd.Flags().StringVar(&f.clientID, "client-id", f.clientID, "Microsoft Entra 应用的 Client ID")
-	cmd.Flags().StringVar(&f.tenant, "tenant", f.tenant, "租户标识；缺省值为 organizations")
-	cmd.Flags().StringVar(&f.stateDir, "state-dir", f.stateDir, "本地状态目录")
-	cmd.Flags().StringVar(&f.authorityBaseURL, "authority-base-url", f.authorityBaseURL, "Microsoft Entra 认证基础地址")
-	cmd.Flags().StringVar(&f.graphBaseURL, "graph-base-url", f.graphBaseURL, "Microsoft Graph 基础地址")
-	cmd.Flags().StringVar(&f.ewsBaseURL, "ews-base-url", f.ewsBaseURL, "EWS 基础地址")
-	cmd.Flags().StringVar(&f.imapAddr, "imap-addr", f.imapAddr, "IMAP 服务地址，例如 outlook.office365.com:993")
-	cmd.Flags().StringVar(&f.imapUsername, "imap-username", f.imapUsername, "IMAP 登录用户名，一般为邮箱地址")
-}
-
-func (f baseConfigFlags) apply(cfg appconfig.Config, cmd *cobra.Command) appconfig.Config {
-	return applyBaseConfig(
-		cfg,
-		f.clientID,
-		f.tenant,
-		f.stateDir,
-		f.authorityBaseURL,
-		f.graphBaseURL,
-		f.ewsBaseURL,
-		f.imapAddr,
-		resolveIMAPUsernameForCommand(f.stateDir, f.imapUsername, cmd),
-	)
-}
-
-func resolveIMAPUsernameForCommand(stateDir, fallback string, cmd *cobra.Command) string {
-	if value := strings.TrimSpace(os.Getenv("MIMECRYPT_IMAP_USERNAME")); value != "" {
-		return value
-	}
-	if cmd != nil && cmd.Flags().Changed("imap-username") {
-		return strings.TrimSpace(fallback)
-	}
-	return appconfig.ResolveStoredIMAPUsernamePreferStored(stateDir, fallback)
-}
 
 type topologyConfigFlags struct {
 	topologyFile string

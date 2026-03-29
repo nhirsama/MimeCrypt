@@ -16,14 +16,12 @@ func newLogoutCmd() *cobra.Command {
 	}
 
 	credentialFlags := newCredentialConfigFlags(cfg)
-	stateDir := cfg.Auth.StateDir
 
 	cmd := &cobra.Command{
 		Use:   "logout",
 		Short: "清理本地认证状态与缓存 token",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg.Auth.StateDir = stateDir
 			cfg = credentialFlags.apply(cfg)
 
 			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
@@ -45,7 +43,6 @@ func newLogoutCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&stateDir, "state-dir", stateDir, "本地状态目录")
 	credentialFlags.addFlags(cmd)
 
 	return cmd

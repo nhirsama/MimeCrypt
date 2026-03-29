@@ -36,9 +36,6 @@ func TestLoadFromEnvDefaults(t *testing.T) {
 	if cfg.Mail.Pipeline.AuditLogPath != DefaultAuditLogPath(wantStateDir) {
 		t.Fatalf("AuditLogPath = %q, want %q", cfg.Mail.Pipeline.AuditLogPath, DefaultAuditLogPath(wantStateDir))
 	}
-	if cfg.Mail.Sync.Folder != defaultFolder {
-		t.Fatalf("Folder = %q, want %q", cfg.Mail.Sync.Folder, defaultFolder)
-	}
 }
 
 func TestLoadFromEnvOverridesSupportedFields(t *testing.T) {

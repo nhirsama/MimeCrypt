@@ -8,7 +8,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
 )
 
@@ -20,18 +19,6 @@ func newErrorCommand(use, short string, err error) *cobra.Command {
 			return err
 		},
 	}
-}
-
-func applyBaseConfig(defaults appconfig.Config, clientID, tenant, stateDir, authorityBaseURL, graphBaseURL, ewsBaseURL, imapAddr, imapUsername string) appconfig.Config {
-	cfg := defaults.WithStateDir(stateDir)
-	cfg.Auth.ClientID = clientID
-	cfg.Auth.Tenant = tenant
-	cfg.Auth.AuthorityBaseURL = authorityBaseURL
-	cfg.Mail.Client.GraphBaseURL = graphBaseURL
-	cfg.Mail.Client.EWSBaseURL = ewsBaseURL
-	cfg.Mail.Client.IMAPAddr = imapAddr
-	cfg.Mail.Client.IMAPUsername = imapUsername
-	return cfg
 }
 
 type mailflowSummary struct {
@@ -90,5 +77,16 @@ func summarizeMailflowResult(result mailflow.Result) (mailflowSummary, error) {
 		}
 	}
 
+	return summary, nil
+}
+
+func summarizeSingleMessageResult(result mailflow.Result) (mailflowSummary, error) {
+	summary, err := summarizeMailflowResult(result)
+	if err != nil {
+		return mailflowSummary{}, err
+	}
+	if summary.MessageID == "" {
+		return mailflowSummary{}, fmt.Errorf("mailflow 结果缺少 message id")
+	}
 	return summary, nil
 }

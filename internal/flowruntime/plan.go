@@ -26,8 +26,9 @@ type SourcePlan struct {
 }
 
 type SinkPlan struct {
-	Sink   appconfig.Sink
-	Config appconfig.Config
+	Sink    appconfig.Sink
+	Config  appconfig.Config
+	Mailbox string
 }
 
 type SourceRun struct {
@@ -72,6 +73,17 @@ func ResolveSourcePlan(cfg appconfig.Config, selector Selector) (SourcePlan, err
 		Source:   source,
 		Config:   sourceCfg,
 	}, nil
+}
+
+func ResolveSingleSourceRun(cfg appconfig.Config, selector Selector) (SourceRun, error) {
+	plan, err := ResolveRoutePlan(cfg, selector, RoutePlanSingleSource)
+	if err != nil {
+		return SourceRun{}, err
+	}
+	if len(plan.Runs) != 1 {
+		return SourceRun{}, fmt.Errorf("mailflow 单源解析结果无效: runs=%d", len(plan.Runs))
+	}
+	return plan.Runs[0], nil
 }
 
 func ResolveRoutePlan(cfg appconfig.Config, selector Selector, mode RoutePlanMode) (RoutePlan, error) {
@@ -220,13 +232,14 @@ func buildSourceRun(cfg appconfig.Config, topology appconfig.Topology, route app
 		if !ok {
 			return SourceRun{}, fmt.Errorf("route %s 引用了不存在的 sink: %s", runRoute.Name, sinkRef)
 		}
-		sinkCfg, err := configForSink(cfg, topology, source, sink)
+		sinkCfg, err := configForSink(cfg, topology, sink)
 		if err != nil {
 			return SourceRun{}, err
 		}
 		sinks[sinkRef] = SinkPlan{
-			Sink:   sink,
-			Config: sinkCfg,
+			Sink:    sink,
+			Config:  sinkCfg,
+			Mailbox: sinkMailbox(source, sink),
 		}
 	}
 
@@ -307,24 +320,22 @@ func topologySourceNames(sources map[string]appconfig.Source) []string {
 }
 
 func configForSource(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source) (appconfig.Config, error) {
-	sourceCfg, err := applyTopologyCredential(cfg, topology, source.CredentialRef)
-	if err != nil {
-		return appconfig.Config{}, err
-	}
-	sourceCfg.Mail.Sync.Folder = source.Folder
-	return sourceCfg, nil
+	return applyTopologyCredential(cfg, topology, source.CredentialRef)
 }
 
-func configForSink(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source, sink appconfig.Sink) (appconfig.Config, error) {
+func configForSink(cfg appconfig.Config, topology appconfig.Topology, sink appconfig.Sink) (appconfig.Config, error) {
 	sinkCfg, err := applyTopologyCredential(cfg, topology, sink.CredentialRef)
 	if err != nil {
 		return appconfig.Config{}, err
 	}
-	sinkCfg.Mail.Sync.Folder = source.Folder
-	if folder := strings.TrimSpace(sink.Folder); folder != "" {
-		sinkCfg.Mail.Sync.Folder = folder
-	}
 	return sinkCfg, nil
+}
+
+func sinkMailbox(source appconfig.Source, sink appconfig.Sink) string {
+	if mailbox := strings.TrimSpace(sink.Folder); mailbox != "" {
+		return mailbox
+	}
+	return strings.TrimSpace(source.Folder)
 }
 
 func applyTopologyCredential(cfg appconfig.Config, topology appconfig.Topology, credentialRef string) (appconfig.Config, error) {

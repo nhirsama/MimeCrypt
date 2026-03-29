@@ -159,6 +159,50 @@ func TestResolveRoutePlanSingleSourceRejectsAmbiguousRouteWithoutSelection(t *te
 	}
 }
 
+func TestResolveSingleSourceRunUsesRouteSelection(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		DefaultRoute: "archive",
+		Credentials: map[string]appconfig.Credential{
+			"default": {Name: "default", Kind: "shared-session"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:         "office",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Inbox/Sub",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"archive": {
+				Name:       "archive",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	run, err := ResolveSingleSourceRun(testRuntimeConfig(stateDir, topologyPath), Selector{})
+	if err != nil {
+		t.Fatalf("ResolveSingleSourceRun() error = %v", err)
+	}
+	if run.Source.Name != "office" || run.Route.Name != "archive" {
+		t.Fatalf("unexpected run selection: %+v", run)
+	}
+}
+
 func TestResolveSourcePlanUsesCredentialScopedConfigAndStatePath(t *testing.T) {
 	t.Parallel()
 
@@ -209,6 +253,57 @@ func TestResolveSourcePlanUsesCredentialScopedConfigAndStatePath(t *testing.T) {
 	}
 	if plan.Source.StatePath != filepath.Join(credentialStateDir, "flow-sync-archive-imap-Archive_2026.json") {
 		t.Fatalf("Source.StatePath = %q", plan.Source.StatePath)
+	}
+}
+
+func TestResolveRoutePlanFallsBackSinkMailboxToSourceFolder(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		Credentials: map[string]appconfig.Credential{
+			"default": {Name: "default", Kind: "shared-session"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:         "office",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Inbox/Archive",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"archive": {
+				Name:   "archive",
+				Driver: "imap",
+			},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "archive", SinkRef: "archive", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{}, RoutePlanSingleSource)
+	if err != nil {
+		t.Fatalf("ResolveRoutePlan() error = %v", err)
+	}
+
+	sink, ok := plan.Runs[0].Sinks["archive"]
+	if !ok {
+		t.Fatalf("missing archive sink")
+	}
+	if got, want := sink.Mailbox, "Inbox/Archive"; got != want {
+		t.Fatalf("Mailbox = %q, want %q", got, want)
 	}
 }
 

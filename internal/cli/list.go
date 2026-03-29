@@ -20,7 +20,6 @@ func newListCmd() *cobra.Command {
 		return newErrorCommand("list", "列出最新邮件摘要", err)
 	}
 
-	baseFlags := newBaseConfigFlags(cfg)
 	topologyFlags := newTopologyConfigFlags(cfg)
 
 	cmd := &cobra.Command{
@@ -30,11 +29,10 @@ func newListCmd() *cobra.Command {
 		Example: strings.Join([]string{
 			"mimecrypt list 10",
 			"mimecrypt list 10 20",
-			"mimecrypt list 0 5 --folder inbox",
+			"mimecrypt list 0 5 --source office-inbox",
 		}, "\n"),
 		Args: argRange(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = baseFlags.apply(cfg, cmd)
 			cfg = topologyFlags.apply(cfg)
 
 			start, end, err := parseLatestRange(args)
@@ -46,11 +44,14 @@ func newListCmd() *cobra.Command {
 				Start: start,
 				End:   end,
 			}
-			resolved, err := resolveTopologySource(cfg, topologyFlags)
+			resolved, err := flowruntime.ResolveSourcePlan(cfg, flowruntime.Selector{
+				RouteName:  strings.TrimSpace(topologyFlags.routeName),
+				SourceName: strings.TrimSpace(topologyFlags.sourceName),
+			})
 			if err != nil {
 				return fmt.Errorf("list 失败: %w", err)
 			}
-			service, err := flowruntime.BuildListService(resolved.SourcePlan)
+			service, err := flowruntime.BuildListService(resolved)
 			if err != nil {
 				return fmt.Errorf("list 失败: %w", err)
 			}
@@ -74,7 +75,6 @@ func newListCmd() *cobra.Command {
 		},
 	}
 
-	baseFlags.addFlags(cmd)
 	topologyFlags.addSourceFlags(cmd)
 
 	return cmd

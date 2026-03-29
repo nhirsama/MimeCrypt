@@ -51,14 +51,6 @@ func SaveLocalConfig(stateDir string, cfg LocalConfig) error {
 	return nil
 }
 
-func ResolveStoredIMAPUsername(stateDir, fallback string) string {
-	fallback = strings.TrimSpace(fallback)
-	if fallback != "" {
-		return fallback
-	}
-	return ResolveStoredIMAPUsernamePreferStored(stateDir, fallback)
-}
-
 func ResolveStoredIMAPUsernamePreferStored(stateDir, fallback string) string {
 	fallback = strings.TrimSpace(fallback)
 	localCfg, err := LoadLocalConfig(stateDir)

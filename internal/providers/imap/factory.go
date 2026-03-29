@@ -25,24 +25,12 @@ var _ provider.Reconciler = (*writer)(nil)
 var _ provider.Deleter = (*writer)(nil)
 var _ provider.DeleteSemanticReporter = (*writer)(nil)
 
-func BuildSourceClients(cfg appconfig.Config) (provider.SourceClients, error) {
-	authCfg := cfg.Auth
-	authCfg.GraphScopes = nil
-	authCfg.EWSScopes = nil
-
-	session, err := auth.NewSession(authCfg, nil)
-	if err != nil {
-		return provider.SourceClients{}, err
-	}
-	return BuildSourceClientsWithSession(cfg, session)
-}
-
-func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.SourceClients, error) {
+func BuildSourceClientsWithSession(cfg appconfig.Config, folder string, session provider.Session) (provider.SourceClients, error) {
 	if session == nil {
 		return provider.SourceClients{}, fmt.Errorf("session 不能为空")
 	}
 
-	imapClient, err := newClient(cfg.Mail.Client, cfg.Auth, cfg.Mail.Sync.Folder, session, nil)
+	imapClient, err := newClient(cfg.Mail.Client, cfg.Auth, folder, session, nil)
 	if err != nil {
 		return provider.SourceClients{}, err
 	}
@@ -54,12 +42,12 @@ func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Sessio
 	}, nil
 }
 
-func NewWriterClients(cfg appconfig.Config, tokenSource provider.Session) (provider.SinkClients, error) {
+func NewWriterClients(cfg appconfig.Config, folder string, tokenSource provider.Session) (provider.SinkClients, error) {
 	authCfg := cfg.Auth
 	authCfg.GraphScopes = nil
 	authCfg.EWSScopes = nil
 
-	imapClient, err := newClient(cfg.Mail.Client, authCfg, cfg.Mail.Sync.Folder, tokenSource, nil)
+	imapClient, err := newClient(cfg.Mail.Client, authCfg, folder, tokenSource, nil)
 	if err != nil {
 		return provider.SinkClients{}, err
 	}

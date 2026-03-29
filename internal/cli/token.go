@@ -27,7 +27,6 @@ func newTokenCmd() *cobra.Command {
 }
 
 func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
-	baseFlags := newBaseConfigFlags(cfg)
 	credentialFlags := newCredentialConfigFlags(cfg)
 
 	cmd := &cobra.Command{
@@ -35,7 +34,6 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 		Short: "查询本地 token 状态",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg = baseFlags.apply(cfg, cmd)
 			cfg = credentialFlags.apply(cfg)
 
 			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
@@ -90,13 +88,11 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			return nil
 		},
 	}
-	baseFlags.addFlags(cmd)
 	credentialFlags.addFlags(cmd)
 	return cmd
 }
 
 func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
-	baseFlags := newBaseConfigFlags(cfg)
 	credentialFlags := newCredentialConfigFlags(cfg)
 
 	cmd := &cobra.Command{
@@ -104,7 +100,6 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 		Short: "从 JSON 文件或标准输入导入 token",
 		Args:  argRange(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = baseFlags.apply(cfg, cmd)
 			cfg = credentialFlags.apply(cfg)
 
 			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
@@ -149,7 +144,6 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 		},
 	}
 
-	baseFlags.addFlags(cmd)
 	credentialFlags.addFlags(cmd)
 	return cmd
 }
