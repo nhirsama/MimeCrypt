@@ -7,19 +7,14 @@ import (
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/mailflow/adapters"
-	"mimecrypt/internal/providers"
 )
 
 func buildMailflowEnvelopeBuilder(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*adapters.ReaderEnvelopeBuilder, error) {
-	sourceCfg, err := configForSource(cfg, resolved.Topology, resolved.Source)
+	sourceBundle, err := buildSourceProviderBundle(cfg, resolved.Topology, resolved.Source)
 	if err != nil {
 		return nil, err
 	}
-	sourceClients, err := providers.BuildSourceClients(sourceCfg)
-	if err != nil {
-		return nil, err
-	}
-	sourceStore, err := buildMailflowSourceStore(ctx, sourceCfg, sourceClients.Reader, resolved.Source, resolved.Route.DeleteSource.Enabled)
+	sourceStore, err := buildMailflowSourceStore(ctx, sourceBundle.Config, sourceBundle.Clients.Reader, resolved.Source, resolved.Route.DeleteSource.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -28,8 +23,8 @@ func buildMailflowEnvelopeBuilder(ctx context.Context, cfg appconfig.Config, res
 		Driver:  normalizeDriver(resolved.Source.Driver, "imap"),
 		Folder:  resolved.Source.Folder,
 		Store:   sourceStore,
-		Reader:  sourceClients.Reader,
-		Deleter: sourceClients.Deleter,
+		Reader:  sourceBundle.Clients.Reader,
+		Deleter: sourceBundle.Clients.Deleter,
 	}, nil
 }
 

@@ -42,6 +42,11 @@ func buildProviderClients(cfg appconfig.Config) (provider.Clients, error) {
 	return providers.Build(cfg)
 }
 
+type providerBundle struct {
+	Config  appconfig.Config
+	Clients provider.Clients
+}
+
 func buildLoginService(cfg appconfig.Config) (*login.Service, error) {
 	clients, err := buildProviderClients(cfg)
 	if err != nil {
@@ -99,21 +104,17 @@ func buildHealthService(cfg appconfig.Config) (*health.Service, error) {
 }
 
 func buildTopologyHealthService(ctx context.Context, cfg appconfig.Config, resolved resolvedMailflowTopology) (*health.Service, error) {
-	sourceCfg, err := configForSource(cfg, resolved.Topology, resolved.Source)
-	if err != nil {
-		return nil, err
-	}
-	sourceClients, err := providers.BuildSourceClients(sourceCfg)
+	sourceBundle, err := buildSourceProviderBundle(cfg, resolved.Topology, resolved.Source)
 	if err != nil {
 		return nil, err
 	}
 
 	service := &health.Service{
-		StateDir: sourceCfg.Auth.StateDir,
+		StateDir: sourceBundle.Config.Auth.StateDir,
 		Folder:   resolved.Source.Folder,
 		Provider: normalizeDriver(resolved.Source.Driver, cfg.Provider),
-		Session:  sourceClients.Session,
-		Reader:   sourceClients.Reader,
+		Session:  sourceBundle.Clients.Session,
+		Reader:   sourceBundle.Clients.Reader,
 	}
 
 	probes := make([]health.WriteBackProbe, 0, len(resolved.Route.Targets))
@@ -137,14 +138,14 @@ func buildTopologyHealthService(ctx context.Context, cfg appconfig.Config, resol
 			continue
 		}
 
-		sinkClients, err := buildSinkProviderClients(cfg, resolved.Topology, resolved.Source, sink)
+		sinkBundle, err := buildSinkProviderBundle(cfg, resolved.Topology, resolved.Source, sink)
 		if err != nil {
 			return nil, err
 		}
 		probes = append(probes, health.WriteBackProbe{
 			Name:   sink.Name,
 			Driver: sink.Driver,
-			Writer: sinkClients.Writer,
+			Writer: sinkBundle.Clients.Writer,
 		})
 	}
 
@@ -184,11 +185,7 @@ func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, resolved res
 	if !strings.EqualFold(source.Mode, "poll") {
 		return nil, fmt.Errorf("run 仅支持 polling source，当前 source=%s mode=%s", source.Name, source.Mode)
 	}
-	sourceCfg, err := configForSource(cfg, resolved.Topology, source)
-	if err != nil {
-		return nil, err
-	}
-	sourceClients, err := providers.BuildSourceClients(sourceCfg)
+	sourceBundle, err := buildSourceProviderBundle(cfg, resolved.Topology, source)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +193,7 @@ func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, resolved res
 	if err != nil {
 		return nil, err
 	}
-	sourceStore, err := buildMailflowSourceStore(ctx, sourceCfg, sourceClients.Reader, source, resolved.Route.DeleteSource.Enabled)
+	sourceStore, err := buildMailflowSourceStore(ctx, sourceBundle.Config, sourceBundle.Clients.Reader, source, resolved.Route.DeleteSource.Enabled)
 	if err != nil {
 		return nil, err
 	}
@@ -209,8 +206,8 @@ func buildMailflowRunner(ctx context.Context, cfg appconfig.Config, resolved res
 			StatePath:       source.StatePath,
 			IncludeExisting: source.IncludeExisting,
 			Store:           sourceStore,
-			Reader:          sourceClients.Reader,
-			Deleter:         sourceClients.Deleter,
+			Reader:          sourceBundle.Clients.Reader,
+			Deleter:         sourceBundle.Clients.Deleter,
 		},
 		Coordinator: coordinator,
 	}, nil
@@ -281,20 +278,16 @@ func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, topology 
 				OutputDir: sink.OutputDir,
 			}
 		default:
-			sinkCfg, err := configForSink(cfg, topology, source, sink)
+			sinkBundle, err := buildSinkProviderBundle(cfg, topology, source, sink)
 			if err != nil {
 				return nil, err
 			}
-			sinkClients, err := buildProviderClients(sinkCfg)
-			if err != nil {
-				return nil, err
-			}
-			sinkStore, err := buildMailflowSinkStore(ctx, sinkCfg, sinkClients.Reader, sink, source.Folder, route.DeleteSource.Enabled)
+			sinkStore, err := buildMailflowSinkStore(ctx, sinkBundle.Config, sinkBundle.Clients.Reader, sink, source.Folder, route.DeleteSource.Enabled)
 			if err != nil {
 				return nil, err
 			}
 			consumers[sinkRef] = &adapters.WritebackConsumer{
-				Service:             &writeback.Service{Writer: sinkClients.Writer},
+				Service:             &writeback.Service{Writer: sinkBundle.Clients.Writer},
 				DestinationFolderID: sink.Folder,
 				Verify:              sink.Verify,
 				Store:               sinkStore,
@@ -305,19 +298,49 @@ func buildMailflowConsumers(ctx context.Context, cfg appconfig.Config, topology 
 }
 
 func buildSourceProviderClients(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source) (provider.Clients, error) {
-	sourceCfg, err := configForSource(cfg, topology, source)
+	bundle, err := buildSourceProviderBundle(cfg, topology, source)
 	if err != nil {
 		return provider.Clients{}, err
 	}
-	return providers.BuildSourceClients(sourceCfg)
+	return bundle.Clients, nil
 }
 
 func buildSinkProviderClients(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source, sink appconfig.Sink) (provider.Clients, error) {
-	sinkCfg, err := configForSink(cfg, topology, source, sink)
+	bundle, err := buildSinkProviderBundle(cfg, topology, source, sink)
 	if err != nil {
 		return provider.Clients{}, err
 	}
-	return buildProviderClients(sinkCfg)
+	return bundle.Clients, nil
+}
+
+func buildSourceProviderBundle(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source) (providerBundle, error) {
+	sourceCfg, err := configForSource(cfg, topology, source)
+	if err != nil {
+		return providerBundle{}, err
+	}
+	sourceClients, err := providers.BuildSourceClients(sourceCfg)
+	if err != nil {
+		return providerBundle{}, err
+	}
+	return providerBundle{
+		Config:  sourceCfg,
+		Clients: sourceClients,
+	}, nil
+}
+
+func buildSinkProviderBundle(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source, sink appconfig.Sink) (providerBundle, error) {
+	sinkCfg, err := configForSink(cfg, topology, source, sink)
+	if err != nil {
+		return providerBundle{}, err
+	}
+	sinkClients, err := buildProviderClients(sinkCfg)
+	if err != nil {
+		return providerBundle{}, err
+	}
+	return providerBundle{
+		Config:  sinkCfg,
+		Clients: sinkClients,
+	}, nil
 }
 
 func configForSource(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source) (appconfig.Config, error) {
