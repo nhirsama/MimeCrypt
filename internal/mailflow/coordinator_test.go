@@ -151,6 +151,9 @@ func TestCoordinatorDeletesSourceWhenSameStoreReceiptCommitted(t *testing.T) {
 	if !result.Completed {
 		t.Fatalf("Completed = false, want true")
 	}
+	if result.Skipped {
+		t.Fatalf("Skipped = true, want false")
+	}
 	if !result.SourceDeleted {
 		t.Fatalf("SourceDeleted = false, want true")
 	}
@@ -232,6 +235,9 @@ func TestCoordinatorKeepsSourceWhenStoreDiffers(t *testing.T) {
 	if !result.Completed {
 		t.Fatalf("Completed = false, want true")
 	}
+	if result.Skipped {
+		t.Fatalf("Skipped = true, want false")
+	}
 	if result.SourceDeleted {
 		t.Fatalf("SourceDeleted = true, want false")
 	}
@@ -270,6 +276,9 @@ func TestCoordinatorAcknowledgesSourceWhenProcessorSkipsMessage(t *testing.T) {
 	}
 	if !result.Completed {
 		t.Fatalf("Completed = false, want true")
+	}
+	if !result.Skipped {
+		t.Fatalf("Skipped = false, want true")
 	}
 	if !result.SourceAcked {
 		t.Fatalf("SourceAcked = false, want true")

@@ -8,8 +8,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
-	"mimecrypt/internal/modules/discover"
-	"mimecrypt/internal/provider"
 )
 
 func newRunCmd() *cobra.Command {
@@ -50,19 +48,27 @@ func newRunCmd() *cobra.Command {
 				_ = lock.Release()
 			}()
 
-			service, err := buildDiscoverService(cfg)
+			if debugSaveFirst {
+				return runDebugSaveFirst(cmd.Context(), cfg, writeBack, verifyWriteBack)
+			}
+
+			runner, err := buildMailflowRunner(cmd.Context(), cfg, includeExisting, writeBack, verifyWriteBack, false)
 			if err != nil {
 				return fmt.Errorf("run 失败: %w", err)
 			}
 
-			if debugSaveFirst {
-				return runDebugSaveFirst(cmd.Context(), cfg, service, writeBack, processingFlags.writeBackFolder, verifyWriteBack)
-			}
-
 			runOnce := func() error {
-				err := runDiscoverCycle(cmd.Context(), cfg, service, includeExisting, writeBack, processingFlags.writeBackFolder, verifyWriteBack)
+				processedCount, skippedCount, deletedCount, err := runMailflowCycle(cmd.Context(), cfg, runner)
 				includeExisting = false
-				return err
+				if err != nil {
+					return err
+				}
+				if processedCount == 0 && skippedCount == 0 {
+					fmt.Printf("本轮无待处理邮件\n")
+					return nil
+				}
+				fmt.Printf("同步完成，本轮处理 %d 封邮件，跳过 %d 封，删除源邮件 %d 封\n", processedCount, skippedCount, deletedCount)
+				return nil
 			}
 
 			if err := runOnce(); err != nil {
@@ -100,54 +106,28 @@ func newRunCmd() *cobra.Command {
 	return cmd
 }
 
-func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, service *discover.Service, writeBack bool, writeBackFolder string, verifyWriteBack bool) error {
+func runDebugSaveFirst(ctx context.Context, cfg appconfig.Config, writeBack bool, verifyWriteBack bool) error {
 	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.Sync.CycleTimeout)
 	defer cancel()
 
-	result, err := service.DebugFirst(cycleCtx, discover.Request{
-		Folder:  cfg.Mail.Sync.Folder,
-		Process: buildProcessRequest(cfg, provider.MessageRef{}, writeBack, writeBackFolder, verifyWriteBack),
-	})
+	result, found, err := runMailflowFirstMessage(cycleCtx, cfg, writeBack, verifyWriteBack, false)
 	if err != nil {
 		return err
 	}
-	if !result.Found {
+	if !found {
 		fmt.Printf("调试模式未找到可处理的邮件，folder=%s\n", cfg.Mail.Sync.Folder)
 		return nil
 	}
 
 	fmt.Printf(
 		"调试模式已处理第一封邮件，message_id=%s format=%s encrypted=%t saved_output=%t backup_path=%s path=%s bytes=%d\n",
-		result.Process.MessageID,
-		result.Process.Format,
-		result.Process.Encrypted,
-		result.Process.SavedOutput,
-		result.Process.BackupPath,
-		result.Process.Path,
-		result.Process.Bytes,
+		result.MessageID,
+		result.Format,
+		result.Encrypted,
+		result.SavedOutput,
+		result.BackupPath,
+		result.Path,
+		result.Bytes,
 	)
-	return nil
-}
-
-func runDiscoverCycle(ctx context.Context, cfg appconfig.Config, service *discover.Service, includeExisting, writeBack bool, writeBackFolder string, verifyWriteBack bool) error {
-	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.Sync.CycleTimeout)
-	defer cancel()
-
-	result, err := service.RunCycle(cycleCtx, discover.Request{
-		Folder:          cfg.Mail.Sync.Folder,
-		StatePath:       cfg.Mail.SyncStatePath(),
-		IncludeExisting: includeExisting,
-		Process:         buildProcessRequest(cfg, provider.MessageRef{}, writeBack, writeBackFolder, verifyWriteBack),
-	})
-	if err != nil {
-		return err
-	}
-
-	if result.Bootstrapped && !includeExisting {
-		fmt.Printf("首次同步已建立基线，跳过了 %d 封现有邮件\n", result.Skipped)
-	} else {
-		fmt.Printf("同步完成，本轮处理 %d 封邮件\n", result.Processed)
-	}
-
 	return nil
 }

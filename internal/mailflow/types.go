@@ -14,6 +14,42 @@ var (
 	ErrSkipMessage = errors.New("当前邮件无需继续投递")
 )
 
+type SkipError struct {
+	Trace MailTrace
+	Err   error
+}
+
+func (e *SkipError) Error() string {
+	if e == nil {
+		return ErrSkipMessage.Error()
+	}
+	if e.Err == nil {
+		return ErrSkipMessage.Error()
+	}
+	return e.Err.Error()
+}
+
+func (e *SkipError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func (e *SkipError) Is(target error) bool {
+	if target == ErrSkipMessage {
+		return true
+	}
+	if e == nil {
+		return false
+	}
+	return errors.Is(e.Err, target)
+}
+
+func NewSkipError(trace MailTrace, err error) error {
+	return &SkipError{Trace: trace, Err: err}
+}
+
 // MIMEOpener 以流的形式提供一封邮件或产物的 MIME 内容。
 type MIMEOpener func() (io.ReadCloser, error)
 
@@ -235,6 +271,7 @@ type TxState struct {
 	Trace         MailTrace                  `json:"trace"`
 	Plan          ExecutionPlan              `json:"plan"`
 	Deliveries    map[string]DeliveryReceipt `json:"deliveries,omitempty"`
+	Skipped       bool                       `json:"skipped,omitempty"`
 	SourceDeleted bool                       `json:"source_deleted,omitempty"`
 	SourceAcked   bool                       `json:"source_acked,omitempty"`
 	Completed     bool                       `json:"completed,omitempty"`
@@ -247,8 +284,10 @@ type StateStore interface {
 
 type Result struct {
 	Key           string
+	Trace         MailTrace
 	Plan          ExecutionPlan
 	Deliveries    map[string]DeliveryReceipt
+	Skipped       bool
 	SourceDeleted bool
 	SourceAcked   bool
 	Completed     bool

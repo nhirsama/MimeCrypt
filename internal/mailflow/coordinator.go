@@ -49,6 +49,11 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 		if err != nil {
 			if errors.Is(err, ErrSkipMessage) {
 				state.Trace = envelope.Trace
+				state.Skipped = true
+				var skipErr *SkipError
+				if errors.As(err, &skipErr) && skipErr != nil && skipErr.Trace.TransactionKey != "" {
+					state.Trace = skipErr.Trace
+				}
 				if err := c.ackAndComplete(ctx, &state, envelope.Source); err != nil {
 					return Result{}, err
 				}
@@ -68,6 +73,7 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 
 		if len(state.Plan.Targets) == 0 {
 			state.Trace = processed.Trace
+			state.Skipped = false
 			state.Plan = processed.Plan
 			if err := c.Store.Save(ctx, state); err != nil {
 				return Result{}, err
@@ -161,8 +167,10 @@ func (c *Coordinator) result(state TxState) Result {
 	}
 	return Result{
 		Key:           state.Key,
+		Trace:         state.Trace,
 		Plan:          state.Plan,
 		Deliveries:    deliveries,
+		Skipped:       state.Skipped,
 		SourceDeleted: state.SourceDeleted,
 		SourceAcked:   state.SourceAcked,
 		Completed:     state.Completed,

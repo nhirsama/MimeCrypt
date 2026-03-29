@@ -56,16 +56,16 @@ func newFlowRunCmd() *cobra.Command {
 			}
 
 			runOnce := func() error {
-				processedCount, deletedCount, err := runMailflowCycle(cmd.Context(), cfg, runner)
+				processedCount, skippedCount, deletedCount, err := runMailflowCycle(cmd.Context(), cfg, runner)
 				includeExisting = false
 				if err != nil {
 					return err
 				}
-				if processedCount == 0 {
+				if processedCount == 0 && skippedCount == 0 {
 					fmt.Printf("mailflow 本轮无待处理邮件\n")
 					return nil
 				}
-				fmt.Printf("mailflow 同步完成，本轮处理 %d 封邮件，删除源邮件 %d 封\n", processedCount, deletedCount)
+				fmt.Printf("mailflow 同步完成，本轮处理 %d 封邮件，跳过 %d 封，删除源邮件 %d 封\n", processedCount, skippedCount, deletedCount)
 				return nil
 			}
 
@@ -106,21 +106,26 @@ func newFlowRunCmd() *cobra.Command {
 
 func runMailflowCycle(ctx context.Context, cfg appconfig.Config, runner interface {
 	RunOnce(context.Context) (mailflow.Result, bool, error)
-}) (int, int, error) {
+}) (int, int, int, error) {
 	cycleCtx, cancel := context.WithTimeout(ctx, cfg.Mail.Sync.CycleTimeout)
 	defer cancel()
 
 	processedCount := 0
+	skippedCount := 0
 	deletedCount := 0
 	for {
 		result, processed, err := runner.RunOnce(cycleCtx)
 		if err != nil {
-			return processedCount, deletedCount, err
+			return processedCount, skippedCount, deletedCount, err
 		}
 		if !processed {
-			return processedCount, deletedCount, nil
+			return processedCount, skippedCount, deletedCount, nil
 		}
-		processedCount++
+		if result.Skipped {
+			skippedCount++
+		} else {
+			processedCount++
+		}
 		if result.SourceDeleted {
 			deletedCount++
 		}

@@ -75,8 +75,10 @@ MimeCrypt 的核心职责如下：
 - `MailEnvelope` / `MailTrace` / `ExecutionPlan` / `DeliveryReceipt`
 - 基于文件系统的 `FileStateStore`
 - 基于现有 `provider.Reader` 的 polling producer
+- 基于现有 `provider.Reader` 的单封邮件 envelope builder
 - 基于现有加密 / 备份 / 审计模块的 encrypting processor
 - 基于本地目录的 file consumer
+- 基于内存丢弃的 discard consumer
 - 基于现有 `writeback.Service` 的 consumer 适配器
 
 这套模型背后的关键约束如下：
@@ -98,7 +100,7 @@ MimeCrypt 的核心职责如下：
 
 也就是说，未来会以“命名 source / sink driver”而不是单一全局 provider 作为主要配置单位。这样同一个实例可以同时接入多个来源和多个出口。
 
-当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织；`mailflow` 是正在进行中的迁移目标，而不是已经完全替换旧路径的最终形态。
+当前仓库中的 CLI 和环境变量配置仍然主要围绕单一 provider 组织。当前 `run`、`process`、`flow-run` 已经共用 `mailflow` 编排，但命名 source / sink / route / credential 模型仍未落地，因此 `mailflow` 还没有完全演进到最终形态。
 
 ## 当前能力范围
 
@@ -119,10 +121,11 @@ MimeCrypt 的核心职责如下：
 - 关键步骤 JSONL 审计日志
 - 单实例运行锁与只读 / 深度两级健康检查
 - `mailflow` 事务骨架、文件状态存储以及 producer / processor / consumer 适配层
+- `run` / `process` / `flow-run` 共用 `mailflow` 协调器
 
 后续规划方向包括：
 
-- 将现有 `run` / `process` 链路逐步迁移到 `mailflow`
+- 继续收敛剩余 legacy 模块与兼容层，减少对旧 `discover` / `process` 编排的依赖
 - `google` / `gmail` 来源驱动
 - HTTP webhook 与 SMTP ingress 等 push 型来源
 - 命名 source / sink / route / credential 配置模型

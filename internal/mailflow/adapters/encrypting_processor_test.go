@@ -211,6 +211,16 @@ func TestEncryptingProcessorSkipsAlreadyEncryptedMessage(t *testing.T) {
 	if !errors.Is(err, mailflow.ErrSkipMessage) {
 		t.Fatalf("Process() error = %v, want ErrSkipMessage", err)
 	}
+	var skipErr *mailflow.SkipError
+	if !errors.As(err, &skipErr) {
+		t.Fatalf("Process() error type = %T, want *mailflow.SkipError", err)
+	}
+	if skipErr.Trace.Attributes["already_encrypted"] != "true" {
+		t.Fatalf("already_encrypted attr = %q, want true", skipErr.Trace.Attributes["already_encrypted"])
+	}
+	if skipErr.Trace.Attributes["format"] != "pgp-mime" {
+		t.Fatalf("format attr = %q, want pgp-mime", skipErr.Trace.Attributes["format"])
+	}
 }
 
 func TestEncryptingProcessorCleanupRemovesWorkDir(t *testing.T) {

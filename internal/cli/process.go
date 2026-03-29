@@ -2,12 +2,10 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
-	"mimecrypt/internal/provider"
 )
 
 func newProcessCmd() *cobra.Command {
@@ -31,31 +29,14 @@ func newProcessCmd() *cobra.Command {
 			cfg = processingFlags.apply(cfg, cmd)
 			cfg.Mail.Sync.Folder = folder
 
-			if err := validateWriteBackFlags(writeBack, verifyWriteBack, processingFlags.writeBackFolder); err != nil {
+			if err := validateMailflowFlags(cfg.Mail.Pipeline.SaveOutput, writeBack, verifyWriteBack, false, processingFlags.writeBackFolder); err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
-			if cfg.Mail.Pipeline.SaveOutput && strings.TrimSpace(cfg.Mail.Pipeline.OutputDir) == "" {
-				return fmt.Errorf("process 失败: output-dir 不能为空")
-			}
-			if strings.TrimSpace(cfg.Mail.Pipeline.BackupDir) == "" {
-				return fmt.Errorf("process 失败: backup-dir 不能为空")
-			}
-			if !cfg.Mail.Pipeline.HasAuditOutput() {
-				return fmt.Errorf("process 失败: 审计输出至少应配置 audit-log-path 或 audit-stdout 之一")
-			}
-
-			service, err := buildProcessService(cfg)
-			if err != nil {
+			if err := cfg.Mail.ValidateSync(); err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}
 
-			result, err := service.Run(cmd.Context(), buildProcessRequest(
-				cfg,
-				provider.MessageRef{ID: args[0], FolderID: folder},
-				writeBack,
-				processingFlags.writeBackFolder,
-				verifyWriteBack,
-			))
+			result, err := runMailflowMessageByID(cmd.Context(), cfg, args[0], writeBack, verifyWriteBack, false)
 			if err != nil {
 				return fmt.Errorf("process 失败: %w", err)
 			}

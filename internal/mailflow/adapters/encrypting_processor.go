@@ -85,8 +85,16 @@ func (p *EncryptingProcessor) Process(ctx context.Context, mail mailflow.MailEnv
 	result, err := p.Encryptor.RunFromOpenerContext(ctx, encrypt.MIMEOpenFunc(mail.MIME), armoredFile, encryptedFile)
 	if err != nil {
 		if errors.Is(err, encrypt.ErrAlreadyEncrypted) {
+			if ensureErr := ensureAttributes(&trace); ensureErr != nil {
+				return mailflow.ProcessedMail{}, ensureErr
+			}
+			trace.Attributes["already_encrypted"] = "true"
+			var alreadyEncrypted encrypt.AlreadyEncryptedError
+			if errors.As(err, &alreadyEncrypted) && strings.TrimSpace(alreadyEncrypted.Format) != "" {
+				trace.Attributes["format"] = alreadyEncrypted.Format
+			}
 			_ = p.record(trace, "mailflow_already_encrypted", "", err.Error(), false, true)
-			return mailflow.ProcessedMail{}, fmt.Errorf("%w: %v", mailflow.ErrSkipMessage, err)
+			return mailflow.ProcessedMail{}, mailflow.NewSkipError(trace, err)
 		}
 		_ = p.record(trace, "mailflow_process_failed", "", err.Error(), false, false)
 		return mailflow.ProcessedMail{}, err
