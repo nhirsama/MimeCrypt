@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mimecrypt/internal/provider"
+	"mimecrypt/internal/providers"
 )
 
 const envGPGBinary = "MIMECRYPT_GPG_BINARY"
@@ -39,7 +40,7 @@ type Service struct {
 	ProviderProbeKind provider.ProviderProbeKind
 	WriteBackProvider string
 	Deep              bool
-	Session           provider.Session
+	Session           TokenState
 	Reader            provider.Reader
 	WriteBack         provider.HealthProber
 	WriteBacks        []WriteBackProbe
@@ -53,6 +54,10 @@ type WriteBackProbe struct {
 	Name   string
 	Driver string
 	Health provider.HealthProber
+}
+
+type TokenState interface {
+	LoadCachedToken() (provider.Token, error)
 }
 
 func (s *Service) Run(ctx context.Context) (Result, error) {
@@ -170,7 +175,7 @@ func (s *Service) providerProbeKind() provider.ProviderProbeKind {
 	if s != nil && s.ProviderProbeKind != "" {
 		return s.ProviderProbeKind
 	}
-	if sourceSpec, ok := provider.LookupSourceSpec(s.Provider); ok && sourceSpec.ProbeKind != "" {
+	if sourceSpec, ok := providers.LookupSourceSpec(s.Provider); ok && sourceSpec.ProbeKind != "" {
 		return sourceSpec.ProbeKind
 	}
 	return provider.ProviderProbeIdentity

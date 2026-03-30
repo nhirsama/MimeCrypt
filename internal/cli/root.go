@@ -39,6 +39,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.AddCommand(newDownloadCmd())
 	rootCmd.AddCommand(newProcessCmd())
 	rootCmd.AddCommand(newRunCmd())
+	localizeCobraSupport(rootCmd)
 
 	return rootCmd
 }

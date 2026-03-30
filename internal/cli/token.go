@@ -12,14 +12,17 @@ import (
 )
 
 func newTokenCmd() *cobra.Command {
-	cfg, err := appconfig.LoadFromEnv()
-	if err != nil {
-		return newErrorCommand("token", "查看或导入本地 token 状态", err)
-	}
+	bootstrap := loadCommandConfigBootstrap()
+	cfg := bootstrap.Config()
 
 	root := &cobra.Command{
 		Use:   "token",
 		Short: "查询或导入本地 token 状态",
+	}
+	if err := bootstrap.Error(); err != nil {
+		root.PersistentPreRunE = func(*cobra.Command, []string) error {
+			return fmt.Errorf("token 失败: %w", err)
+		}
 	}
 	root.AddCommand(newTokenStatusCmd(cfg))
 	root.AddCommand(newTokenImportCmd(cfg))

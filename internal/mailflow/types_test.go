@@ -1,6 +1,9 @@
 package mailflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestStoreRefEqualIgnoresMailbox(t *testing.T) {
 	t.Parallel()
@@ -33,5 +36,20 @@ func TestStoreRefEqualRequiresDriverAndAccountMatch(t *testing.T) {
 	}
 	if base.Equal(StoreRef{Driver: "imap", Account: "other@example.com"}) {
 		t.Fatalf("Equal() = true with different account, want false")
+	}
+}
+
+func TestExecutionPlanValidateRequiresRequiredTarget(t *testing.T) {
+	t.Parallel()
+
+	err := (ExecutionPlan{
+		Targets: []DeliveryTarget{{
+			Name:     "archive-main",
+			Consumer: "archive",
+			Artifact: "primary",
+		}},
+	}).Validate()
+	if err == nil || !strings.Contains(err.Error(), "required") {
+		t.Fatalf("Validate() error = %v, want required target error", err)
 	}
 }

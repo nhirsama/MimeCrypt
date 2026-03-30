@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/auth"
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/mailflow/adapters"
 	"mimecrypt/internal/modules/audit"
-	"mimecrypt/internal/modules/backup"
 	"mimecrypt/internal/modules/download"
 	"mimecrypt/internal/modules/encrypt"
 	"mimecrypt/internal/modules/health"
@@ -47,7 +47,7 @@ func BuildListService(plan SourcePlan) (*list.Service, error) {
 }
 
 func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, error) {
-	sourceSpec, ok := provider.LookupSourceSpec(run.Source.Driver)
+	sourceSpec, ok := providers.LookupSourceSpec(run.Source.Driver)
 	if !ok {
 		return nil, fmt.Errorf("run 不支持 source driver=%s", run.Source.Driver)
 	}
@@ -69,8 +69,20 @@ func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, er
 		if err != nil {
 			return nil, err
 		}
-		service.Session = source.Clients.Session
 		service.Reader = source.Clients.Reader
+	}
+	if !service.SkipCachedToken {
+		session, err := buildTokenSource(run.Config, run.Source.Driver)
+		if err != nil {
+			return nil, err
+		}
+		tokenState, ok := session.(interface {
+			LoadCachedToken() (provider.Token, error)
+		})
+		if !ok {
+			return nil, fmt.Errorf("source driver %s 的 token source 不支持读取缓存 token", run.Source.Driver)
+		}
+		service.Session = tokenState
 	}
 
 	probes := make([]health.WriteBackProbe, 0, len(run.Route.Targets))
@@ -89,7 +101,7 @@ func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, er
 		if !ok {
 			return nil, fmt.Errorf("route %s 引用了不存在的 sink: %s", run.Route.Name, sinkRef)
 		}
-		sinkSpec, ok := provider.LookupSinkSpec(sink.Sink.Driver)
+		sinkSpec, ok := providers.LookupSinkSpec(sink.Sink.Driver)
 		if !ok {
 			return nil, fmt.Errorf("route %s 引用了不支持的 sink driver: %s", run.Route.Name, sink.Sink.Driver)
 		}
@@ -123,17 +135,18 @@ func buildEnvelopeBuilderFromSourceBundle(ctx context.Context, run SourceRun, so
 		return nil, err
 	}
 	return &adapters.ReaderEnvelopeBuilder{
-		Name:    run.Source.Name,
-		Driver:  normalizeDriver(run.Source.Driver, "imap"),
-		Folder:  run.Source.Folder,
-		Store:   sourceStore,
-		Reader:  source.Clients.Reader,
-		Deleter: source.Clients.Deleter,
+		Name:            run.Source.Name,
+		Driver:          normalizeDriver(run.Source.Driver, "imap"),
+		Folder:          run.Source.Folder,
+		Store:           sourceStore,
+		Reader:          source.Clients.Reader,
+		Deleter:         source.Clients.Deleter,
+		DeleteSemantics: run.SourceDeleteSemantics,
 	}, nil
 }
 
 func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
-	sourceSpec, ok := provider.LookupSourceSpec(run.Source.Driver)
+	sourceSpec, ok := providers.LookupSourceSpec(run.Source.Driver)
 	if !ok {
 		return nil, fmt.Errorf("run 不支持 source driver=%s", run.Source.Driver)
 	}
@@ -170,6 +183,7 @@ func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 			Store:           sourceStore,
 			Reader:          source.Clients.Reader,
 			Deleter:         source.Clients.Deleter,
+			DeleteSemantics: run.SourceDeleteSemantics,
 		},
 		Coordinator: coordinator,
 	}, nil
@@ -186,7 +200,13 @@ func buildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflo
 		return nil, err
 	}
 
-	consumers, err := buildMailflowConsumers(ctx, run)
+	auditor := &audit.Service{
+		Path:   run.Config.Mail.Pipeline.AuditLogPath,
+		Stdout: run.Config.Mail.Pipeline.AuditStdout,
+		Writer: os.Stdout,
+	}
+
+	consumers, err := buildMailflowConsumers(ctx, run, auditor)
 	if err != nil {
 		return nil, err
 	}
@@ -198,22 +218,16 @@ func buildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflo
 		Processor: &adapters.EncryptingProcessor{
 			Encryptor:       &encrypt.Service{ProtectSubject: run.Config.Mail.Pipeline.ProtectSubject},
 			BackupEncryptor: backupEncryptor,
-			Backupper:       &backup.Service{},
-			Auditor: &audit.Service{
-				Path:   run.Config.Mail.Pipeline.AuditLogPath,
-				Stdout: run.Config.Mail.Pipeline.AuditStdout,
-				Writer: os.Stdout,
-			},
-			WorkDir:    run.Config.Mail.Pipeline.WorkDir,
-			BackupDir:  run.Config.Mail.Pipeline.BackupDir,
-			StaticPlan: plan,
+			Auditor:         auditor,
+			WorkDir:         run.Config.Mail.Pipeline.WorkDir,
+			StaticPlan:      plan,
 		},
 		Store:     store,
 		Consumers: consumers,
 	}, nil
 }
 
-func buildMailflowConsumers(ctx context.Context, run SourceRun) (map[string]mailflow.Consumer, error) {
+func buildMailflowConsumers(ctx context.Context, run SourceRun, auditor *audit.Service) (map[string]mailflow.Consumer, error) {
 	consumers := make(map[string]mailflow.Consumer)
 	for _, target := range run.Route.Targets {
 		sinkRef := strings.TrimSpace(target.SinkRef)
@@ -229,13 +243,13 @@ func buildMailflowConsumers(ctx context.Context, run SourceRun) (map[string]mail
 			return nil, fmt.Errorf("route %s 引用了不存在的 sink: %s", run.Route.Name, sinkRef)
 		}
 
-		sinkSpec, ok := provider.LookupSinkSpec(sink.Sink.Driver)
+		sinkSpec, ok := providers.LookupSinkSpec(sink.Sink.Driver)
 		if !ok {
 			return nil, fmt.Errorf("route %s 引用了不支持的 sink driver: %s", run.Route.Name, sink.Sink.Driver)
 		}
 
 		if sinkSpec.LocalConsumer {
-			consumer, err := buildLocalConsumer(sink, sinkSpec)
+			consumer, err := providers.BuildLocalConsumer(sink.Config, sink.Sink, auditor)
 			if err != nil {
 				return nil, err
 			}
@@ -262,20 +276,6 @@ func buildMailflowConsumers(ctx context.Context, run SourceRun) (map[string]mail
 		}
 	}
 	return consumers, nil
-}
-
-func buildLocalConsumer(sink SinkPlan, sinkSpec *provider.SinkSpec) (mailflow.Consumer, error) {
-	if sinkSpec == nil {
-		return nil, fmt.Errorf("sink %s 缺少 capability", sink.Sink.Name)
-	}
-	switch sinkSpec.LocalConsumerKind {
-	case provider.LocalConsumerDiscard:
-		return &adapters.DiscardConsumer{}, nil
-	case provider.LocalConsumerFile:
-		return &adapters.FileConsumer{OutputDir: sink.Sink.OutputDir}, nil
-	default:
-		return nil, fmt.Errorf("sink driver %s 缺少本地 consumer 适配", sink.Sink.Driver)
-	}
 }
 
 func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
@@ -308,7 +308,11 @@ func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
 }
 
 func buildSourceBundle(plan SourcePlan) (sourceBundle, error) {
-	clients, err := providers.BuildSourceClients(plan.Config, plan.Source.Driver, plan.Source.Folder)
+	tokenSource, err := buildTokenSource(plan.Config, plan.Source.Driver)
+	if err != nil {
+		return sourceBundle{}, err
+	}
+	clients, err := providers.BuildSourceClients(plan.Config, plan.Source.Driver, plan.Source.Folder, tokenSource)
 	if err != nil {
 		return sourceBundle{}, err
 	}
@@ -319,7 +323,11 @@ func buildSourceBundle(plan SourcePlan) (sourceBundle, error) {
 }
 
 func buildSinkBundle(plan SinkPlan) (sinkBundle, error) {
-	clients, err := providers.BuildSinkClients(plan.Config, plan.Sink.Driver, plan.Mailbox)
+	tokenSource, err := buildTokenSource(plan.Config, plan.Sink.Driver)
+	if err != nil {
+		return sinkBundle{}, err
+	}
+	clients, err := providers.BuildSinkClients(plan.Config, plan.Sink.Driver, plan.Mailbox, tokenSource)
 	if err != nil {
 		return sinkBundle{}, err
 	}
@@ -365,7 +373,7 @@ func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader pr
 
 func resolveStoreAccount(ctx context.Context, driver string, cfg appconfig.Config, reader provider.Reader) (string, error) {
 	driver = normalizeDriver(driver, "")
-	if sourceSpec, ok := provider.LookupSourceSpec(driver); ok && sourceSpec.ProbeKind == provider.ProviderProbeFolderList {
+	if sourceSpec, ok := providers.LookupSourceSpec(driver); ok && sourceSpec.ProbeKind == provider.ProviderProbeFolderList {
 		return strings.TrimSpace(cfg.Mail.Client.IMAPUsername), nil
 	}
 	if reader == nil {
@@ -379,6 +387,31 @@ func resolveStoreAccount(ctx context.Context, driver string, cfg appconfig.Confi
 		return account, nil
 	}
 	return strings.TrimSpace(user.ID), nil
+}
+
+func buildTokenSource(cfg appconfig.Config, driver string) (provider.TokenSource, error) {
+	spec, ok := providers.LookupDriverSpec(driver)
+	if !ok {
+		return nil, fmt.Errorf("不支持的 driver: %s", driver)
+	}
+	needsCredential := (spec.Source != nil && spec.Source.RequiresCredential) || (spec.Sink != nil && spec.Sink.RequiresCredential)
+	if !needsCredential {
+		return nil, nil
+	}
+	authCfg := providers.SessionAuthConfigForDrivers(cfg, driver)
+	session, err := auth.NewSession(authCfg, nil)
+	if err != nil {
+		return nil, err
+	}
+	return session, nil
+}
+
+func sourceDeleteSemantics(driver string) provider.DeleteSemantics {
+	sourceSpec, ok := providers.LookupSourceSpec(driver)
+	if !ok {
+		return provider.DeleteSemanticsUnknown
+	}
+	return sourceSpec.DeleteSemantics
 }
 
 func buildCatchAllBackupEncryptor(cfg appconfig.Config) (*encrypt.Service, error) {

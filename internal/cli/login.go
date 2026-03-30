@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,19 +15,18 @@ import (
 )
 
 func newLoginCmd() *cobra.Command {
-	cfg, err := appconfig.LoadFromEnv()
-	if err != nil {
-		return newErrorCommand("login", "通过 device code 登录并缓存 token", err)
-	}
-
-	credentialFlags := newCredentialConfigFlags(cfg)
+	bootstrap := loadCommandConfigBootstrap()
+	credentialFlags := newCredentialConfigFlags(bootstrap.Config())
 
 	cmd := &cobra.Command{
 		Use:   "login [imap-username]",
-		Short: "执行 device code 登录并写入本地 token 缓存",
+		Short: "为 credential 创建设备登录状态并写入本地 token 缓存",
 		Args:  argRange(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = credentialFlags.apply(cfg)
+			if err := bootstrap.Error(); err != nil {
+				return fmt.Errorf("login 失败: %w", err)
+			}
+			cfg := credentialFlags.apply(bootstrap.Config())
 
 			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
@@ -34,11 +34,12 @@ func newLoginCmd() *cobra.Command {
 			}
 			cfg = resolved.Config
 			cfg = applyLoginIMAPUsernameArg(cfg, args)
+			resolved.Config = cfg
 
 			loginCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
 			defer cancel()
 
-			service, err := appruntime.BuildLoginService(cfg)
+			service, err := appruntime.BuildLoginService(resolved)
 			if err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
@@ -57,6 +58,7 @@ func newLoginCmd() *cobra.Command {
 			if strings.TrimSpace(resolved.CredentialName) != "" {
 				fmt.Printf("credential=%s\n", resolved.CredentialName)
 			}
+			printCredentialBindingSummary(resolved)
 			fmt.Printf("token 已缓存到 %s\n", result.StateDir)
 
 			return nil
@@ -66,6 +68,20 @@ func newLoginCmd() *cobra.Command {
 	credentialFlags.addFlags(cmd)
 
 	return cmd
+}
+
+func printCredentialBindingSummary(plan appruntime.CredentialPlan) {
+	if len(plan.AuthDrivers) > 0 {
+		drivers := append([]string(nil), plan.AuthDrivers...)
+		slices.Sort(drivers)
+		fmt.Printf("drivers=%s\n", strings.Join(drivers, ","))
+	}
+	if sources := plan.BindingNames(appruntime.CredentialBindingSource); len(sources) > 0 {
+		fmt.Printf("sources=%s\n", strings.Join(sources, ","))
+	}
+	if sinks := plan.BindingNames(appruntime.CredentialBindingSink); len(sinks) > 0 {
+		fmt.Printf("sinks=%s\n", strings.Join(sinks, ","))
+	}
 }
 
 func applyLoginIMAPUsernameArg(cfg appconfig.Config, args []string) appconfig.Config {

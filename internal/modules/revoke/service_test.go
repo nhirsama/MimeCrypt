@@ -39,6 +39,7 @@ func TestServiceRunDefaultCallsRemoteBeforeLocalCleanup(t *testing.T) {
 	service := Service{
 		Session:       &fakeSession{order: &order},
 		RemoteRevoker: &fakeRemoteRevoker{order: &order},
+		RequireRemote: true,
 		ClearLocal: func() error {
 			order = append(order, "clear")
 			return nil
@@ -69,6 +70,7 @@ func TestServiceRunStopsWhenRemoteRevokeFails(t *testing.T) {
 	service := Service{
 		Session:       &fakeSession{order: &order},
 		RemoteRevoker: &fakeRemoteRevoker{order: &order, revokeErr: errors.New("graph denied")},
+		RequireRemote: true,
 		ClearLocal: func() error {
 			order = append(order, "clear")
 			return nil
@@ -95,7 +97,8 @@ func TestServiceRunForceContinuesAfterRemoteFailure(t *testing.T) {
 			order = append(order, "clear")
 			return nil
 		},
-		Force: true,
+		Force:         true,
+		RequireRemote: true,
 	}
 
 	err := service.Run(context.Background())
@@ -118,7 +121,8 @@ func TestServiceRunForceContinuesWhenRemoteRevokerCannotInitialize(t *testing.T)
 			order = append(order, "clear")
 			return nil
 		},
-		Force: true,
+		Force:         true,
+		RequireRemote: true,
 	}
 
 	err := service.Run(context.Background())
@@ -136,6 +140,7 @@ func TestServiceRunAggregatesLocalCleanupErrors(t *testing.T) {
 	service := Service{
 		Session:       &fakeSession{logoutErr: errors.New("keyring unavailable")},
 		RemoteRevoker: &fakeRemoteRevoker{},
+		RequireRemote: true,
 		ClearLocal: func() error {
 			return errors.New("config locked")
 		},
@@ -150,5 +155,25 @@ func TestServiceRunAggregatesLocalCleanupErrors(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "清除本地凭据配置失败") {
 		t.Fatalf("Run() error = %v, want local config cleanup error", err)
+	}
+}
+
+func TestServiceRunSkipsRemoteWhenNotRequired(t *testing.T) {
+	t.Parallel()
+
+	var order []string
+	service := Service{
+		Session: &fakeSession{order: &order},
+		ClearLocal: func() error {
+			order = append(order, "clear")
+			return nil
+		},
+	}
+
+	if err := service.Run(context.Background()); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !reflect.DeepEqual(order, []string{"logout", "clear"}) {
+		t.Fatalf("order = %#v", order)
 	}
 }

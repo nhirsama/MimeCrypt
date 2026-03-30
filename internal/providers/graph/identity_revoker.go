@@ -18,14 +18,14 @@ type identityRevoker struct {
 	client *graphClient
 }
 
-func NewIdentityRevoker(cfg appconfig.Config, session provider.Session, httpClient *http.Client) (*identityRevoker, error) {
-	if session == nil {
-		return nil, fmt.Errorf("session 不能为空")
+func NewIdentityRevoker(cfg appconfig.Config, tokenSource provider.TokenSource, httpClient *http.Client) (*identityRevoker, error) {
+	if tokenSource == nil {
+		return nil, fmt.Errorf("token source 不能为空")
 	}
 
 	client, err := newGraphClient(cfg.Mail.Client, graphTokenSource{
-		session: session,
-		scopes:  appendRevokeScope(cfg.Auth.GraphScopes),
+		tokenSource: tokenSource,
+		scopes:      appendRevokeScope(cfg.Auth.GraphScopes),
 	}, httpClient)
 	if err != nil {
 		return nil, err

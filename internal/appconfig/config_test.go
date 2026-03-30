@@ -106,7 +106,7 @@ func TestLoadFromEnvRejectsInvalidBooleans(t *testing.T) {
 	}
 }
 
-func TestLoadFromEnvUsesSavedIMAPUsernameWhenEnvMissing(t *testing.T) {
+func TestLoadFromEnvDoesNotReadSavedIMAPUsernameWhenEnvMissing(t *testing.T) {
 	resetMimeCryptEnv(t)
 
 	stateDir := t.TempDir()
@@ -119,8 +119,8 @@ func TestLoadFromEnvUsesSavedIMAPUsernameWhenEnvMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFromEnv() error = %v", err)
 	}
-	if cfg.Mail.Client.IMAPUsername != "saved@example.com" {
-		t.Fatalf("Mail.Client.IMAPUsername = %q, want saved@example.com", cfg.Mail.Client.IMAPUsername)
+	if cfg.Mail.Client.IMAPUsername != "" {
+		t.Fatalf("Mail.Client.IMAPUsername = %q, want empty", cfg.Mail.Client.IMAPUsername)
 	}
 }
 
@@ -146,14 +146,11 @@ func TestConfigWithStateDirRebasesDefaultAuditLogPath(t *testing.T) {
 	}
 }
 
-func TestConfigWithCredentialAppliesCredentialScopedStateAndStoredIMAPUsername(t *testing.T) {
+func TestConfigWithCredentialAppliesCredentialScopedState(t *testing.T) {
 	t.Parallel()
 
 	baseStateDir := t.TempDir()
 	credentialStateDir := DefaultCredentialStateDir(baseStateDir, "archive")
-	if err := SaveLocalConfig(credentialStateDir, LocalConfig{IMAPUsername: "archive@example.com"}); err != nil {
-		t.Fatalf("SaveLocalConfig() error = %v", err)
-	}
 
 	cfg := Config{
 		Auth: AuthConfig{
@@ -184,8 +181,25 @@ func TestConfigWithCredentialAppliesCredentialScopedStateAndStoredIMAPUsername(t
 	if got.Auth.TokenStore != "keyring" {
 		t.Fatalf("TokenStore = %q, want keyring", got.Auth.TokenStore)
 	}
-	if got.Mail.Client.IMAPUsername != "archive@example.com" {
-		t.Fatalf("IMAPUsername = %q, want archive@example.com", got.Mail.Client.IMAPUsername)
+	if got.Mail.Client.IMAPUsername != "base@example.com" {
+		t.Fatalf("IMAPUsername = %q, want base@example.com", got.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestConfigWithLocalConfigAppliesStoredIMAPUsername(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Mail: MailConfig{
+			Client: MailClientConfig{
+				IMAPUsername: "base@example.com",
+			},
+		},
+	}
+
+	got := cfg.WithLocalConfig(LocalConfig{IMAPUsername: "stored@example.com"})
+	if got.Mail.Client.IMAPUsername != "stored@example.com" {
+		t.Fatalf("IMAPUsername = %q, want stored@example.com", got.Mail.Client.IMAPUsername)
 	}
 }
 

@@ -203,6 +203,63 @@ func TestResolveSingleSourceRunUsesRouteSelection(t *testing.T) {
 	}
 }
 
+func TestResolveSingleSourceRunInjectsDefaultBackupTarget(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:         "office",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Inbox/Sub",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"archive": {
+				Name:       "archive",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+		DefaultRoute:  "archive",
+		DefaultSource: "office",
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	cfg := testRuntimeConfig(stateDir, topologyPath)
+	cfg.Mail.Pipeline.BackupDir = filepath.Join(stateDir, "backup")
+
+	run, err := ResolveSingleSourceRun(cfg, Selector{})
+	if err != nil {
+		t.Fatalf("ResolveSingleSourceRun() error = %v", err)
+	}
+	if _, ok := run.Sinks[defaultBackupSinkRef]; !ok {
+		t.Fatalf("missing default backup sink in run.Sinks")
+	}
+	found := false
+	for _, target := range run.Route.Targets {
+		if target.SinkRef == defaultBackupSinkRef && target.Artifact == defaultBackupArtifact {
+			found = true
+			if !target.Required {
+				t.Fatalf("default backup target should be required")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("default backup target not injected: %+v", run.Route.Targets)
+	}
+}
+
 func TestResolveSourcePlanUsesCredentialScopedConfigAndStatePath(t *testing.T) {
 	t.Parallel()
 

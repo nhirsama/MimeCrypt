@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"mimecrypt/internal/provider"
 )
 
 const (
@@ -292,6 +290,9 @@ func (c Credential) Validate(name string) error {
 	if strings.TrimSpace(c.Kind) == "" {
 		return fmt.Errorf("credential %s 缺少 kind", name)
 	}
+	if _, ok := LookupCredentialKindSpec(c.Kind); !ok {
+		return fmt.Errorf("credential %s 不支持 kind: %s", name, strings.TrimSpace(c.Kind))
+	}
 	return nil
 }
 
@@ -308,63 +309,32 @@ func (s Source) Validate(name string, credentials map[string]Credential) error {
 	if strings.TrimSpace(s.Driver) == "" {
 		return fmt.Errorf("source %s 缺少 driver", name)
 	}
-	sourceSpec, ok := provider.LookupSourceSpec(s.Driver)
-	if !ok {
-		return fmt.Errorf("source %s 不支持 driver: %s", name, s.Driver)
-	}
 	if strings.TrimSpace(s.Mode) == "" {
 		return fmt.Errorf("source %s 缺少 mode", name)
 	}
-	modeSpec, ok := sourceSpec.ModeSpec(s.Mode)
-	if !ok {
-		return fmt.Errorf("source %s 的 driver %s 不支持 mode: %s", name, s.Driver, s.Mode)
-	}
 	if ref := strings.TrimSpace(s.CredentialRef); ref != "" {
-		if !sourceSpec.RequiresCredential {
-			return fmt.Errorf("source %s 的 driver %s 不接受 credential_ref", name, s.Driver)
-		}
 		if _, ok := credentials[ref]; !ok {
 			return fmt.Errorf("source %s 引用了不存在的 credential: %s", name, ref)
 		}
 	}
-	if modeSpec.RequiresStatePath && strings.TrimSpace(s.StatePath) == "" {
-		return fmt.Errorf("source %s 缺少 state path", name)
-	}
-	if modeSpec.RequiresPollInterval && s.PollInterval <= 0 {
-		return fmt.Errorf("source %s poll interval 必须大于 0", name)
-	}
-	if modeSpec.RequiresCycleTimeout && s.CycleTimeout <= 0 {
-		return fmt.Errorf("source %s cycle timeout 必须大于 0", name)
-	}
-	if err := s.validateDriverConfig(name); err != nil {
+	if err := s.validateWebhookConfig(name); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s Source) validateDriverConfig(name string) error {
-	driver := strings.ToLower(strings.TrimSpace(s.Driver))
-	switch driver {
-	case "webhook":
-		if !strings.EqualFold(strings.TrimSpace(s.Mode), "push") {
-			return fmt.Errorf("source %s 的 driver webhook 仅支持 mode push", name)
-		}
-		if s.Webhook == nil {
-			return fmt.Errorf("source %s 缺少 webhook 配置", name)
-		}
-		if strings.TrimSpace(s.Webhook.ListenAddr) == "" {
-			return fmt.Errorf("source %s webhook listen addr 不能为空", name)
-		}
-		if path := strings.TrimSpace(s.Webhook.Path); path == "" || !strings.HasPrefix(path, "/") {
-			return fmt.Errorf("source %s webhook path 必须以 / 开头", name)
-		}
-		if strings.TrimSpace(s.Webhook.SecretEnv) == "" {
-			return fmt.Errorf("source %s webhook secret_env 不能为空", name)
-		}
-	default:
-		if s.Webhook != nil {
-			return fmt.Errorf("source %s 的 driver %s 不接受 webhook 配置", name, s.Driver)
-		}
+func (s Source) validateWebhookConfig(name string) error {
+	if s.Webhook == nil {
+		return nil
+	}
+	if strings.TrimSpace(s.Webhook.ListenAddr) == "" {
+		return fmt.Errorf("source %s webhook listen addr 不能为空", name)
+	}
+	if path := strings.TrimSpace(s.Webhook.Path); path == "" || !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("source %s webhook path 必须以 / 开头", name)
+	}
+	if strings.TrimSpace(s.Webhook.SecretEnv) == "" {
+		return fmt.Errorf("source %s webhook secret_env 不能为空", name)
 	}
 	return nil
 }
@@ -382,23 +352,10 @@ func (s Sink) Validate(name string, credentials map[string]Credential) error {
 	if strings.TrimSpace(s.Driver) == "" {
 		return fmt.Errorf("sink %s 缺少 driver", name)
 	}
-	sinkSpec, ok := provider.LookupSinkSpec(s.Driver)
-	if !ok {
-		return fmt.Errorf("sink %s 不支持 driver: %s", name, s.Driver)
-	}
 	if ref := strings.TrimSpace(s.CredentialRef); ref != "" {
-		if !sinkSpec.RequiresCredential {
-			return fmt.Errorf("sink %s 的 driver %s 不接受 credential_ref", name, s.Driver)
-		}
 		if _, ok := credentials[ref]; !ok {
 			return fmt.Errorf("sink %s 引用了不存在的 credential: %s", name, ref)
 		}
-	}
-	if sinkSpec.RequiresOutputDir && strings.TrimSpace(s.OutputDir) == "" {
-		return fmt.Errorf("sink %s 缺少 output dir", name)
-	}
-	if s.Verify && !sinkSpec.SupportsVerify {
-		return fmt.Errorf("sink %s 的 driver %s 不支持 verify", name, s.Driver)
 	}
 	return nil
 }
@@ -425,9 +382,13 @@ func (r Route) Validate(name string, sources map[string]Source, sinks map[string
 		return fmt.Errorf("route %s 至少需要一个 sink target", name)
 	}
 	seen := make(map[string]struct{}, len(r.Targets))
+	hasRequired := false
 	for _, target := range r.Targets {
 		if err := target.Validate(sinks); err != nil {
 			return fmt.Errorf("route %s target 校验失败: %w", name, err)
+		}
+		if target.Required {
+			hasRequired = true
 		}
 		key := target.Key()
 		if _, exists := seen[key]; exists {
@@ -435,31 +396,17 @@ func (r Route) Validate(name string, sources map[string]Source, sinks map[string
 		}
 		seen[key] = struct{}{}
 	}
+	if !hasRequired {
+		return fmt.Errorf("route %s 至少需要一个 required target", name)
+	}
 	if r.DeleteSource.Enabled && len(r.DeleteSource.EligibleSinks) == 0 {
 		return fmt.Errorf("route %s 启用 delete source 时必须声明 eligible sinks", name)
 	}
 	if r.DeleteSource.Enabled {
-		for _, sourceRef := range r.SourceRefs {
-			source, ok := sources[strings.TrimSpace(sourceRef)]
-			if !ok {
-				continue
+		for _, ref := range r.DeleteSource.EligibleSinks {
+			if _, ok := sinks[strings.TrimSpace(ref)]; !ok {
+				return fmt.Errorf("route %s delete source 引用了不存在的 sink: %s", name, ref)
 			}
-			sourceSpec, ok := provider.LookupSourceSpec(source.Driver)
-			if !ok || !sourceSpec.SupportsDelete {
-				return fmt.Errorf("route %s 启用 delete source 时，source %s 的 driver %s 不支持删除", name, source.Name, source.Driver)
-			}
-			switch sourceSpec.DeleteSemantics {
-			case provider.DeleteSemanticsHard:
-			case provider.DeleteSemanticsSoft:
-				return fmt.Errorf("route %s 启用 delete source 时，source %s 的 driver %s 仅支持 soft delete", name, source.Name, source.Driver)
-			default:
-				return fmt.Errorf("route %s 启用 delete source 时，source %s 的 driver %s 删除语义未知", name, source.Name, source.Driver)
-			}
-		}
-	}
-	for _, ref := range r.DeleteSource.EligibleSinks {
-		if _, ok := sinks[strings.TrimSpace(ref)]; !ok {
-			return fmt.Errorf("route %s delete source 引用了不存在的 sink: %s", name, ref)
 		}
 	}
 	return nil

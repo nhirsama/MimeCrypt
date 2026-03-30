@@ -10,13 +10,14 @@ import (
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/mailflow/adapters"
+	"mimecrypt/internal/providers"
 )
 
 const defaultPushIdlePollInterval = time.Second
 
 type PushRuntime struct {
 	Runner           *mailflow.Runner
-	Ingress          pushIngress
+	Ingress          providers.PushIngress
 	IdlePollInterval time.Duration
 }
 
@@ -34,11 +35,7 @@ func BuildPushRuntime(ctx context.Context, run SourceRun) (*PushRuntime, error) 
 		Dir:             pushSpoolDirForSource(run.Route.StateDir, run.Source),
 		ReplayRetention: replayRetentionForSource(run.Source),
 	}
-	builder, ok := lookupPushIngressBuilder(run.Source.Driver)
-	if !ok {
-		return nil, fmt.Errorf("push source driver 未提供 ingress 实现: %s", run.Source.Driver)
-	}
-	ingress, err := builder(run, spool)
+	ingress, err := providers.BuildPushIngress(run.Config, run.Route, run.Source, spool)
 	if err != nil {
 		return nil, err
 	}
@@ -51,10 +48,11 @@ func BuildPushRuntime(ctx context.Context, run SourceRun) (*PushRuntime, error) 
 	return &PushRuntime{
 		Runner: &mailflow.Runner{
 			Producer: &adapters.PushProducer{
-				Name:   run.Source.Name,
-				Driver: run.Source.Driver,
-				Store:  sourceStore,
-				Spool:  spool,
+				Name:            run.Source.Name,
+				Driver:          run.Source.Driver,
+				Store:           sourceStore,
+				Spool:           spool,
+				DeleteSemantics: run.SourceDeleteSemantics,
 			},
 			Coordinator: coordinator,
 		},

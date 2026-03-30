@@ -20,6 +20,7 @@ type LocalConsumerKind string
 const (
 	LocalConsumerNone    LocalConsumerKind = ""
 	LocalConsumerDiscard LocalConsumerKind = "discard"
+	LocalConsumerBackup  LocalConsumerKind = "backup"
 	LocalConsumerFile    LocalConsumerKind = "file"
 )
 
@@ -37,12 +38,12 @@ type SourceSpec struct {
 	Modes              map[string]SourceModeSpec
 }
 
-func (s *SourceSpec) ModeSpec(mode string) (SourceModeSpec, bool) {
-	if s == nil {
+func (s SourceSpec) ModeSpec(mode string) (SourceModeSpec, bool) {
+	if s.Modes == nil {
 		return SourceModeSpec{}, false
 	}
-	spec, ok := s.Modes[normalizeDriverName(mode)]
-	return spec, ok
+	modeSpec, ok := s.Modes[strings.ToLower(strings.TrimSpace(mode))]
+	return modeSpec, ok
 }
 
 type SinkSpec struct {
@@ -60,121 +61,4 @@ type DriverSpec struct {
 	Auth   AuthRequirement
 	Source *SourceSpec
 	Sink   *SinkSpec
-}
-
-var builtinDriverSpecs = map[string]DriverSpec{
-	"discard": {
-		Name: "discard",
-		Sink: &SinkSpec{
-			LocalConsumer:     true,
-			LocalConsumerKind: LocalConsumerDiscard,
-		},
-	},
-	"ews": {
-		Name: "ews",
-		Auth: AuthRequirement{
-			Graph: true,
-			EWS:   true,
-		},
-		Sink: &SinkSpec{
-			RequiresCredential: true,
-			SupportsVerify:     true,
-			SupportsReconcile:  true,
-			SupportsHealth:     true,
-		},
-	},
-	"file": {
-		Name: "file",
-		Sink: &SinkSpec{
-			RequiresOutputDir: true,
-			LocalConsumer:     true,
-			LocalConsumerKind: LocalConsumerFile,
-		},
-	},
-	"graph": {
-		Name: "graph",
-		Auth: AuthRequirement{
-			Graph: true,
-		},
-		Source: &SourceSpec{
-			RequiresCredential: true,
-			SupportsDelete:     true,
-			DeleteSemantics:    DeleteSemanticsSoft,
-			ProbeKind:          ProviderProbeIdentity,
-			Modes: map[string]SourceModeSpec{
-				"poll": {
-					RequiresStatePath:    true,
-					RequiresPollInterval: true,
-					RequiresCycleTimeout: true,
-				},
-			},
-		},
-		Sink: &SinkSpec{
-			RequiresCredential: true,
-			SupportsVerify:     true,
-			SupportsReconcile:  true,
-			SupportsHealth:     true,
-		},
-	},
-	"imap": {
-		Name: "imap",
-		Auth: AuthRequirement{
-			IMAP: true,
-		},
-		Source: &SourceSpec{
-			RequiresCredential: true,
-			SupportsDelete:     true,
-			DeleteSemantics:    DeleteSemanticsHard,
-			ProbeKind:          ProviderProbeFolderList,
-			Modes: map[string]SourceModeSpec{
-				"poll": {
-					RequiresStatePath:    true,
-					RequiresPollInterval: true,
-					RequiresCycleTimeout: true,
-				},
-			},
-		},
-		Sink: &SinkSpec{
-			RequiresCredential: true,
-			SupportsVerify:     true,
-			SupportsReconcile:  true,
-			SupportsHealth:     true,
-		},
-	},
-	"webhook": {
-		Name: "webhook",
-		Source: &SourceSpec{
-			RequiresCredential: false,
-			SupportsDelete:     false,
-			DeleteSemantics:    DeleteSemanticsUnknown,
-			Modes: map[string]SourceModeSpec{
-				"push": {},
-			},
-		},
-	},
-}
-
-func LookupDriverSpec(driver string) (DriverSpec, bool) {
-	spec, ok := builtinDriverSpecs[normalizeDriverName(driver)]
-	return spec, ok
-}
-
-func LookupSourceSpec(driver string) (*SourceSpec, bool) {
-	spec, ok := LookupDriverSpec(driver)
-	if !ok || spec.Source == nil {
-		return nil, false
-	}
-	return spec.Source, true
-}
-
-func LookupSinkSpec(driver string) (*SinkSpec, bool) {
-	spec, ok := LookupDriverSpec(driver)
-	if !ok || spec.Sink == nil {
-		return nil, false
-	}
-	return spec.Sink, true
-}
-
-func normalizeDriverName(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
 }

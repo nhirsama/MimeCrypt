@@ -3,6 +3,7 @@ package appruntime
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
@@ -14,7 +15,9 @@ import (
 	"mimecrypt/internal/providers/graph"
 )
 
-func BuildLoginService(cfg appconfig.Config) (*login.Service, error) {
+func BuildLoginService(plan CredentialPlan) (*login.Service, error) {
+	cfg := effectiveLoginConfig(plan)
+
 	session, err := auth.NewSession(cfg.Auth, nil)
 	if err != nil {
 		return nil, err
@@ -33,10 +36,23 @@ func BuildLoginService(cfg appconfig.Config) (*login.Service, error) {
 	return service, nil
 }
 
-func buildLoginIdentityProbe(cfg appconfig.Config, session provider.Session) (func(context.Context) (provider.User, error), error) {
+func effectiveLoginConfig(plan CredentialPlan) appconfig.Config {
+	cfg := plan.Config
+	cfg.Auth = loginAuthConfig(plan)
+	return cfg
+}
+
+func loginAuthConfig(plan CredentialPlan) appconfig.AuthConfig {
+	if len(plan.AuthDrivers) == 0 {
+		return plan.Config.Auth
+	}
+	return providers.SessionAuthConfigForDrivers(plan.Config, plan.AuthDrivers...)
+}
+
+func buildLoginIdentityProbe(cfg appconfig.Config, tokenSource provider.TokenSource) (func(context.Context) (provider.User, error), error) {
 	switch {
 	case len(cfg.Auth.GraphScopes) > 0:
-		clients, err := providers.BuildSourceClientsWithSession(cfg, "graph", "", session)
+		clients, err := providers.BuildSourceClients(cfg, "graph", "", tokenSource)
 		if err != nil {
 			return nil, err
 		}
@@ -55,8 +71,15 @@ func buildLoginIdentityProbe(cfg appconfig.Config, session provider.Session) (fu
 	}
 }
 
-func BuildRevokeService(cfg appconfig.Config, force bool) (*revoke.Service, error) {
+func BuildRevokeService(plan CredentialPlan, force bool) (*revoke.Service, error) {
+	cfg := plan.Config
+
 	session, err := auth.NewSession(cfg.Auth, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	kind, kindSpec, err := effectiveRevokeCredentialKind(plan)
 	if err != nil {
 		return nil, err
 	}
@@ -66,10 +89,14 @@ func BuildRevokeService(cfg appconfig.Config, force bool) (*revoke.Service, erro
 		ClearLocal: func() error {
 			return appconfig.ClearLocalConfig(cfg.Auth.StateDir)
 		},
-		Force: force,
+		Force:         force,
+		RequireRemote: kindSpec.RequiresRemoteRevoke,
+	}
+	if !kindSpec.RequiresRemoteRevoke {
+		return service, nil
 	}
 
-	remoteRevoker, err := graph.NewIdentityRevoker(cfg, session, nil)
+	remoteRevoker, err := buildRemoteRevoker(cfg, kind, session)
 	if err != nil {
 		if !force {
 			return nil, fmt.Errorf("初始化远端吊销器失败: %w", err)
@@ -79,6 +106,35 @@ func BuildRevokeService(cfg appconfig.Config, force bool) (*revoke.Service, erro
 	}
 	service.RemoteRevoker = remoteRevoker
 	return service, nil
+}
+
+func effectiveRevokeCredentialKind(plan CredentialPlan) (string, appconfig.CredentialKindSpec, error) {
+	kind := strings.TrimSpace(plan.Credential.Kind)
+	if kind == "" {
+		kind = appconfig.CredentialKindOAuth
+	}
+	spec, ok := appconfig.LookupCredentialKindSpec(kind)
+	if !ok {
+		return "", appconfig.CredentialKindSpec{}, fmt.Errorf("credential kind 不支持: %s", kind)
+	}
+	return appconfig.NormalizeCredentialKind(kind), spec, nil
+}
+
+func buildRemoteRevoker(cfg appconfig.Config, credentialKind string, tokenSource provider.TokenSource) (provider.RemoteRevoker, error) {
+	kind := appconfig.NormalizeCredentialKind(credentialKind)
+	spec, ok := appconfig.LookupCredentialKindSpec(kind)
+	if !ok {
+		return nil, fmt.Errorf("credential kind 不支持: %s", credentialKind)
+	}
+	if !spec.RequiresRemoteRevoke {
+		return nil, nil
+	}
+	switch kind {
+	case appconfig.CredentialKindOAuth:
+		return graph.NewIdentityRevoker(cfg, tokenSource, nil)
+	default:
+		return nil, fmt.Errorf("credential kind %s 未提供远端吊销实现", kind)
+	}
 }
 
 func BuildTokenStateService(cfg appconfig.Config) (*tokenstate.Service, error) {

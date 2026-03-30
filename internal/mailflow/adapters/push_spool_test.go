@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-func TestPushSpoolEnqueueClaimAndAck(t *testing.T) {
+func TestPushSpoolEnqueueClaimPrepareAndFinalizeAck(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 30, 1, 2, 3, 0, time.UTC)
@@ -54,11 +54,17 @@ func TestPushSpoolEnqueueClaimAndAck(t *testing.T) {
 		t.Fatalf("stored MIME = %q", string(content))
 	}
 
-	if err := spool.Ack(claimed.Key); err != nil {
-		t.Fatalf("Ack() error = %v", err)
+	if err := spool.PrepareAck(claimed.Key); err != nil {
+		t.Fatalf("PrepareAck() error = %v", err)
+	}
+	if _, err := os.Stat(spool.processingPath(claimed.Key)); err != nil {
+		t.Fatalf("processing path missing after PrepareAck(): %v", err)
+	}
+	if err := spool.FinalizeAck(claimed.Key); err != nil {
+		t.Fatalf("FinalizeAck() error = %v", err)
 	}
 	if _, err := os.Stat(spool.processingPath(claimed.Key)); !os.IsNotExist(err) {
-		t.Fatalf("processing path still exists after Ack(): err=%v", err)
+		t.Fatalf("processing path still exists after FinalizeAck(): err=%v", err)
 	}
 }
 
@@ -115,8 +121,11 @@ func TestPushSpoolRejectsFreshDuplicateAndAllowsReplayAfterRetention(t *testing.
 	if err != nil || !found {
 		t.Fatalf("ClaimNext() = (%+v, %t, %v), want found message", claimed, found, err)
 	}
-	if err := spool.Ack(claimed.Key); err != nil {
-		t.Fatalf("Ack() error = %v", err)
+	if err := spool.PrepareAck(claimed.Key); err != nil {
+		t.Fatalf("PrepareAck() error = %v", err)
+	}
+	if err := spool.FinalizeAck(claimed.Key); err != nil {
+		t.Fatalf("FinalizeAck() error = %v", err)
 	}
 
 	if duplicate, err := spool.Enqueue(PushMessage{DeliveryID: "delivery-2", MIME: []byte("mime")}); err != nil || !duplicate {
@@ -133,7 +142,7 @@ func TestPushSpoolRejectsFreshDuplicateAndAllowsReplayAfterRetention(t *testing.
 	}
 }
 
-func TestPushSpoolWritesSeenMarkerOnlyAfterAck(t *testing.T) {
+func TestPushSpoolWritesSeenMarkerOnlyAfterPrepareAck(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 3, 30, 4, 5, 6, 0, time.UTC)
@@ -150,7 +159,7 @@ func TestPushSpoolWritesSeenMarkerOnlyAfterAck(t *testing.T) {
 
 	key := spool.messageKey("delivery-4")
 	if _, err := os.Stat(spool.seenPath(key)); !os.IsNotExist(err) {
-		t.Fatalf("seen marker exists before Ack(): err=%v", err)
+		t.Fatalf("seen marker exists before PrepareAck(): err=%v", err)
 	}
 
 	claimed, found, err := spool.ClaimNext()
@@ -161,11 +170,42 @@ func TestPushSpoolWritesSeenMarkerOnlyAfterAck(t *testing.T) {
 		t.Fatalf("duplicate Enqueue() before Ack = (%t, %v), want (true, nil)", duplicate, err)
 	}
 
-	if err := spool.Ack(claimed.Key); err != nil {
-		t.Fatalf("Ack() error = %v", err)
+	if err := spool.PrepareAck(claimed.Key); err != nil {
+		t.Fatalf("PrepareAck() error = %v", err)
 	}
 	if _, err := os.Stat(spool.seenPath(key)); err != nil {
-		t.Fatalf("seen marker missing after Ack(): %v", err)
+		t.Fatalf("seen marker missing after PrepareAck(): %v", err)
+	}
+	if _, err := os.Stat(spool.processingPath(claimed.Key)); err != nil {
+		t.Fatalf("processing path missing after PrepareAck(): %v", err)
+	}
+}
+
+func TestPushSpoolRequeuePreparedAckReturnsMessageToPending(t *testing.T) {
+	t.Parallel()
+
+	spool := &PushSpool{
+		Dir:             t.TempDir(),
+		ReplayRetention: time.Hour,
+		Now:             func() time.Time { return time.Now().UTC() },
+	}
+
+	if duplicate, err := spool.Enqueue(PushMessage{DeliveryID: "delivery-prepare-requeue", MIME: []byte("mime")}); err != nil || duplicate {
+		t.Fatalf("Enqueue() = (%t, %v), want (false, nil)", duplicate, err)
+	}
+	claimed, found, err := spool.ClaimNext()
+	if err != nil || !found {
+		t.Fatalf("ClaimNext() = (%+v, %t, %v), want found message", claimed, found, err)
+	}
+	if err := spool.PrepareAck(claimed.Key); err != nil {
+		t.Fatalf("PrepareAck() error = %v", err)
+	}
+
+	if err := spool.RequeueProcessing(); err != nil {
+		t.Fatalf("RequeueProcessing() error = %v", err)
+	}
+	if _, err := os.Stat(spool.pendingPath(claimed.Key)); err != nil {
+		t.Fatalf("pendingPath() stat error = %v", err)
 	}
 }
 

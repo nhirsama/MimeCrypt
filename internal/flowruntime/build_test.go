@@ -7,7 +7,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow/adapters"
-	"mimecrypt/internal/provider"
+	"mimecrypt/internal/providers"
 )
 
 func TestBuildMailflowPlanAddsConfiguredTargets(t *testing.T) {
@@ -113,21 +113,16 @@ func TestApplyTopologyCredentialUsesNamedStateDir(t *testing.T) {
 	}
 }
 
-func TestBuildLocalConsumerUsesCapabilityKind(t *testing.T) {
+func TestBuildLocalConsumerUsesRegistryCapabilityKind(t *testing.T) {
 	t.Parallel()
 
-	consumer, err := buildLocalConsumer(SinkPlan{
-		Sink: appconfig.Sink{
-			Name:      "local-output",
-			Driver:    "file",
-			OutputDir: "/tmp/out",
-		},
-	}, &provider.SinkSpec{
-		LocalConsumer:     true,
-		LocalConsumerKind: provider.LocalConsumerFile,
-	})
+	consumer, err := providers.BuildLocalConsumer(appconfig.Config{}, appconfig.Sink{
+		Name:      "local-output",
+		Driver:    "file",
+		OutputDir: "/tmp/out",
+	}, nil)
 	if err != nil {
-		t.Fatalf("buildLocalConsumer() error = %v", err)
+		t.Fatalf("BuildLocalConsumer() error = %v", err)
 	}
 	fileConsumer, ok := consumer.(*adapters.FileConsumer)
 	if !ok {
@@ -135,6 +130,26 @@ func TestBuildLocalConsumerUsesCapabilityKind(t *testing.T) {
 	}
 	if fileConsumer.OutputDir != "/tmp/out" {
 		t.Fatalf("OutputDir = %q, want /tmp/out", fileConsumer.OutputDir)
+	}
+}
+
+func TestBuildLocalConsumerUsesBackupCapabilityKind(t *testing.T) {
+	t.Parallel()
+
+	consumer, err := providers.BuildLocalConsumer(appconfig.Config{}, appconfig.Sink{
+		Name:      "backup",
+		Driver:    "backup",
+		OutputDir: "/tmp/backup",
+	}, nil)
+	if err != nil {
+		t.Fatalf("BuildLocalConsumer() error = %v", err)
+	}
+	backupConsumer, ok := consumer.(*adapters.BackupConsumer)
+	if !ok {
+		t.Fatalf("consumer type = %T, want *adapters.BackupConsumer", consumer)
+	}
+	if backupConsumer.OutputDir != "/tmp/backup" {
+		t.Fatalf("OutputDir = %q, want /tmp/backup", backupConsumer.OutputDir)
 	}
 }
 

@@ -24,7 +24,7 @@ type ewsWriter struct {
 
 type ewsClient struct {
 	httpClient  *http.Client
-	tokenSource provider.Session
+	tokenSource provider.TokenSource
 	baseURL     string
 	scopes      []string
 }
@@ -131,7 +131,7 @@ type ewsExtendedFieldURI struct {
 	PropertyType string `xml:"PropertyType,attr"`
 }
 
-func newEWSWriter(cfg appconfig.Config, tokenSource provider.Session, httpClient *http.Client) (*ewsWriter, error) {
+func newEWSWriter(cfg appconfig.Config, tokenSource provider.TokenSource, httpClient *http.Client) (*ewsWriter, error) {
 	if tokenSource == nil {
 		return nil, fmt.Errorf("token source 不能为空")
 	}
@@ -158,7 +158,7 @@ func newEWSWriter(cfg appconfig.Config, tokenSource provider.Session, httpClient
 	}, nil
 }
 
-func newEWSClient(cfg appconfig.MailClientConfig, scopes []string, tokenSource provider.Session, httpClient *http.Client) (*ewsClient, error) {
+func newEWSClient(cfg appconfig.MailClientConfig, scopes []string, tokenSource provider.TokenSource, httpClient *http.Client) (*ewsClient, error) {
 	if err := cfg.ValidateEWS(); err != nil {
 		return nil, err
 	}
@@ -242,10 +242,6 @@ func (w *ewsWriter) ReconcileMessage(ctx context.Context, req provider.WriteRequ
 
 func (w *ewsWriter) DeleteMessage(ctx context.Context, source provider.MessageRef) error {
 	return w.graphHelper.DeleteMessage(ctx, source)
-}
-
-func (*ewsWriter) DeleteSemantics() provider.DeleteSemantics {
-	return provider.DeleteSemanticsSoft
 }
 
 func (w *ewsWriter) resolveCreatedGraphID(ctx context.Context, req provider.WriteRequest, targetFolderID, createdEWSID string) (string, error) {

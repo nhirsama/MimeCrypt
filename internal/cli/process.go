@@ -6,18 +6,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/flowruntime"
 )
 
 func newProcessCmd() *cobra.Command {
-	cfg, err := appconfig.LoadFromEnv()
-	if err != nil {
-		return newErrorCommand("process", "根据邮件 ID 和配置处理邮件", err)
-	}
-
-	topologyFlags := newTopologyConfigFlags(cfg)
-	pipelineFlags := newPipelineConfigFlags(cfg)
+	bootstrap := loadCommandConfigBootstrap()
+	topologyFlags := newTopologyConfigFlags(bootstrap.Config())
+	pipelineFlags := newPipelineConfigFlags(bootstrap.Config())
 	transactionMode := string(flowruntime.TransactionModeEphemeral)
 
 	cmd := &cobra.Command{
@@ -25,7 +20,10 @@ func newProcessCmd() *cobra.Command {
 		Short: "按邮件标识执行单封邮件处理",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = topologyFlags.apply(cfg)
+			if err := bootstrap.Error(); err != nil {
+				return fmt.Errorf("process 失败: %w", err)
+			}
+			cfg := topologyFlags.apply(bootstrap.Config())
 			cfg = pipelineFlags.apply(cfg, cmd)
 
 			if err := cfg.Mail.ValidatePipelineBase(); err != nil {

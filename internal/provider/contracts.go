@@ -73,13 +73,14 @@ func (r MessageRef) WithFallbackFolder(folderID string) MessageRef {
 	return r
 }
 
-// Session 抽象认证与令牌缓存能力。
-type Session interface {
-	Login(ctx context.Context, out io.Writer) (Token, error)
+// TokenSource 抽象 provider 运行时真正需要的 access token 获取能力。
+type TokenSource interface {
 	AccessToken(ctx context.Context) (string, error)
 	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
-	LoadCachedToken() (Token, error)
-	Logout() error
+}
+
+type RemoteRevoker interface {
+	Revoke(ctx context.Context) error
 }
 
 // Reader 抽象收件相关的底层 API。
@@ -174,23 +175,17 @@ type Deleter interface {
 	DeleteMessage(ctx context.Context, source MessageRef) error
 }
 
-type DeleteSemanticReporter interface {
-	DeleteSemantics() DeleteSemantics
-}
-
 // HealthProber 抽象 provider 侧的最小活体探测，供显式深度健康检查使用。
 type HealthProber interface {
 	HealthCheck(ctx context.Context) (string, error)
 }
 
 type SourceClients struct {
-	Session Session
 	Reader  Reader
 	Deleter Deleter
 }
 
 type SinkClients struct {
-	Session    Session
 	Reader     Reader
 	Writer     Writer
 	Reconciler Reconciler

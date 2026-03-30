@@ -8,43 +8,41 @@ import (
 	"mimecrypt/internal/provider"
 )
 
-func BuildSourceClientsWithSession(cfg appconfig.Config, session provider.Session) (provider.SourceClients, error) {
-	if session == nil {
-		return provider.SourceClients{}, fmt.Errorf("session 不能为空")
+func BuildSourceClientsWithTokenSource(cfg appconfig.Config, _ string, tokenSource provider.TokenSource) (provider.SourceClients, error) {
+	if tokenSource == nil {
+		return provider.SourceClients{}, fmt.Errorf("token source 不能为空")
 	}
 
-	tokenSource := graphTokenSource{session: session, scopes: append([]string(nil), cfg.Auth.GraphScopes...)}
-	client, err := newReader(cfg.Mail.Client, tokenSource, nil)
+	scopedSource := graphTokenSource{tokenSource: tokenSource, scopes: append([]string(nil), cfg.Auth.GraphScopes...)}
+	client, err := newReader(cfg.Mail.Client, scopedSource, nil)
 	if err != nil {
 		return provider.SourceClients{}, err
 	}
-	sourceWriter, err := newWriter(cfg.Mail.Client, tokenSource, nil)
+	sourceWriter, err := newWriter(cfg.Mail.Client, scopedSource, nil)
 	if err != nil {
 		return provider.SourceClients{}, err
 	}
 
 	return provider.SourceClients{
-		Session: session,
 		Reader:  client,
 		Deleter: sourceWriter,
 	}, nil
 }
 
-func NewWriterClients(cfg appconfig.Config, session provider.Session) (provider.SinkClients, error) {
-	if session == nil {
-		return provider.SinkClients{}, fmt.Errorf("session 不能为空")
+func NewWriterClients(cfg appconfig.Config, _ string, tokenSource provider.TokenSource) (provider.SinkClients, error) {
+	if tokenSource == nil {
+		return provider.SinkClients{}, fmt.Errorf("token source 不能为空")
 	}
-	tokenSource := graphTokenSource{session: session, scopes: append([]string(nil), cfg.Auth.GraphScopes...)}
-	reader, err := newReader(cfg.Mail.Client, tokenSource, nil)
+	scopedSource := graphTokenSource{tokenSource: tokenSource, scopes: append([]string(nil), cfg.Auth.GraphScopes...)}
+	reader, err := newReader(cfg.Mail.Client, scopedSource, nil)
 	if err != nil {
 		return provider.SinkClients{}, err
 	}
-	writer, err := newWriter(cfg.Mail.Client, tokenSource, nil)
+	writer, err := newWriter(cfg.Mail.Client, scopedSource, nil)
 	if err != nil {
 		return provider.SinkClients{}, err
 	}
 	return provider.SinkClients{
-		Session:    session,
 		Reader:     reader,
 		Writer:     writer,
 		Reconciler: writer,
@@ -52,20 +50,19 @@ func NewWriterClients(cfg appconfig.Config, session provider.Session) (provider.
 	}, nil
 }
 
-func NewEWSWriterClients(cfg appconfig.Config, session provider.Session) (provider.SinkClients, error) {
-	if session == nil {
-		return provider.SinkClients{}, fmt.Errorf("session 不能为空")
+func NewEWSWriterClients(cfg appconfig.Config, _ string, tokenSource provider.TokenSource) (provider.SinkClients, error) {
+	if tokenSource == nil {
+		return provider.SinkClients{}, fmt.Errorf("token source 不能为空")
 	}
-	reader, err := newReader(cfg.Mail.Client, session, nil)
+	reader, err := newReader(cfg.Mail.Client, tokenSource, nil)
 	if err != nil {
 		return provider.SinkClients{}, err
 	}
-	writer, err := newEWSWriter(cfg, session, nil)
+	writer, err := newEWSWriter(cfg, tokenSource, nil)
 	if err != nil {
 		return provider.SinkClients{}, err
 	}
 	return provider.SinkClients{
-		Session:    session,
 		Reader:     reader,
 		Writer:     writer,
 		Reconciler: writer,
@@ -74,13 +71,13 @@ func NewEWSWriterClients(cfg appconfig.Config, session provider.Session) (provid
 }
 
 type graphTokenSource struct {
-	session provider.Session
-	scopes  []string
+	tokenSource provider.TokenSource
+	scopes      []string
 }
 
 func (s graphTokenSource) AccessToken(ctx context.Context) (string, error) {
 	if len(s.scopes) > 0 {
-		return s.session.AccessTokenForScopes(ctx, s.scopes)
+		return s.tokenSource.AccessTokenForScopes(ctx, s.scopes)
 	}
-	return s.session.AccessToken(ctx)
+	return s.tokenSource.AccessToken(ctx)
 }

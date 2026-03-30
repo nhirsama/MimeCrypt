@@ -9,17 +9,12 @@ import (
 	"testing"
 
 	"mimecrypt/internal/appconfig"
-	"mimecrypt/internal/provider"
 )
 
 type recordingScopedSession struct {
 	accessCalls int
 	scopedCalls int
 	scopes      [][]string
-}
-
-func (s *recordingScopedSession) Login(context.Context, io.Writer) (provider.Token, error) {
-	return provider.Token{}, nil
 }
 
 func (s *recordingScopedSession) AccessToken(context.Context) (string, error) {
@@ -33,15 +28,7 @@ func (s *recordingScopedSession) AccessTokenForScopes(_ context.Context, scopes 
 	return "scoped-token", nil
 }
 
-func (s *recordingScopedSession) LoadCachedToken() (provider.Token, error) {
-	return provider.Token{}, nil
-}
-
-func (s *recordingScopedSession) Logout() error {
-	return nil
-}
-
-func TestBuildSourceClientsWithSessionUsesScopedGraphToken(t *testing.T) {
+func TestBuildSourceClientsWithTokenSourceUsesScopedGraphToken(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -55,9 +42,9 @@ func TestBuildSourceClientsWithSessionUsesScopedGraphToken(t *testing.T) {
 
 	cfg := testGraphFactoryConfig(server.URL)
 	session := &recordingScopedSession{}
-	clients, err := BuildSourceClientsWithSession(cfg, session)
+	clients, err := BuildSourceClientsWithTokenSource(cfg, "", session)
 	if err != nil {
-		t.Fatalf("BuildSourceClientsWithSession() error = %v", err)
+		t.Fatalf("BuildSourceClientsWithTokenSource() error = %v", err)
 	}
 
 	if _, err := clients.Reader.Me(context.Background()); err != nil {
@@ -88,7 +75,7 @@ func TestNewWriterClientsUsesScopedGraphToken(t *testing.T) {
 
 	cfg := testGraphFactoryConfig(server.URL)
 	session := &recordingScopedSession{}
-	clients, err := NewWriterClients(cfg, session)
+	clients, err := NewWriterClients(cfg, "", session)
 	if err != nil {
 		t.Fatalf("NewWriterClients() error = %v", err)
 	}

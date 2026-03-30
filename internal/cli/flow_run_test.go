@@ -180,12 +180,20 @@ func TestSummarizeMailflowResultUsesTraceAndDeliveries(t *testing.T) {
 			},
 		},
 		Deliveries: map[string]mailflow.DeliveryReceipt{
-			"local-output": {
-				Consumer: "local-output",
+			"archive-file-sink": {
+				Consumer: "archive-file-sink",
 				ID:       outputPath,
+				Store: mailflow.StoreRef{
+					Driver:  "file",
+					Account: filepath.Dir(outputPath),
+				},
 			},
-			"write-back": {
-				Consumer: "write-back",
+			"vault-remote-sink": {
+				Consumer: "vault-remote-sink",
+				Store: mailflow.StoreRef{
+					Driver:  "imap",
+					Account: "vault@example.com",
+				},
 				Verified: true,
 			},
 		},
@@ -201,6 +209,71 @@ func TestSummarizeMailflowResultUsesTraceAndDeliveries(t *testing.T) {
 	}
 	if !summary.WroteBack || !summary.Verified {
 		t.Fatalf("unexpected write-back summary: %+v", summary)
+	}
+}
+
+func TestSummarizeMailflowResultDoesNotTreatDiscardAsWriteBack(t *testing.T) {
+	t.Parallel()
+
+	summary, err := summarizeMailflowResult(mailflow.Result{
+		Key: "tx-discard-summary",
+		Trace: mailflow.MailTrace{
+			SourceMessageID: "m-discard",
+			Attributes: map[string]string{
+				"format": "pgp-mime",
+			},
+		},
+		Deliveries: map[string]mailflow.DeliveryReceipt{
+			"discard-sink": {
+				Consumer: "discard-sink",
+				Verified: true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("summarizeMailflowResult() error = %v", err)
+	}
+	if summary.SavedOutput || summary.WroteBack || summary.Verified {
+		t.Fatalf("unexpected discard summary: %+v", summary)
+	}
+}
+
+func TestSummarizeMailflowResultUsesBackupReceiptPath(t *testing.T) {
+	t.Parallel()
+
+	backupPath := filepath.Join(t.TempDir(), "backup.pgp")
+	if err := os.WriteFile(backupPath, []byte("backup"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	summary, err := summarizeMailflowResult(mailflow.Result{
+		Key: "tx-backup-summary",
+		Trace: mailflow.MailTrace{
+			SourceMessageID: "m-backup",
+			Attributes: map[string]string{
+				"format": "pgp-mime",
+			},
+		},
+		Deliveries: map[string]mailflow.DeliveryReceipt{
+			"backup": {
+				Consumer: "__default_backup__",
+				ID:       backupPath,
+				Store: mailflow.StoreRef{
+					Driver:  "backup",
+					Account: filepath.Dir(backupPath),
+				},
+				Verified: true,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("summarizeMailflowResult() error = %v", err)
+	}
+	if summary.BackupPath != backupPath {
+		t.Fatalf("BackupPath = %q, want %q", summary.BackupPath, backupPath)
+	}
+	if summary.SavedOutput || summary.WroteBack || summary.Verified {
+		t.Fatalf("unexpected backup summary flags: %+v", summary)
 	}
 }
 

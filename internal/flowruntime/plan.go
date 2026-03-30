@@ -6,6 +6,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/provider"
+	"mimecrypt/internal/providers"
 )
 
 type RoutePlanMode string
@@ -33,11 +34,12 @@ type SinkPlan struct {
 }
 
 type SourceRun struct {
-	Source   appconfig.Source
-	Route    appconfig.Route
-	Config   appconfig.Config
-	Sinks    map[string]SinkPlan
-	LockPath string
+	Source                appconfig.Source
+	Route                 appconfig.Route
+	Config                appconfig.Config
+	Sinks                 map[string]SinkPlan
+	SourceDeleteSemantics provider.DeleteSemantics
+	LockPath              string
 }
 
 type RoutePlan struct {
@@ -156,7 +158,7 @@ func populateSourceStatePaths(cfg appconfig.Config, topology *appconfig.Topology
 		if strings.TrimSpace(source.StatePath) != "" {
 			continue
 		}
-		sourceSpec, ok := provider.LookupSourceSpec(source.Driver)
+		sourceSpec, ok := providers.LookupSourceSpec(source.Driver)
 		if !ok {
 			return fmt.Errorf("source %s 不支持 driver: %s", source.Name, source.Driver)
 		}
@@ -227,8 +229,12 @@ func buildSourceRun(cfg appconfig.Config, topology appconfig.Topology, route app
 	}
 
 	runRoute := route
+	runRoute.Targets = append([]appconfig.RouteTarget(nil), route.Targets...)
 	if strings.TrimSpace(runRoute.StateDir) == "" {
 		runRoute.StateDir = sourceCfg.Mail.FlowStateDirFor(route.Name, source.Name, source.Driver, source.Folder)
+	}
+	if backupEnabled(sourceCfg) {
+		runRoute = appendDefaultBackupTarget(runRoute)
 	}
 
 	sinks := make(map[string]SinkPlan)
@@ -238,6 +244,10 @@ func buildSourceRun(cfg appconfig.Config, topology appconfig.Topology, route app
 			continue
 		}
 		if _, exists := sinks[sinkRef]; exists {
+			continue
+		}
+		if sinkRef == defaultBackupSinkRef {
+			sinks[sinkRef] = defaultBackupSinkPlan(sourceCfg)
 			continue
 		}
 		sink, ok := topology.Sinks[sinkRef]
@@ -254,13 +264,13 @@ func buildSourceRun(cfg appconfig.Config, topology appconfig.Topology, route app
 			Mailbox: sinkMailbox(source, sink),
 		}
 	}
-
 	return SourceRun{
-		Source:   source,
-		Route:    runRoute,
-		Config:   sourceCfg,
-		Sinks:    sinks,
-		LockPath: sourceCfg.RunLockPathFor(source.Name, source.Driver, source.Folder),
+		Source:                source,
+		Route:                 runRoute,
+		Config:                sourceCfg,
+		Sinks:                 sinks,
+		SourceDeleteSemantics: sourceDeleteSemantics(source.Driver),
+		LockPath:              sourceCfg.RunLockPathFor(source.Name, source.Driver, source.Folder),
 	}, nil
 }
 
@@ -332,7 +342,7 @@ func topologySourceNames(sources map[string]appconfig.Source) []string {
 }
 
 func configForSource(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source) (appconfig.Config, error) {
-	sourceSpec, ok := provider.LookupSourceSpec(source.Driver)
+	sourceSpec, ok := providers.LookupSourceSpec(source.Driver)
 	if !ok {
 		return appconfig.Config{}, fmt.Errorf("source %s 不支持 driver: %s", source.Name, source.Driver)
 	}
@@ -343,7 +353,7 @@ func configForSource(cfg appconfig.Config, topology appconfig.Topology, source a
 }
 
 func configForSink(cfg appconfig.Config, topology appconfig.Topology, sink appconfig.Sink) (appconfig.Config, error) {
-	sinkSpec, ok := provider.LookupSinkSpec(sink.Driver)
+	sinkSpec, ok := providers.LookupSinkSpec(sink.Driver)
 	if !ok {
 		return appconfig.Config{}, fmt.Errorf("sink %s 不支持 driver: %s", sink.Name, sink.Driver)
 	}

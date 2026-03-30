@@ -27,6 +27,7 @@ type PollingProducer struct {
 	Store           mailflow.StoreRef
 	Reader          provider.Reader
 	Deleter         provider.Deleter
+	DeleteSemantics provider.DeleteSemantics
 
 	mu sync.Mutex
 }
@@ -112,7 +113,8 @@ func (p *PollingProducer) Next(ctx context.Context) (mailflow.MailEnvelope, erro
 			ReceivedAt:        message.ReceivedDateTime,
 			SourceStore:       p.Store,
 		},
-		Source: source,
+		Source:                source,
+		SourceDeleteSemantics: p.DeleteSemantics,
 	}, nil
 }
 
@@ -200,13 +202,6 @@ func (h *pollingSourceHandle) Delete(ctx context.Context) error {
 		return fmt.Errorf("来源不支持删除")
 	}
 	return h.deleter.DeleteMessage(ctx, h.message)
-}
-
-func (h *pollingSourceHandle) DeleteSemantics() provider.DeleteSemantics {
-	if reporter, ok := h.deleter.(provider.DeleteSemanticReporter); ok {
-		return reporter.DeleteSemantics()
-	}
-	return provider.DeleteSemanticsUnknown
 }
 
 func (h *pollingSourceHandle) loadState() (pollingState, error) {

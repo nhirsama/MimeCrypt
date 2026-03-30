@@ -88,11 +88,30 @@ func (s *fakeSource) Delete(context.Context) error {
 	return s.err
 }
 
-func (s *fakeSource) DeleteSemantics() provider.DeleteSemantics {
-	if s == nil || s.semantics == "" {
-		return provider.DeleteSemanticsHard
+type fakeFinalizingSource struct {
+	*fakeSource
+	finalizeCalls int
+	finalizeErr   error
+}
+
+func (s *fakeFinalizingSource) FinalizeAcknowledge(context.Context) error {
+	s.finalizeCalls++
+	return s.finalizeErr
+}
+
+type failSaveStore struct {
+	memoryStore
+	failOnSave int
+	saveCalls  int
+	err        error
+}
+
+func (s *failSaveStore) Save(ctx context.Context, state TxState) error {
+	s.saveCalls++
+	if s.failOnSave > 0 && s.saveCalls == s.failOnSave {
+		return s.err
 	}
-	return s.semantics
+	return s.memoryStore.Save(ctx, state)
 }
 
 func TestCoordinatorDeletesSourceWhenSameStoreReceiptCommitted(t *testing.T) {
@@ -152,7 +171,8 @@ func TestCoordinatorDeletesSourceWhenSameStoreReceiptCommitted(t *testing.T) {
 		Trace: MailTrace{
 			TransactionKey: "tx-1",
 		},
-		Source: source,
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -236,7 +256,8 @@ func TestCoordinatorKeepsSourceWhenStoreDiffers(t *testing.T) {
 		Trace: MailTrace{
 			TransactionKey: "tx-2",
 		},
-		Source: source,
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -303,9 +324,10 @@ func TestCoordinatorRejectsSoftDeleteSourceBeforeDelivery(t *testing.T) {
 	}
 
 	_, err := coordinator.Run(context.Background(), MailEnvelope{
-		MIME:   bytesOpener("source"),
-		Trace:  MailTrace{TransactionKey: "tx-soft-delete"},
-		Source: source,
+		MIME:                  bytesOpener("source"),
+		Trace:                 MailTrace{TransactionKey: "tx-soft-delete"},
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsSoft,
 	})
 	if err == nil || !strings.Contains(err.Error(), "soft delete") {
 		t.Fatalf("Run() error = %v, want soft delete rejection", err)
@@ -336,9 +358,10 @@ func TestCoordinatorAcknowledgesSourceWhenProcessorSkipsMessage(t *testing.T) {
 	}
 
 	result, err := coordinator.Run(context.Background(), MailEnvelope{
-		MIME:   bytesOpener("source"),
-		Trace:  MailTrace{TransactionKey: "tx-skip"},
-		Source: source,
+		MIME:                  bytesOpener("source"),
+		Trace:                 MailTrace{TransactionKey: "tx-skip"},
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -413,7 +436,8 @@ func TestCoordinatorSkipsCommittedDeliveriesOnRetry(t *testing.T) {
 		Trace: MailTrace{
 			TransactionKey: "tx-3",
 		},
-		Source: source,
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
 	}
 	if _, err := coordinator.Run(context.Background(), envelope); err != nil {
 		t.Fatalf("first Run() error = %v", err)
@@ -467,7 +491,8 @@ func TestCoordinatorReturnsErrorWhenRequiredDeliveryFails(t *testing.T) {
 		Trace: MailTrace{
 			TransactionKey: "tx-4",
 		},
-		Source: source,
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
 	})
 	if err == nil || !strings.Contains(err.Error(), "archive unavailable") {
 		t.Fatalf("Run() error = %v, want archive unavailable", err)
@@ -509,7 +534,8 @@ func TestCoordinatorFailsWhenSourceAcknowledgeFails(t *testing.T) {
 		Trace: MailTrace{
 			TransactionKey: "tx-7",
 		},
-		Source: source,
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
 	})
 	if err == nil || !strings.Contains(err.Error(), "ack failed") {
 		t.Fatalf("Run() error = %v, want ack failed", err)
@@ -559,7 +585,8 @@ func TestCoordinatorFinalizesCommittedStateWithoutReprocessing(t *testing.T) {
 		Trace: MailTrace{
 			TransactionKey: "tx-8",
 		},
-		Source: source,
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -572,6 +599,144 @@ func TestCoordinatorFinalizesCommittedStateWithoutReprocessing(t *testing.T) {
 	}
 	if source.ackCalls != 1 {
 		t.Fatalf("ackCalls = %d, want 1", source.ackCalls)
+	}
+}
+
+func TestCoordinatorRecoversWhenAckStateSaveFailsAfterPrepare(t *testing.T) {
+	t.Parallel()
+
+	store := &failSaveStore{
+		failOnSave: 3,
+		err:        errors.New("state store unavailable"),
+	}
+	source := &fakeFinalizingSource{fakeSource: &fakeSource{}}
+	consumer := &fakeConsumer{
+		receipt: DeliveryReceipt{
+			ID:       "msg-recover",
+			Consumer: "archive",
+		},
+	}
+	processor := &fakeProcessor{
+		result: ProcessedMail{
+			Trace: MailTrace{TransactionKey: "tx-recover-ack"},
+			Plan: ExecutionPlan{
+				Targets: []DeliveryTarget{{
+					Name:     "archive-main",
+					Consumer: "archive",
+					Artifact: "primary",
+					Required: true,
+				}},
+			},
+			Artifacts: map[string]MailArtifact{
+				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
+			},
+		},
+	}
+	coordinator := &Coordinator{
+		Processor: processor,
+		Store:     store,
+		Consumers: map[string]Consumer{"archive": consumer},
+	}
+	envelope := MailEnvelope{
+		MIME:                  bytesOpener("source"),
+		Trace:                 MailTrace{TransactionKey: "tx-recover-ack"},
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
+	}
+
+	if _, err := coordinator.Run(context.Background(), envelope); err == nil || !strings.Contains(err.Error(), "state store unavailable") {
+		t.Fatalf("first Run() error = %v, want save failure", err)
+	}
+	if source.ackCalls != 1 {
+		t.Fatalf("ackCalls after first run = %d, want 1", source.ackCalls)
+	}
+	if source.finalizeCalls != 0 {
+		t.Fatalf("finalizeCalls after first run = %d, want 0", source.finalizeCalls)
+	}
+	if processor.calls != 1 {
+		t.Fatalf("processor calls after first run = %d, want 1", processor.calls)
+	}
+
+	store.failOnSave = 0
+	result, err := coordinator.Run(context.Background(), envelope)
+	if err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if !result.Completed || !result.SourceAcked {
+		t.Fatalf("unexpected result after recovery: %+v", result)
+	}
+	if consumer.calls != 1 {
+		t.Fatalf("consumer calls = %d, want 1", consumer.calls)
+	}
+	if processor.calls != 1 {
+		t.Fatalf("processor calls = %d, want 1 on recovery", processor.calls)
+	}
+	if source.ackCalls != 2 {
+		t.Fatalf("ackCalls after recovery = %d, want 2", source.ackCalls)
+	}
+	if source.finalizeCalls != 1 {
+		t.Fatalf("finalizeCalls after recovery = %d, want 1", source.finalizeCalls)
+	}
+}
+
+func TestCoordinatorFinalizesRecoveredCompletedSourceWithoutReprocessing(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{
+		states: map[string]TxState{
+			"tx-complete-recover": {
+				Key: "tx-complete-recover",
+				Trace: MailTrace{
+					TransactionKey: "tx-complete-recover",
+				},
+				Plan: ExecutionPlan{
+					Targets: []DeliveryTarget{{
+						Name:     "archive-main",
+						Consumer: "archive",
+						Artifact: "primary",
+						Required: true,
+					}},
+				},
+				Deliveries: map[string]DeliveryReceipt{
+					"archive-main": {
+						Target:   "archive-main",
+						Consumer: "archive",
+						ID:       "msg-complete",
+					},
+				},
+				SourceAcked: true,
+				Completed:   true,
+			},
+		},
+	}
+	source := &fakeFinalizingSource{fakeSource: &fakeSource{}}
+	processor := &fakeProcessor{err: errors.New("processor should not run")}
+	coordinator := &Coordinator{
+		Processor: processor,
+		Store:     store,
+		Consumers: map[string]Consumer{"archive": &fakeConsumer{}},
+	}
+
+	result, err := coordinator.Run(context.Background(), MailEnvelope{
+		MIME:                  bytesOpener("source"),
+		Trace:                 MailTrace{TransactionKey: "tx-complete-recover"},
+		Source:                source,
+		SourceDeleteSemantics: provider.DeleteSemanticsHard,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !result.Completed || !result.SourceAcked {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if processor.calls != 0 {
+		t.Fatalf("processor calls = %d, want 0", processor.calls)
+	}
+	if source.ackCalls != 0 {
+		t.Fatalf("ackCalls = %d, want 0", source.ackCalls)
+	}
+	if source.finalizeCalls != 1 {
+		t.Fatalf("finalizeCalls = %d, want 1", source.finalizeCalls)
 	}
 }
 

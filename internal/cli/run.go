@@ -11,19 +11,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/mailflow"
 )
 
 func newRunCmd() *cobra.Command {
-	cfg, err := appconfig.LoadFromEnv()
-	if err != nil {
-		return newErrorCommand("run", "执行邮件发现、处理与回写流程", err)
-	}
-
-	topologyFlags := newTopologyConfigFlags(cfg)
-	pipelineFlags := newPipelineConfigFlags(cfg)
+	bootstrap := loadCommandConfigBootstrap()
+	topologyFlags := newTopologyConfigFlags(bootstrap.Config())
+	pipelineFlags := newPipelineConfigFlags(bootstrap.Config())
 	var once bool
 	var debugSaveFirst bool
 
@@ -32,7 +27,10 @@ func newRunCmd() *cobra.Command {
 		Short: "执行邮件发现、处理与回写流程",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg = topologyFlags.apply(cfg)
+			if err := bootstrap.Error(); err != nil {
+				return fmt.Errorf("run 失败: %w", err)
+			}
+			cfg := topologyFlags.apply(bootstrap.Config())
 			cfg = pipelineFlags.apply(cfg, cmd)
 
 			if err := cfg.Mail.ValidatePipelineBase(); err != nil {

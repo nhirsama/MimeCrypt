@@ -6,12 +6,12 @@ import (
 	"mimecrypt/internal/appconfig"
 )
 
-func TestBuildSourceClientsWithSessionUsesExplicitFolder(t *testing.T) {
+func TestBuildSourceClientsWithTokenSourceUsesExplicitFolder(t *testing.T) {
 	t.Parallel()
 
-	clients, err := BuildSourceClientsWithSession(testIMAPFactoryConfig(), "Archive/Sub", fakeTokenSource{})
+	clients, err := BuildSourceClientsWithTokenSource(testIMAPFactoryConfig(), "Archive/Sub", fakeTokenSource{})
 	if err != nil {
-		t.Fatalf("BuildSourceClientsWithSession() error = %v", err)
+		t.Fatalf("BuildSourceClientsWithTokenSource() error = %v", err)
 	}
 
 	reader, ok := clients.Reader.(*reader)

@@ -9,6 +9,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow/adapters"
+	"mimecrypt/internal/providers"
 )
 
 func TestBuildPushRuntimeBuildsWebhookIngressAndProducer(t *testing.T) {
@@ -52,14 +53,6 @@ func TestBuildPushRuntimeBuildsWebhookIngressAndProducer(t *testing.T) {
 	}
 	if runtime == nil || runtime.Runner == nil || runtime.Ingress == nil {
 		t.Fatalf("BuildPushRuntime() returned incomplete runtime: %+v", runtime)
-	}
-
-	ingress, ok := runtime.Ingress.(*webhookIngress)
-	if !ok {
-		t.Fatalf("Ingress type = %T, want *webhookIngress", runtime.Ingress)
-	}
-	if ingress.path != "/mail/incoming" {
-		t.Fatalf("ingress path = %q, want /mail/incoming", ingress.path)
 	}
 
 	producer, ok := runtime.Runner.Producer.(*adapters.PushProducer)
@@ -144,5 +137,37 @@ func TestBuildPushRuntimeUsesSourceScopedSpoolDirWhenStateDirShared(t *testing.T
 	producerB := runtimeB.Runner.Producer.(*adapters.PushProducer)
 	if producerA.Spool.Dir == producerB.Spool.Dir {
 		t.Fatalf("shared spool dir = %q, want isolated dirs", producerA.Spool.Dir)
+	}
+}
+
+func TestPushCapableDriversHaveIngressBuilders(t *testing.T) {
+	t.Setenv("MIMECRYPT_WEBHOOK_SECRET", "top-secret")
+
+	for _, spec := range providers.AllDriverSpecs() {
+		if spec.Source == nil {
+			continue
+		}
+		if _, ok := spec.Source.ModeSpec("push"); !ok {
+			continue
+		}
+		source := appconfig.Source{
+			Name:   spec.Name,
+			Driver: spec.Name,
+			Mode:   "push",
+		}
+		if spec.Name == "webhook" {
+			source.Webhook = &appconfig.WebhookSource{
+				ListenAddr: "127.0.0.1:0",
+				Path:       "/mail/incoming",
+				SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+			}
+		}
+		ingress, err := providers.BuildPushIngress(appconfig.Config{}, appconfig.Route{Name: "default"}, source, &adapters.PushSpool{Dir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("push-capable driver %s missing ingress builder: %v", spec.Name, err)
+		}
+		if ingress == nil {
+			t.Fatalf("push-capable driver %s returned nil ingress", spec.Name)
+		}
 	}
 }

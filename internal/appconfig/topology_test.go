@@ -113,7 +113,46 @@ func TestTopologyResolveCredentialRefRejectsUnknownExplicitCredential(t *testing
 	}
 }
 
-func TestTopologyValidateStructureRejectsSourceDriverWithoutSourceCapability(t *testing.T) {
+func TestTopologyValidateStructureRejectsUnknownCredentialKind(t *testing.T) {
+	t.Parallel()
+
+	topology := Topology{
+		Credentials: map[string]Credential{
+			"default": {Name: "default", Kind: "mystery"},
+		},
+		Sources: map[string]Source{
+			"incoming": {
+				Name:   "incoming",
+				Driver: "webhook",
+				Mode:   "push",
+				Webhook: &WebhookSource{
+					ListenAddr: "127.0.0.1:8080",
+					Path:       "/mail/incoming",
+					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+				},
+			},
+		},
+		Sinks: map[string]Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"incoming"},
+				Targets: []RouteTarget{
+					{Name: "discard", SinkRef: "discard", Required: true},
+				},
+			},
+		},
+	}
+
+	err := topology.ValidateStructure()
+	if err == nil || err.Error() != "credential default 不支持 kind: mystery" {
+		t.Fatalf("ValidateStructure() error = %v, want unknown credential kind rejection", err)
+	}
+}
+
+func TestTopologyValidateStructureAllowsUnknownSourceDriverForRuntimeValidation(t *testing.T) {
 	t.Parallel()
 
 	topology := Topology{
@@ -139,12 +178,12 @@ func TestTopologyValidateStructureRejectsSourceDriverWithoutSourceCapability(t *
 	}
 
 	err := topology.ValidateStructure()
-	if err == nil || err.Error() != "source archive 不支持 driver: file" {
-		t.Fatalf("ValidateStructure() error = %v, want unsupported source driver", err)
+	if err != nil {
+		t.Fatalf("ValidateStructure() error = %v", err)
 	}
 }
 
-func TestTopologyValidateStructureRejectsCredentialRefOnLocalSink(t *testing.T) {
+func TestTopologyValidateStructureAllowsCredentialRefOnAnySinkForRuntimeValidation(t *testing.T) {
 	t.Parallel()
 
 	topology := Topology{
@@ -176,12 +215,12 @@ func TestTopologyValidateStructureRejectsCredentialRefOnLocalSink(t *testing.T) 
 	}
 
 	err := topology.ValidateStructure()
-	if err == nil || err.Error() != "sink local 的 driver file 不接受 credential_ref" {
-		t.Fatalf("ValidateStructure() error = %v, want local sink credential_ref rejection", err)
+	if err != nil {
+		t.Fatalf("ValidateStructure() error = %v", err)
 	}
 }
 
-func TestTopologyValidateStructureRejectsDeleteSourceForSoftDeleteSource(t *testing.T) {
+func TestTopologyValidateStructureAllowsDeleteSourceWithoutDriverCapabilityCheck(t *testing.T) {
 	t.Parallel()
 
 	topology := Topology{
@@ -217,8 +256,8 @@ func TestTopologyValidateStructureRejectsDeleteSourceForSoftDeleteSource(t *test
 	}
 
 	err := topology.ValidateStructure()
-	if err == nil || err.Error() != "route default 启用 delete source 时，source archive 的 driver graph 仅支持 soft delete" {
-		t.Fatalf("ValidateStructure() error = %v, want soft delete rejection", err)
+	if err != nil {
+		t.Fatalf("ValidateStructure() error = %v", err)
 	}
 }
 
@@ -257,7 +296,43 @@ func TestTopologyValidateStructureAllowsWebhookPushSource(t *testing.T) {
 	}
 }
 
-func TestTopologyValidateStructureRejectsWebhookNonPushMode(t *testing.T) {
+func TestTopologyValidateStructureRejectsRouteWithoutRequiredTarget(t *testing.T) {
+	t.Parallel()
+
+	topology := Topology{
+		Sources: map[string]Source{
+			"incoming": {
+				Name:   "incoming",
+				Driver: "webhook",
+				Mode:   "push",
+				Webhook: &WebhookSource{
+					ListenAddr: "127.0.0.1:8080",
+					Path:       "/mail/incoming",
+					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+				},
+			},
+		},
+		Sinks: map[string]Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"incoming"},
+				Targets: []RouteTarget{
+					{Name: "discard", SinkRef: "discard"},
+				},
+			},
+		},
+	}
+
+	err := topology.ValidateStructure()
+	if err == nil || err.Error() != "route default 至少需要一个 required target" {
+		t.Fatalf("ValidateStructure() error = %v, want required target error", err)
+	}
+}
+
+func TestTopologyValidateStructureAllowsWebhookDriverNonPushModeForRuntimeValidation(t *testing.T) {
 	t.Parallel()
 
 	topology := Topology{
@@ -290,12 +365,12 @@ func TestTopologyValidateStructureRejectsWebhookNonPushMode(t *testing.T) {
 	}
 
 	err := topology.ValidateStructure()
-	if err == nil || err.Error() != "source incoming 的 driver webhook 不支持 mode: poll" {
-		t.Fatalf("ValidateStructure() error = %v, want webhook push mode rejection", err)
+	if err != nil {
+		t.Fatalf("ValidateStructure() error = %v", err)
 	}
 }
 
-func TestTopologyValidateStructureRejectsWebhookConfigOnNonWebhookDriver(t *testing.T) {
+func TestTopologyValidateStructureAllowsWebhookConfigOnNonWebhookDriverForRuntimeValidation(t *testing.T) {
 	t.Parallel()
 
 	topology := Topology{
@@ -329,7 +404,7 @@ func TestTopologyValidateStructureRejectsWebhookConfigOnNonWebhookDriver(t *test
 	}
 
 	err := topology.ValidateStructure()
-	if err == nil || err.Error() != "source archive 的 driver imap 不接受 webhook 配置" {
-		t.Fatalf("ValidateStructure() error = %v, want webhook config rejection", err)
+	if err != nil {
+		t.Fatalf("ValidateStructure() error = %v", err)
 	}
 }

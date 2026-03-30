@@ -7,18 +7,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/health"
 )
 
 func newHealthCmd() *cobra.Command {
-	cfg, err := appconfig.LoadFromEnv()
-	if err != nil {
-		return newErrorCommand("health", "检查运行环境、认证状态和 provider 连通性", err)
-	}
-
-	topologyFlags := newTopologyConfigFlags(cfg)
+	bootstrap := loadCommandConfigBootstrap()
+	topologyFlags := newTopologyConfigFlags(bootstrap.Config())
 	timeout := 30 * time.Second
 	deep := false
 
@@ -27,7 +22,10 @@ func newHealthCmd() *cobra.Command {
 		Short: "检查运行环境、缓存凭据与可选连通性状态",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			cfg = topologyFlags.apply(cfg)
+			if err := bootstrap.Error(); err != nil {
+				return fmt.Errorf("health 失败: %w", err)
+			}
+			cfg := topologyFlags.apply(bootstrap.Config())
 
 			resolved, err := flowruntime.ResolveRoutePlan(cfg, flowruntime.Selector{
 				RouteName:  topologyFlags.routeName,

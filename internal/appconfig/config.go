@@ -77,10 +77,6 @@ func LoadFromEnv() (Config, error) {
 		return Config{}, err
 	}
 	stateDir = getenvDefault("MIMECRYPT_STATE_DIR", stateDir)
-	localCfg, err := LoadLocalConfig(stateDir)
-	if err != nil {
-		return Config{}, err
-	}
 	protectSubject, err := getenvBoolDefault("MIMECRYPT_PROTECT_SUBJECT", false)
 	if err != nil {
 		return Config{}, fmt.Errorf("解析 MIMECRYPT_PROTECT_SUBJECT 失败: %w", err)
@@ -90,9 +86,6 @@ func LoadFromEnv() (Config, error) {
 		return Config{}, fmt.Errorf("解析 MIMECRYPT_AUDIT_STDOUT 失败: %w", err)
 	}
 	imapUsername := strings.TrimSpace(os.Getenv("MIMECRYPT_IMAP_USERNAME"))
-	if imapUsername == "" {
-		imapUsername = localCfg.IMAPUsername
-	}
 
 	return Config{
 		TopologyPath: getenvDefault("MIMECRYPT_TOPOLOGY_PATH", DefaultTopologyPath(stateDir)),

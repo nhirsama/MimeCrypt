@@ -8,19 +8,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/modules/list"
 	"mimecrypt/internal/provider"
 )
 
 func newListCmd() *cobra.Command {
-	cfg, err := appconfig.LoadFromEnv()
-	if err != nil {
-		return newErrorCommand("list", "列出最新邮件摘要", err)
-	}
-
-	topologyFlags := newTopologyConfigFlags(cfg)
+	bootstrap := loadCommandConfigBootstrap()
+	topologyFlags := newTopologyConfigFlags(bootstrap.Config())
 
 	cmd := &cobra.Command{
 		Use:   "list <end> | list <start> <end>",
@@ -33,7 +28,10 @@ func newListCmd() *cobra.Command {
 		}, "\n"),
 		Args: argRange(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = topologyFlags.apply(cfg)
+			if err := bootstrap.Error(); err != nil {
+				return fmt.Errorf("list 失败: %w", err)
+			}
+			cfg := topologyFlags.apply(bootstrap.Config())
 
 			start, end, err := parseLatestRange(args)
 			if err != nil {

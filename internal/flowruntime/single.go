@@ -7,6 +7,7 @@ import (
 
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/provider"
+	"mimecrypt/internal/providers"
 )
 
 type TransactionMode string
@@ -29,7 +30,7 @@ type envelopeBuilder interface {
 }
 
 func BuildSingleMessageRunner(ctx context.Context, run SourceRun, mode TransactionMode) (*SingleMessageRunner, error) {
-	sourceSpec, ok := provider.LookupSourceSpec(run.Source.Driver)
+	sourceSpec, ok := providers.LookupSourceSpec(run.Source.Driver)
 	if !ok {
 		return nil, fmt.Errorf("single message runner 不支持 source driver=%s", run.Source.Driver)
 	}

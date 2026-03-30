@@ -1,7 +1,6 @@
-package flowruntime
+package providers
 
 import (
-	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -18,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow/adapters"
 )
 
@@ -40,36 +40,58 @@ type webhookIngress struct {
 	spool              *adapters.PushSpool
 }
 
-func buildWebhookIngress(run SourceRun, spool *adapters.PushSpool) (pushIngress, error) {
-	if run.Source.Webhook == nil {
-		return nil, fmt.Errorf("source %s 缺少 webhook 配置", run.Source.Name)
+func buildWebhookIngress(_ appconfig.Config, _ appconfig.Route, source appconfig.Source, spool *adapters.PushSpool) (PushIngress, error) {
+	if err := validateWebhookSourceConfig(source); err != nil {
+		return nil, err
 	}
-	secretEnv := strings.TrimSpace(run.Source.Webhook.SecretEnv)
-	if secretEnv == "" {
-		return nil, fmt.Errorf("source %s webhook secret_env 不能为空", run.Source.Name)
-	}
+
+	secretEnv := strings.TrimSpace(source.Webhook.SecretEnv)
 	secret := []byte(os.Getenv(secretEnv))
 	if len(secret) == 0 {
-		return nil, fmt.Errorf("source %s webhook secret_env 未设置: %s", run.Source.Name, secretEnv)
+		return nil, fmt.Errorf("source %s webhook secret_env 未设置: %s", source.Name, secretEnv)
 	}
-	maxBodyBytes := run.Source.Webhook.MaxBodyBytes
+
+	maxBodyBytes := source.Webhook.MaxBodyBytes
 	if maxBodyBytes <= 0 {
 		maxBodyBytes = defaultWebhookMaxBodyBytes
 	}
-	timestampTolerance := run.Source.Webhook.TimestampTolerance
+
+	timestampTolerance := source.Webhook.TimestampTolerance
 	if timestampTolerance <= 0 {
 		timestampTolerance = defaultWebhookTimestampTolerance
 	}
 
 	return &webhookIngress{
-		sourceName:         firstNonEmpty(strings.TrimSpace(run.Source.Name), "webhook"),
-		listenAddr:         strings.TrimSpace(run.Source.Webhook.ListenAddr),
-		path:               strings.TrimSpace(run.Source.Webhook.Path),
+		sourceName:         firstNonEmpty(strings.TrimSpace(source.Name), "webhook"),
+		listenAddr:         strings.TrimSpace(source.Webhook.ListenAddr),
+		path:               strings.TrimSpace(source.Webhook.Path),
 		secret:             secret,
 		maxBodyBytes:       maxBodyBytes,
 		timestampTolerance: timestampTolerance,
 		spool:              spool,
 	}, nil
+}
+
+func validateWebhookSourceConfig(source appconfig.Source) error {
+	if source.Webhook == nil {
+		return fmt.Errorf("source %s 缺少 webhook 配置", source.Name)
+	}
+	if strings.TrimSpace(source.Webhook.ListenAddr) == "" {
+		return fmt.Errorf("source %s webhook listen addr 不能为空", source.Name)
+	}
+	if path := strings.TrimSpace(source.Webhook.Path); path == "" || !strings.HasPrefix(path, "/") {
+		return fmt.Errorf("source %s webhook path 必须以 / 开头", source.Name)
+	}
+	if strings.TrimSpace(source.Webhook.SecretEnv) == "" {
+		return fmt.Errorf("source %s webhook secret_env 不能为空", source.Name)
+	}
+	if source.Webhook.MaxBodyBytes < 0 {
+		return fmt.Errorf("source %s webhook max_body_bytes 不能小于 0", source.Name)
+	}
+	if source.Webhook.TimestampTolerance < 0 {
+		return fmt.Errorf("source %s webhook timestamp_tolerance 不能小于 0", source.Name)
+	}
+	return nil
 }
 
 func (w *webhookIngress) Run(ctx context.Context) error {
@@ -139,6 +161,15 @@ func (w *webhookIngress) handle(rw http.ResponseWriter, req *http.Request) {
 		http.Error(rw, "missing delivery id", http.StatusUnauthorized)
 		return
 	}
+	signature, ok := normalizeWebhookSignature(req.Header.Get(webhookHeaderSignature))
+	if !ok {
+		http.Error(rw, "invalid signature", http.StatusUnauthorized)
+		return
+	}
+	if req.ContentLength > 0 && req.ContentLength > w.maxBodyBytes {
+		http.Error(rw, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 
 	req.Body = http.MaxBytesReader(rw, req.Body, w.maxBodyBytes)
 	bodyPath, bodyHash, err := spoolRequestBody(req.Body)
@@ -159,7 +190,6 @@ func (w *webhookIngress) handle(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	signature := strings.TrimSpace(req.Header.Get(webhookHeaderSignature))
 	if !w.validSignatureForBodyHash(req.Method, req.URL.Path, timestamp, deliveryID, bodyHash, signature) {
 		http.Error(rw, "invalid signature", http.StatusUnauthorized)
 		return
@@ -218,11 +248,31 @@ func (w *webhookIngress) validSignature(method, path string, timestamp time.Time
 
 func (w *webhookIngress) validSignatureForBodyHash(method, path string, timestamp time.Time, deliveryID, bodyHash, signature string) bool {
 	expected := webhookSignatureForBodyHash(w.secret, w.sourceName, method, path, timestamp, deliveryID, bodyHash)
-	signature = strings.TrimPrefix(strings.TrimSpace(signature), "sha256=")
+	signature, ok := normalizeWebhookSignature(signature)
+	if !ok {
+		return false
+	}
 	if len(signature) != len(expected) {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(strings.ToLower(signature)), []byte(expected)) == 1
+}
+
+func normalizeWebhookSignature(signature string) (string, bool) {
+	signature = strings.TrimPrefix(strings.TrimSpace(signature), "sha256=")
+	if len(signature) != sha256.Size*2 {
+		return "", false
+	}
+	for _, ch := range signature {
+		switch {
+		case ch >= '0' && ch <= '9':
+		case ch >= 'a' && ch <= 'f':
+		case ch >= 'A' && ch <= 'F':
+		default:
+			return "", false
+		}
+	}
+	return strings.ToLower(signature), true
 }
 
 func webhookSignature(secret []byte, sourceName, method, path string, timestamp time.Time, deliveryID string, body []byte) string {
@@ -266,10 +316,6 @@ func withinTolerance(now, timestamp time.Time, tolerance time.Duration) bool {
 	return now.Sub(timestamp) <= tolerance
 }
 
-func extractInternetMessageID(body []byte) string {
-	return extractInternetMessageIDFromReader(bytes.NewReader(body))
-}
-
 func extractInternetMessageIDFromFile(path string) string {
 	file, err := os.Open(filepath.Clean(path))
 	if err != nil {
@@ -310,15 +356,25 @@ func spoolRequestBody(src io.Reader) (string, string, error) {
 	written, err := io.Copy(io.MultiWriter(file, hasher), src)
 	if err != nil {
 		cleanup()
-		return "", "", err
+		return "", "", fmt.Errorf("缓存 webhook 请求体失败: %w", err)
+	}
+	if written == 0 {
+		cleanup()
+		return "", "", nil
 	}
 	if err := file.Close(); err != nil {
 		_ = os.Remove(file.Name())
 		return "", "", fmt.Errorf("关闭 webhook 临时文件失败: %w", err)
 	}
-	if written == 0 {
-		_ = os.Remove(file.Name())
-		return "", "", nil
-	}
+
 	return file.Name(), hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }

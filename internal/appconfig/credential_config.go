@@ -52,7 +52,14 @@ func (c Config) WithCredential(name string, credential Credential) Config {
 	if value := strings.TrimSpace(credential.IMAPUsername); value != "" {
 		cfg.Mail.Client.IMAPUsername = value
 	}
-	cfg.Mail.Client.IMAPUsername = ResolveStoredIMAPUsernamePreferStored(cfg.Auth.StateDir, cfg.Mail.Client.IMAPUsername)
+	return cfg
+}
+
+func (c Config) WithLocalConfig(localCfg LocalConfig) Config {
+	cfg := c
+	if value := strings.TrimSpace(localCfg.IMAPUsername); value != "" {
+		cfg.Mail.Client.IMAPUsername = value
+	}
 	return cfg
 }
 

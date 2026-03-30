@@ -236,6 +236,134 @@ func TestResolveCredentialPlanAllowsExplicitScopeClearFromTopology(t *testing.T)
 	}
 }
 
+func TestResolveCredentialPlanCollectsBindingsAndAuthDrivers(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	writeCredentialTopology(t, topologyPath, appconfig.Topology{
+		DefaultCredential: "shared",
+		Credentials: map[string]appconfig.Credential{
+			"shared": {Name: "shared", Kind: "oauth"},
+			"other":  {Name: "other", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"inbox": {
+				Name:         "inbox",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "INBOX",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+			"other-source": {
+				Name:          "other-source",
+				Driver:        "graph",
+				Mode:          "poll",
+				CredentialRef: "other",
+				PollInterval:  time.Minute,
+				CycleTimeout:  2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"vault": {Name: "vault", Driver: "graph"},
+			"copy":  {Name: "copy", Driver: "imap", CredentialRef: "shared"},
+			"local": {Name: "local", Driver: "file", OutputDir: filepath.Join(stateDir, "out")},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"inbox"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "local", SinkRef: "local", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+
+	plan, err := ResolveCredentialPlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "shared")
+	if err != nil {
+		t.Fatalf("ResolveCredentialPlan() error = %v", err)
+	}
+
+	if got := strings.Join(plan.AuthDrivers, ","); got != "graph,imap" {
+		t.Fatalf("AuthDrivers = %q, want graph,imap", got)
+	}
+
+	wantBindings := []CredentialBinding{
+		{Kind: CredentialBindingSource, Name: "inbox", Driver: "imap", Implicit: true},
+		{Kind: CredentialBindingSink, Name: "copy", Driver: "imap", Implicit: false},
+		{Kind: CredentialBindingSink, Name: "vault", Driver: "graph", Implicit: true},
+	}
+	if len(plan.Bindings) != len(wantBindings) {
+		t.Fatalf("len(Bindings) = %d, want %d", len(plan.Bindings), len(wantBindings))
+	}
+	for idx, want := range wantBindings {
+		if plan.Bindings[idx] != want {
+			t.Fatalf("Bindings[%d] = %+v, want %+v", idx, plan.Bindings[idx], want)
+		}
+	}
+}
+
+func TestResolveCredentialPlanIgnoresAmbiguousImplicitBindingsWhenCredentialExplicitlySelected(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	writeCredentialTopology(t, topologyPath, appconfig.Topology{
+		Credentials: map[string]appconfig.Credential{
+			"shared": {Name: "shared", Kind: "oauth"},
+			"other":  {Name: "other", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"ambiguous": {
+				Name:         "ambiguous",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "INBOX",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"copy": {Name: "copy", Driver: "imap", CredentialRef: "shared"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"ambiguous"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "copy", SinkRef: "copy", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+
+	plan, err := ResolveCredentialPlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "shared")
+	if err != nil {
+		t.Fatalf("ResolveCredentialPlan() error = %v", err)
+	}
+
+	if got := strings.Join(plan.AuthDrivers, ","); got != "imap" {
+		t.Fatalf("AuthDrivers = %q, want imap", got)
+	}
+	if len(plan.Bindings) != 1 || plan.Bindings[0].Name != "copy" {
+		t.Fatalf("Bindings = %+v, want only explicit sink binding", plan.Bindings)
+	}
+}
+
 func writeCredentialTopology(t *testing.T, path string, topology appconfig.Topology) {
 	t.Helper()
 	content, err := json.Marshal(topology)

@@ -64,15 +64,6 @@ func ClearLocalConfig(stateDir string) error {
 	return nil
 }
 
-func ResolveStoredIMAPUsernamePreferStored(stateDir, fallback string) string {
-	fallback = strings.TrimSpace(fallback)
-	localCfg, err := LoadLocalConfig(stateDir)
-	if err == nil && strings.TrimSpace(localCfg.IMAPUsername) != "" {
-		return localCfg.IMAPUsername
-	}
-	return fallback
-}
-
 func LocalConfigPath(stateDir string) string {
 	return filepath.Join(stateDir, "config.json")
 }

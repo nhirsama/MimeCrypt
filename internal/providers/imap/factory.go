@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"mimecrypt/internal/appconfig"
-	"mimecrypt/internal/auth"
 	"mimecrypt/internal/provider"
 )
 
@@ -23,26 +22,24 @@ var _ provider.Reader = (*reader)(nil)
 var _ provider.Writer = (*writer)(nil)
 var _ provider.Reconciler = (*writer)(nil)
 var _ provider.Deleter = (*writer)(nil)
-var _ provider.DeleteSemanticReporter = (*writer)(nil)
 
-func BuildSourceClientsWithSession(cfg appconfig.Config, folder string, session provider.Session) (provider.SourceClients, error) {
-	if session == nil {
-		return provider.SourceClients{}, fmt.Errorf("session 不能为空")
+func BuildSourceClientsWithTokenSource(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SourceClients, error) {
+	if tokenSource == nil {
+		return provider.SourceClients{}, fmt.Errorf("token source 不能为空")
 	}
 
-	imapClient, err := newClient(cfg.Mail.Client, cfg.Auth, folder, session, nil)
+	imapClient, err := newClient(cfg.Mail.Client, cfg.Auth, folder, tokenSource, nil)
 	if err != nil {
 		return provider.SourceClients{}, err
 	}
 
 	return provider.SourceClients{
-		Session: session,
 		Reader:  &reader{client: imapClient},
 		Deleter: &writer{client: imapClient},
 	}, nil
 }
 
-func NewWriterClients(cfg appconfig.Config, folder string, tokenSource provider.Session) (provider.SinkClients, error) {
+func NewWriterClients(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SinkClients, error) {
 	authCfg := cfg.Auth
 	authCfg.GraphScopes = nil
 	authCfg.EWSScopes = nil
@@ -54,7 +51,6 @@ func NewWriterClients(cfg appconfig.Config, folder string, tokenSource provider.
 
 	writer := &writer{client: imapClient}
 	return provider.SinkClients{
-		Session:    tokenSource,
 		Reader:     &reader{client: imapClient},
 		Writer:     writer,
 		Reconciler: writer,
@@ -122,10 +118,3 @@ func (w *writer) DeleteMessage(ctx context.Context, source provider.MessageRef) 
 	}
 	return w.client.deleteOriginalIfExists(ctx, source)
 }
-
-func (*writer) DeleteSemantics() provider.DeleteSemantics {
-	return provider.DeleteSemanticsHard
-}
-
-// Keep compiler honest about the auth session interface used by the IMAP client.
-var _ provider.Session = (*auth.Session)(nil)

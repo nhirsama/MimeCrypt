@@ -12,30 +12,12 @@ import (
 )
 
 type fakeSession struct {
-	loadToken   provider.Token
-	loadErr     error
-	accessToken string
-	accessErr   error
-}
-
-func (f fakeSession) Login(context.Context, io.Writer) (provider.Token, error) {
-	return provider.Token{}, nil
-}
-
-func (f fakeSession) AccessToken(context.Context) (string, error) {
-	return f.accessToken, f.accessErr
-}
-
-func (f fakeSession) AccessTokenForScopes(context.Context, []string) (string, error) {
-	return f.accessToken, f.accessErr
+	loadToken provider.Token
+	loadErr   error
 }
 
 func (f fakeSession) LoadCachedToken() (provider.Token, error) {
 	return f.loadToken, f.loadErr
-}
-
-func (f fakeSession) Logout() error {
-	return nil
 }
 
 type fakeReader struct {

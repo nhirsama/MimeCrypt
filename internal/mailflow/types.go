@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"mimecrypt/internal/provider"
 )
 
 var (
@@ -95,6 +97,11 @@ type SourceHandle interface {
 	Acknowledge(ctx context.Context) error
 }
 
+// SourceAckFinalizer 表示来源支持在事务状态持久化后完成确认清理。
+type SourceAckFinalizer interface {
+	FinalizeAcknowledge(ctx context.Context) error
+}
+
 // DeletableSource 表示来源支持显式删除原邮件。
 type DeletableSource interface {
 	Delete(ctx context.Context) error
@@ -102,9 +109,10 @@ type DeletableSource interface {
 
 // MailEnvelope 表示一封进入系统的原始邮件。
 type MailEnvelope struct {
-	MIME   MIMEOpener
-	Trace  MailTrace
-	Source SourceHandle
+	MIME                  MIMEOpener
+	Trace                 MailTrace
+	Source                SourceHandle
+	SourceDeleteSemantics provider.DeleteSemantics
 }
 
 func (e MailEnvelope) Validate() error {
@@ -173,15 +181,22 @@ func (p ExecutionPlan) Validate() error {
 		return fmt.Errorf("至少需要一个消费目标")
 	}
 	seen := make(map[string]struct{}, len(p.Targets))
+	hasRequired := false
 	for _, target := range p.Targets {
 		if err := target.Validate(); err != nil {
 			return err
+		}
+		if target.Required {
+			hasRequired = true
 		}
 		key := target.Key()
 		if _, exists := seen[key]; exists {
 			return fmt.Errorf("重复的消费目标: %s", key)
 		}
 		seen[key] = struct{}{}
+	}
+	if !hasRequired {
+		return fmt.Errorf("至少需要一个 required 消费目标")
 	}
 	return nil
 }

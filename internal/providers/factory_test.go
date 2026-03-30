@@ -36,7 +36,7 @@ func TestSessionAuthConfigForDriversUsesLeastPrivilegeUnion(t *testing.T) {
 	}
 }
 
-func TestBuildSourceClientsWithSessionUsesExplicitDriver(t *testing.T) {
+func TestBuildSourceClientsUsesExplicitDriver(t *testing.T) {
 	t.Parallel()
 
 	cfg := testProviderConfig(t)
@@ -45,9 +45,9 @@ func TestBuildSourceClientsWithSessionUsesExplicitDriver(t *testing.T) {
 		t.Fatalf("NewSession() error = %v", err)
 	}
 
-	clients, err := BuildSourceClientsWithSession(cfg, "imap", "INBOX", session)
+	clients, err := BuildSourceClients(cfg, "imap", "INBOX", session)
 	if err != nil {
-		t.Fatalf("BuildSourceClientsWithSession() error = %v", err)
+		t.Fatalf("BuildSourceClients() error = %v", err)
 	}
 	if got := reflect.TypeOf(clients.Reader).String(); got != "*imap.reader" {
 		t.Fatalf("reader type = %s, want *imap.reader", got)
@@ -58,8 +58,12 @@ func TestBuildSinkClientsUsesExplicitDriver(t *testing.T) {
 	t.Parallel()
 
 	cfg := testProviderConfig(t)
+	session, err := auth.NewSession(SessionAuthConfigForDrivers(cfg, "ews"), nil)
+	if err != nil {
+		t.Fatalf("NewSession() error = %v", err)
+	}
 
-	clients, err := BuildSinkClients(cfg, "ews", "")
+	clients, err := BuildSinkClients(cfg, "ews", "", session)
 	if err != nil {
 		t.Fatalf("BuildSinkClients() error = %v", err)
 	}
@@ -79,7 +83,7 @@ func TestBuildSinkClientsRejectsLocalConsumerDriver(t *testing.T) {
 
 	cfg := testProviderConfig(t)
 
-	_, err := BuildSinkClients(cfg, "file", "")
+	_, err := BuildSinkClients(cfg, "file", "", nil)
 	if err == nil || err.Error() != "sink driver file 未提供 provider clients" {
 		t.Fatalf("BuildSinkClients() error = %v, want local consumer rejection", err)
 	}
@@ -131,9 +135,9 @@ func TestBuildSinkClientsGraphHealthUsesGraphScopes(t *testing.T) {
 		t.Fatalf("StoreToken() error = %v", err)
 	}
 
-	clients, err := BuildSinkClientsWithSession(cfg, "graph", "", session)
+	clients, err := BuildSinkClients(cfg, "graph", "", session)
 	if err != nil {
-		t.Fatalf("BuildSinkClientsWithSession() error = %v", err)
+		t.Fatalf("BuildSinkClients() error = %v", err)
 	}
 	if clients.Health == nil {
 		t.Fatalf("Health = nil")

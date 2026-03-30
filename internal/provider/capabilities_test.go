@@ -1,50 +1,23 @@
-package provider
+package provider_test
 
-import "testing"
+import (
+	"testing"
 
-func TestLookupDriverSpecReturnsBuiltins(t *testing.T) {
-	t.Parallel()
-
-	imap, ok := LookupDriverSpec("imap")
-	if !ok {
-		t.Fatalf("LookupDriverSpec(imap) = missing")
-	}
-	if imap.Source == nil || imap.Sink == nil {
-		t.Fatalf("imap spec = %+v, want source and sink support", imap)
-	}
-	if imap.Source.DeleteSemantics != DeleteSemanticsHard {
-		t.Fatalf("imap delete semantics = %q, want hard", imap.Source.DeleteSemantics)
-	}
-	if !imap.Auth.IMAP || imap.Source.ProbeKind != ProviderProbeFolderList {
-		t.Fatalf("imap auth/probe = %+v / %q", imap.Auth, imap.Source.ProbeKind)
-	}
-
-	graph, ok := LookupDriverSpec("graph")
-	if !ok {
-		t.Fatalf("LookupDriverSpec(graph) = missing")
-	}
-	if graph.Source == nil || graph.Source.DeleteSemantics != DeleteSemanticsSoft {
-		t.Fatalf("graph source spec = %+v, want soft delete source", graph.Source)
-	}
-	if !graph.Auth.Graph || graph.Source.ProbeKind != ProviderProbeIdentity {
-		t.Fatalf("graph auth/probe = %+v / %q", graph.Auth, graph.Source.ProbeKind)
-	}
-
-	file, ok := LookupDriverSpec("file")
-	if !ok {
-		t.Fatalf("LookupDriverSpec(file) = missing")
-	}
-	if file.Source != nil || file.Sink == nil || !file.Sink.LocalConsumer || file.Sink.LocalConsumerKind != LocalConsumerFile {
-		t.Fatalf("file spec = %+v, want local sink only", file)
-	}
-}
+	"mimecrypt/internal/provider"
+	"mimecrypt/internal/providers"
+)
 
 func TestSourceSpecModeSpecNormalizesMode(t *testing.T) {
 	t.Parallel()
 
-	spec, ok := LookupSourceSpec("imap")
-	if !ok {
-		t.Fatalf("LookupSourceSpec(imap) = missing")
+	spec := provider.SourceSpec{
+		Modes: map[string]provider.SourceModeSpec{
+			"poll": {
+				RequiresStatePath:    true,
+				RequiresPollInterval: true,
+				RequiresCycleTimeout: true,
+			},
+		},
 	}
 
 	mode, ok := spec.ModeSpec("POLL")
@@ -56,10 +29,24 @@ func TestSourceSpecModeSpecNormalizesMode(t *testing.T) {
 	}
 }
 
-func TestLookupDriverSpecReturnsWebhookPushSourceOnly(t *testing.T) {
+func TestBuiltinDriverSpecsFromRegistry(t *testing.T) {
 	t.Parallel()
 
-	webhook, ok := LookupDriverSpec("webhook")
+	imap, ok := providers.LookupDriverSpec("imap")
+	if !ok {
+		t.Fatalf("LookupDriverSpec(imap) = missing")
+	}
+	if imap.Source == nil || imap.Sink == nil {
+		t.Fatalf("imap spec = %+v, want source and sink support", imap)
+	}
+	if imap.Source.DeleteSemantics != provider.DeleteSemanticsHard {
+		t.Fatalf("imap delete semantics = %q, want hard", imap.Source.DeleteSemantics)
+	}
+	if !imap.Auth.IMAP || imap.Source.ProbeKind != provider.ProviderProbeFolderList {
+		t.Fatalf("imap auth/probe = %+v / %q", imap.Auth, imap.Source.ProbeKind)
+	}
+
+	webhook, ok := providers.LookupDriverSpec("webhook")
 	if !ok {
 		t.Fatalf("LookupDriverSpec(webhook) = missing")
 	}
@@ -69,13 +56,7 @@ func TestLookupDriverSpecReturnsWebhookPushSourceOnly(t *testing.T) {
 	if webhook.Source == nil {
 		t.Fatalf("webhook source spec = nil")
 	}
-	if webhook.Source.RequiresCredential {
-		t.Fatalf("webhook source requires credential unexpectedly")
-	}
 	if _, ok := webhook.Source.ModeSpec("push"); !ok {
 		t.Fatalf("webhook ModeSpec(push) = missing")
-	}
-	if _, ok := webhook.Source.ModeSpec("poll"); ok {
-		t.Fatalf("webhook ModeSpec(poll) should be unsupported")
 	}
 }

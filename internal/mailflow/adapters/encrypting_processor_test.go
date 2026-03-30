@@ -10,7 +10,6 @@ import (
 
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/modules/audit"
-	"mimecrypt/internal/modules/backup"
 	"mimecrypt/internal/modules/encrypt"
 )
 
@@ -54,35 +53,6 @@ func (e *fakeMailEncryptor) RunFromOpenerContext(_ context.Context, open encrypt
 	return e.result, nil
 }
 
-type fakeBackupper struct {
-	req     backup.Request
-	err     error
-	content string
-	openErr error
-}
-
-func (b *fakeBackupper) Run(req backup.Request) (backup.Result, error) {
-	b.req = req
-	if b.err != nil {
-		return backup.Result{}, b.err
-	}
-	if req.CiphertextOpener != nil {
-		reader, err := req.CiphertextOpener()
-		if err != nil {
-			b.openErr = err
-			return backup.Result{}, err
-		}
-		defer reader.Close()
-		data, err := io.ReadAll(reader)
-		if err != nil {
-			b.openErr = err
-			return backup.Result{}, err
-		}
-		b.content = string(data)
-	}
-	return backup.Result{Path: "/tmp/backup.pgp"}, nil
-}
-
 type fakeAuditor struct {
 	events []audit.Event
 }
@@ -96,21 +66,26 @@ func TestEncryptingProcessorBuildsProcessedMail(t *testing.T) {
 	t.Parallel()
 
 	auditor := &fakeAuditor{}
-	backupper := &fakeBackupper{}
 	processor := &EncryptingProcessor{
 		Encryptor: &fakeMailEncryptor{
 			result: encrypt.Result{Encrypted: true, Format: "pgp-mime"},
 		},
-		Backupper: backupper,
-		Auditor:   auditor,
-		BackupDir: t.TempDir(),
+		Auditor: auditor,
 		StaticPlan: mailflow.ExecutionPlan{
-			Targets: []mailflow.DeliveryTarget{{
-				Name:     "archive-main",
-				Consumer: "archive",
-				Artifact: "primary",
-				Required: true,
-			}},
+			Targets: []mailflow.DeliveryTarget{
+				{
+					Name:     "archive-main",
+					Consumer: "archive",
+					Artifact: "primary",
+					Required: true,
+				},
+				{
+					Name:     "backup",
+					Consumer: "backup",
+					Artifact: "backup",
+					Required: true,
+				},
+			},
 		},
 	}
 
@@ -131,12 +106,6 @@ func TestEncryptingProcessorBuildsProcessedMail(t *testing.T) {
 	if result.Trace.Attributes["format"] != "pgp-mime" {
 		t.Fatalf("format attr = %q, want pgp-mime", result.Trace.Attributes["format"])
 	}
-	if result.Trace.Attributes["backup_path"] == "" {
-		t.Fatalf("backup_path not recorded")
-	}
-	if backupper.content != "armored" {
-		t.Fatalf("backup content = %q, want armored", backupper.content)
-	}
 	reader, err := result.Artifacts["primary"].MIME()
 	if err != nil {
 		t.Fatalf("artifact MIME() error = %v", err)
@@ -148,6 +117,18 @@ func TestEncryptingProcessorBuildsProcessedMail(t *testing.T) {
 	_ = reader.Close()
 	if string(data) != "encrypted-mime" {
 		t.Fatalf("artifact data = %q, want encrypted-mime", string(data))
+	}
+	backupReader, err := result.Artifacts["backup"].MIME()
+	if err != nil {
+		t.Fatalf("backup artifact MIME() error = %v", err)
+	}
+	backupData, err := io.ReadAll(backupReader)
+	if err != nil {
+		t.Fatalf("ReadAll(backup) error = %v", err)
+	}
+	_ = backupReader.Close()
+	if string(backupData) != "armored" {
+		t.Fatalf("backup artifact data = %q, want armored", string(backupData))
 	}
 	if len(auditor.events) == 0 {
 		t.Fatalf("expected audit events")
@@ -274,7 +255,6 @@ func TestEncryptingProcessorCleanupRemovesWorkDir(t *testing.T) {
 func TestEncryptingProcessorUsesDedicatedBackupEncryptorWhenConfigured(t *testing.T) {
 	t.Parallel()
 
-	backupper := &fakeBackupper{}
 	processor := &EncryptingProcessor{
 		Encryptor: &fakeMailEncryptor{
 			result: encrypt.Result{Encrypted: true, Format: "pgp-mime"},
@@ -283,19 +263,25 @@ func TestEncryptingProcessorUsesDedicatedBackupEncryptorWhenConfigured(t *testin
 			result:        encrypt.Result{Encrypted: true, Format: "pgp-mime"},
 			armoredOutput: "backup-armored",
 		},
-		Backupper: backupper,
-		BackupDir: t.TempDir(),
 		StaticPlan: mailflow.ExecutionPlan{
-			Targets: []mailflow.DeliveryTarget{{
-				Name:     "archive-main",
-				Consumer: "archive",
-				Artifact: "primary",
-				Required: true,
-			}},
+			Targets: []mailflow.DeliveryTarget{
+				{
+					Name:     "archive-main",
+					Consumer: "archive",
+					Artifact: "primary",
+					Required: true,
+				},
+				{
+					Name:     "backup",
+					Consumer: "backup",
+					Artifact: "backup",
+					Required: true,
+				},
+			},
 		},
 	}
 
-	_, err := processor.Process(context.Background(), mailflow.MailEnvelope{
+	result, err := processor.Process(context.Background(), mailflow.MailEnvelope{
 		MIME: func() (io.ReadCloser, error) {
 			return io.NopCloser(strings.NewReader("source-mime")), nil
 		},
@@ -304,7 +290,16 @@ func TestEncryptingProcessorUsesDedicatedBackupEncryptorWhenConfigured(t *testin
 	if err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
-	if backupper.content != "backup-armored" {
-		t.Fatalf("backup content = %q, want backup-armored", backupper.content)
+	reader, err := result.Artifacts["backup"].MIME()
+	if err != nil {
+		t.Fatalf("backup artifact MIME() error = %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll(backup) error = %v", err)
+	}
+	_ = reader.Close()
+	if string(data) != "backup-armored" {
+		t.Fatalf("backup artifact data = %q, want backup-armored", string(data))
 	}
 }

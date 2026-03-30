@@ -8,8 +8,12 @@ import (
 	"mimecrypt/internal/provider"
 )
 
+type Session interface {
+	Login(context.Context, io.Writer) (provider.Token, error)
+}
+
 type Service struct {
-	Session       provider.Session
+	Session       Session
 	IdentityProbe func(context.Context) (provider.User, error)
 	StateDir      string
 }

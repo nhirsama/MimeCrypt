@@ -13,10 +13,11 @@ import (
 )
 
 type PushProducer struct {
-	Name   string
-	Driver string
-	Store  mailflow.StoreRef
-	Spool  *PushSpool
+	Name            string
+	Driver          string
+	Store           mailflow.StoreRef
+	Spool           *PushSpool
+	DeleteSemantics provider.DeleteSemantics
 
 	mu       sync.Mutex
 	requeued bool
@@ -62,6 +63,7 @@ func (p *PushProducer) Next(context.Context) (mailflow.MailEnvelope, error) {
 			SourceStore:       p.Store,
 			Attributes:        cloneAttributes(message.Meta.Attributes),
 		},
+		SourceDeleteSemantics: p.DeleteSemantics,
 		Source: &pushSourceHandle{
 			key:   message.Key,
 			spool: p.Spool,
@@ -86,13 +88,16 @@ func (h *pushSourceHandle) Acknowledge(context.Context) error {
 	if h == nil || h.spool == nil {
 		return fmt.Errorf("push source handle 未配置")
 	}
-	return h.spool.Ack(h.key)
+	return h.spool.PrepareAck(h.key)
+}
+
+func (h *pushSourceHandle) FinalizeAcknowledge(context.Context) error {
+	if h == nil || h.spool == nil {
+		return fmt.Errorf("push source handle 未配置")
+	}
+	return h.spool.FinalizeAck(h.key)
 }
 
 func (*pushSourceHandle) Delete(context.Context) error {
 	return fmt.Errorf("push 来源不支持删除")
-}
-
-func (*pushSourceHandle) DeleteSemantics() provider.DeleteSemantics {
-	return provider.DeleteSemanticsUnknown
 }

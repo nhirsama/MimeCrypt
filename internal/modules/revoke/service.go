@@ -19,6 +19,7 @@ type Service struct {
 	RemoteRevoker    RemoteRevoker
 	ClearLocal       func() error
 	Force            bool
+	RequireRemote    bool
 	RemotePrepareErr error
 }
 
@@ -35,11 +36,13 @@ func (s *Service) Run(ctx context.Context) error {
 
 	var errs []error
 
-	if err := s.runRemote(ctx); err != nil {
-		if !s.Force {
-			return err
+	if s.RequireRemote {
+		if err := s.runRemote(ctx); err != nil {
+			if !s.Force {
+				return err
+			}
+			errs = append(errs, fmt.Errorf("远端吊销未完成，已继续清理本地凭据: %w", err))
 		}
-		errs = append(errs, fmt.Errorf("远端吊销未完成，已继续清理本地凭据: %w", err))
 	}
 
 	if err := s.Session.Logout(); err != nil {

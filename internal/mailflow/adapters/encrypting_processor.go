@@ -10,17 +10,11 @@ import (
 
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/modules/audit"
-	"mimecrypt/internal/modules/backup"
 	"mimecrypt/internal/modules/encrypt"
-	"mimecrypt/internal/provider"
 )
 
 type MIMEEncryptor interface {
 	RunFromOpenerContext(ctx context.Context, open encrypt.MIMEOpenFunc, armoredOut, mimeOut io.Writer) (encrypt.Result, error)
-}
-
-type Backupper interface {
-	Run(req backup.Request) (backup.Result, error)
 }
 
 type Auditor interface {
@@ -33,13 +27,13 @@ type PlanResolver func(trace mailflow.MailTrace) (mailflow.ExecutionPlan, error)
 type EncryptingProcessor struct {
 	Encryptor       MIMEEncryptor
 	BackupEncryptor MIMEEncryptor
-	Backupper       Backupper
 	Auditor         Auditor
 	WorkDir         string
-	BackupDir       string
 	StaticPlan      mailflow.ExecutionPlan
 	PlanResolve     PlanResolver
 }
+
+const backupArtifactName = "backup"
 
 func (p *EncryptingProcessor) Process(ctx context.Context, mail mailflow.MailEnvelope) (mailflow.ProcessedMail, error) {
 	if err := mail.Validate(); err != nil {
@@ -112,10 +106,23 @@ func (p *EncryptingProcessor) Process(ctx context.Context, mail mailflow.MailEnv
 	}
 	trace.Attributes["format"] = result.Format
 
-	if strings.TrimSpace(p.BackupDir) != "" && p.Backupper != nil {
-		backupOpener := func() (io.ReadCloser, error) {
-			return os.Open(armoredFile.Name())
-		}
+	if err := p.record(trace, "mailflow_process_completed", result.Format, "", result.Encrypted, result.AlreadyEncrypted); err != nil {
+		return mailflow.ProcessedMail{}, err
+	}
+
+	artifacts := map[string]mailflow.MailArtifact{
+		"primary": {
+			Name: "primary",
+			MIME: func() (io.ReadCloser, error) {
+				return os.Open(encryptedFile.Name())
+			},
+			Attributes: map[string]string{
+				"format": result.Format,
+			},
+		},
+	}
+	if needsBackupArtifact(plan) {
+		backupPath := armoredFile.Name()
 		if p.BackupEncryptor != nil {
 			backupFile, err := createTempFile(dir, "backup-*.pgp")
 			if err != nil {
@@ -131,45 +138,24 @@ func (p *EncryptingProcessor) Process(ctx context.Context, mail mailflow.MailEnv
 				_ = p.record(trace, "mailflow_process_failed", result.Format, err.Error(), result.Encrypted, result.AlreadyEncrypted)
 				return mailflow.ProcessedMail{}, fmt.Errorf("关闭 backup 文件失败: %w", err)
 			}
-			backupPath := backupFile.Name()
-			backupOpener = func() (io.ReadCloser, error) {
+			backupPath = backupFile.Name()
+		}
+		artifacts[backupArtifactName] = mailflow.MailArtifact{
+			Name: backupArtifactName,
+			MIME: func() (io.ReadCloser, error) {
 				return os.Open(backupPath)
-			}
+			},
+			Attributes: map[string]string{
+				"format": "pgp",
+			},
 		}
-		backupResult, err := p.Backupper.Run(backup.Request{
-			Message:          toProviderMessage(trace),
-			CiphertextOpener: backupOpener,
-			Dir:              p.BackupDir,
-		})
-		if err != nil {
-			_ = p.record(trace, "mailflow_process_failed", result.Format, err.Error(), result.Encrypted, result.AlreadyEncrypted)
-			return mailflow.ProcessedMail{}, err
-		}
-		trace.Attributes["backup_path"] = backupResult.Path
-		if err := p.record(trace, "mailflow_backup_saved", result.Format, "", result.Encrypted, result.AlreadyEncrypted); err != nil {
-			return mailflow.ProcessedMail{}, err
-		}
-	}
-
-	if err := p.record(trace, "mailflow_process_completed", result.Format, "", result.Encrypted, result.AlreadyEncrypted); err != nil {
-		return mailflow.ProcessedMail{}, err
 	}
 
 	cleanupNow = false
 	return mailflow.ProcessedMail{
-		Trace: trace,
-		Plan:  plan,
-		Artifacts: map[string]mailflow.MailArtifact{
-			"primary": {
-				Name: "primary",
-				MIME: func() (io.ReadCloser, error) {
-					return os.Open(encryptedFile.Name())
-				},
-				Attributes: map[string]string{
-					"format": result.Format,
-				},
-			},
-		},
+		Trace:     trace,
+		Plan:      plan,
+		Artifacts: artifacts,
 		Cleanup: func() error {
 			return os.RemoveAll(dir)
 		},
@@ -237,11 +223,11 @@ func ensureAttributes(trace *mailflow.MailTrace) error {
 	return nil
 }
 
-func toProviderMessage(trace mailflow.MailTrace) provider.Message {
-	return provider.Message{
-		ID:                firstNonEmpty(trace.SourceMessageID, trace.TransactionKey),
-		InternetMessageID: trace.InternetMessageID,
-		ParentFolderID:    trace.SourceFolderID,
-		ReceivedDateTime:  trace.ReceivedAt,
+func needsBackupArtifact(plan mailflow.ExecutionPlan) bool {
+	for _, target := range plan.Targets {
+		if strings.EqualFold(strings.TrimSpace(target.Artifact), backupArtifactName) {
+			return true
+		}
 	}
+	return false
 }

@@ -6,25 +6,23 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/flowruntime"
 )
 
 func newDownloadCmd() *cobra.Command {
-	cfg, err := appconfig.LoadFromEnv()
-	if err != nil {
-		return newErrorCommand("download", "按邮件 ID 下载原始 MIME", err)
-	}
-
-	topologyFlags := newTopologyConfigFlags(cfg)
-	outputDir := cfg.Mail.Pipeline.OutputDir
+	bootstrap := loadCommandConfigBootstrap()
+	topologyFlags := newTopologyConfigFlags(bootstrap.Config())
+	outputDir := bootstrap.Config().Mail.Pipeline.OutputDir
 
 	cmd := &cobra.Command{
 		Use:   "download <message-id>",
 		Short: "按邮件标识下载原始 MIME",
 		Args:  exactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg = topologyFlags.apply(cfg)
+			if err := bootstrap.Error(); err != nil {
+				return fmt.Errorf("download 失败: %w", err)
+			}
+			cfg := topologyFlags.apply(bootstrap.Config())
 			cfg.Mail.Pipeline.OutputDir = outputDir
 
 			if cfg.Mail.Pipeline.OutputDir == "" {

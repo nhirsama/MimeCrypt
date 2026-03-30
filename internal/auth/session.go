@@ -47,7 +47,7 @@ type Session struct {
 	store        *tokenStore
 }
 
-var _ provider.Session = (*Session)(nil)
+var _ provider.TokenSource = (*Session)(nil)
 
 var sessionStoreLocks sync.Map
 

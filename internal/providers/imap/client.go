@@ -27,11 +27,11 @@ type client struct {
 	username      string
 	defaultFolder string
 	scopes        []string
-	tokenSource   provider.Session
+	tokenSource   provider.TokenSource
 	dialTLS       dialTLSFunc
 }
 
-func newClient(cfg appconfig.MailClientConfig, authCfg appconfig.AuthConfig, defaultFolder string, tokenSource provider.Session, dialTLS dialTLSFunc) (*client, error) {
+func newClient(cfg appconfig.MailClientConfig, authCfg appconfig.AuthConfig, defaultFolder string, tokenSource provider.TokenSource, dialTLS dialTLSFunc) (*client, error) {
 	if err := cfg.ValidateIMAP(); err != nil {
 		return nil, err
 	}

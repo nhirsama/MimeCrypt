@@ -191,7 +191,7 @@ func (s *PushSpool) ClaimNext() (ClaimedPushMessage, bool, error) {
 	return ClaimedPushMessage{}, false, nil
 }
 
-func (s *PushSpool) Ack(key string) error {
+func (s *PushSpool) PrepareAck(key string) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
 		return fmt.Errorf("push key 不能为空")
@@ -219,7 +219,26 @@ func (s *PushSpool) Ack(key string) error {
 	}); err != nil && !os.IsExist(err) {
 		return fmt.Errorf("写入 push seen marker 失败: %w", err)
 	}
+	return nil
+}
 
+func (s *PushSpool) FinalizeAck(key string) error {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return fmt.Errorf("push key 不能为空")
+	}
+
+	if err := s.ensureDirs(); err != nil {
+		return err
+	}
+
+	processingPath := s.processingPath(key)
+	if _, err := os.Stat(processingPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("读取 push processing 消息失败: %w", err)
+	}
 	if err := os.RemoveAll(processingPath); err != nil {
 		return fmt.Errorf("删除 push processing 消息失败: %w", err)
 	}

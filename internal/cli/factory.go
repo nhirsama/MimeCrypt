@@ -8,7 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
+	"mimecrypt/internal/provider"
+	"mimecrypt/internal/providers"
 )
 
 func newErrorCommand(use, short string, err error) *cobra.Command {
@@ -19,6 +22,27 @@ func newErrorCommand(use, short string, err error) *cobra.Command {
 			return err
 		},
 	}
+}
+
+type commandConfigBootstrap struct {
+	cfg appconfig.Config
+	err error
+}
+
+func loadCommandConfigBootstrap() commandConfigBootstrap {
+	cfg, err := appconfig.LoadFromEnv()
+	return commandConfigBootstrap{
+		cfg: cfg,
+		err: err,
+	}
+}
+
+func (b commandConfigBootstrap) Config() appconfig.Config {
+	return b.cfg
+}
+
+func (b commandConfigBootstrap) Error() error {
+	return b.err
 }
 
 type mailflowSummary struct {
@@ -50,8 +74,12 @@ func summarizeMailflowResult(result mailflow.Result) (mailflowSummary, error) {
 	summary.Encrypted = true
 
 	for _, receipt := range result.Deliveries {
-		switch strings.TrimSpace(receipt.Consumer) {
-		case "local-output":
+		switch {
+		case isBackupReceipt(receipt):
+			if summary.BackupPath == "" {
+				summary.BackupPath = receipt.ID
+			}
+		case isLocalOutputReceipt(receipt):
 			summary.SavedOutput = true
 			summary.Path = receipt.ID
 			if summary.Path != "" {
@@ -61,7 +89,7 @@ func summarizeMailflowResult(result mailflow.Result) (mailflowSummary, error) {
 				}
 				summary.Bytes = info.Size()
 			}
-		case "write-back":
+		case isWriteBackReceipt(receipt):
 			summary.WroteBack = true
 			summary.Verified = summary.Verified || receipt.Verified
 		}
@@ -78,6 +106,45 @@ func summarizeMailflowResult(result mailflow.Result) (mailflowSummary, error) {
 	}
 
 	return summary, nil
+}
+
+func isBackupReceipt(receipt mailflow.DeliveryReceipt) bool {
+	driver := strings.TrimSpace(receipt.Store.Driver)
+	if driver == "" {
+		return false
+	}
+	if spec, ok := providers.LookupSinkSpec(driver); ok {
+		return spec.LocalConsumer && spec.LocalConsumerKind == provider.LocalConsumerBackup
+	}
+	return strings.EqualFold(driver, "backup")
+}
+
+func isLocalOutputReceipt(receipt mailflow.DeliveryReceipt) bool {
+	if strings.EqualFold(strings.TrimSpace(receipt.Consumer), "local-output") {
+		return true
+	}
+	driver := strings.TrimSpace(receipt.Store.Driver)
+	if driver == "" {
+		return false
+	}
+	if spec, ok := providers.LookupSinkSpec(driver); ok {
+		return spec.LocalConsumer && spec.LocalConsumerKind == provider.LocalConsumerFile
+	}
+	return strings.EqualFold(driver, "file")
+}
+
+func isWriteBackReceipt(receipt mailflow.DeliveryReceipt) bool {
+	if strings.EqualFold(strings.TrimSpace(receipt.Consumer), "write-back") {
+		return true
+	}
+	driver := strings.TrimSpace(receipt.Store.Driver)
+	if driver == "" {
+		return false
+	}
+	if spec, ok := providers.LookupSinkSpec(driver); ok {
+		return !spec.LocalConsumer
+	}
+	return !strings.EqualFold(driver, "file")
 }
 
 func summarizeSingleMessageResult(result mailflow.Result) (mailflowSummary, error) {

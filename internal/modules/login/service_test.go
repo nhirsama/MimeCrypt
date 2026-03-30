@@ -25,13 +25,6 @@ func (f *fakeSession) Login(context.Context, io.Writer) (provider.Token, error) 
 	return f.loginToken, nil
 }
 
-func (*fakeSession) AccessToken(context.Context) (string, error) { return "", nil }
-func (*fakeSession) AccessTokenForScopes(context.Context, []string) (string, error) {
-	return "", nil
-}
-func (*fakeSession) LoadCachedToken() (provider.Token, error) { return provider.Token{}, nil }
-func (*fakeSession) Logout() error                            { return nil }
-
 func TestServiceRunReturnsIdentityProbeResult(t *testing.T) {
 	t.Parallel()
 

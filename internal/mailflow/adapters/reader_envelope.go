@@ -12,12 +12,13 @@ import (
 
 // ReaderEnvelopeBuilder 将 provider.Reader 暴露的单封邮件元数据转换为 mailflow.MailEnvelope。
 type ReaderEnvelopeBuilder struct {
-	Name    string
-	Driver  string
-	Folder  string
-	Store   mailflow.StoreRef
-	Reader  provider.Reader
-	Deleter provider.Deleter
+	Name            string
+	Driver          string
+	Folder          string
+	Store           mailflow.StoreRef
+	Reader          provider.Reader
+	Deleter         provider.Deleter
+	DeleteSemantics provider.DeleteSemantics
 }
 
 func (b *ReaderEnvelopeBuilder) EnvelopeForMessage(ctx context.Context, message provider.Message) (mailflow.MailEnvelope, error) {
@@ -43,6 +44,7 @@ func (b *ReaderEnvelopeBuilder) EnvelopeForMessage(ctx context.Context, message 
 			ReceivedAt:        message.ReceivedDateTime,
 			SourceStore:       b.Store,
 		},
+		SourceDeleteSemantics: b.DeleteSemantics,
 		Source: &singleMessageSourceHandle{
 			message: ref,
 			deleter: b.Deleter,
@@ -86,11 +88,4 @@ func (h *singleMessageSourceHandle) Delete(ctx context.Context) error {
 		return fmt.Errorf("来源不支持删除")
 	}
 	return h.deleter.DeleteMessage(ctx, h.message)
-}
-
-func (h *singleMessageSourceHandle) DeleteSemantics() provider.DeleteSemantics {
-	if reporter, ok := h.deleter.(provider.DeleteSemanticReporter); ok {
-		return reporter.DeleteSemantics()
-	}
-	return provider.DeleteSemanticsUnknown
 }

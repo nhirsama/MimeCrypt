@@ -43,6 +43,9 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 		state.Deliveries = make(map[string]DeliveryReceipt)
 	}
 	if state.Completed {
+		if err := finalizeSourceAcknowledge(ctx, envelope.Source); err != nil {
+			return Result{}, err
+		}
 		return c.result(state), nil
 	}
 
@@ -86,7 +89,7 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 			}
 		}
 
-		if err := validateDeleteSource(state.Plan.DeleteSource, envelope.Source); err != nil {
+		if err := validateDeleteSource(state.Plan.DeleteSource, envelope); err != nil {
 			return Result{}, err
 		}
 
@@ -123,6 +126,12 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 			if strings.TrimSpace(receipt.Consumer) == "" {
 				receipt.Consumer = target.Consumer
 			}
+			if strings.EqualFold(strings.TrimSpace(target.Artifact), "backup") && strings.TrimSpace(receipt.ID) != "" {
+				if state.Trace.Attributes == nil {
+					state.Trace.Attributes = make(map[string]string)
+				}
+				state.Trace.Attributes["backup_path"] = strings.TrimSpace(receipt.ID)
+			}
 			state.Deliveries[targetKey] = receipt
 			if err := c.Store.Save(ctx, state); err != nil {
 				return Result{}, err
@@ -134,7 +143,7 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 		return c.result(state), nil
 	}
 
-	if err := validateDeleteSource(state.Plan.DeleteSource, envelope.Source); err != nil {
+	if err := validateDeleteSource(state.Plan.DeleteSource, envelope); err != nil {
 		return Result{}, err
 	}
 
@@ -247,26 +256,32 @@ func (c *Coordinator) ackAndComplete(ctx context.Context, state *TxState, source
 	if err := c.Store.Save(ctx, *state); err != nil {
 		return err
 	}
+	return finalizeSourceAcknowledge(ctx, source)
+}
+
+func finalizeSourceAcknowledge(ctx context.Context, source SourceHandle) error {
+	if source == nil {
+		return nil
+	}
+	finalizer, ok := source.(SourceAckFinalizer)
+	if !ok || finalizer == nil {
+		return nil
+	}
+	if err := finalizer.FinalizeAcknowledge(ctx); err != nil {
+		return fmt.Errorf("清理来源确认状态失败: %w", err)
+	}
 	return nil
 }
 
-type deleteSemanticSource interface {
-	DeleteSemantics() provider.DeleteSemantics
-}
-
-func validateDeleteSource(policy DeleteSourcePolicy, source SourceHandle) error {
+func validateDeleteSource(policy DeleteSourcePolicy, envelope MailEnvelope) error {
 	if !policy.Enabled {
 		return nil
 	}
-	deletable, ok := source.(DeletableSource)
-	if source == nil || !ok || deletable == nil {
+	deletable, ok := envelope.Source.(DeletableSource)
+	if envelope.Source == nil || !ok || deletable == nil {
 		return fmt.Errorf("删除源邮件已启用，但来源不支持删除")
 	}
-	semanticSource, ok := source.(deleteSemanticSource)
-	if !ok {
-		return fmt.Errorf("删除源邮件已启用，但来源未声明删除语义")
-	}
-	switch semanticSource.DeleteSemantics() {
+	switch envelope.SourceDeleteSemantics {
 	case provider.DeleteSemanticsHard:
 		return nil
 	case provider.DeleteSemanticsSoft:
