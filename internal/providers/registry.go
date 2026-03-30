@@ -30,6 +30,8 @@ type auditRecorder interface {
 
 type driverRegistration struct {
 	Spec             provider.DriverSpec
+	LoginConfig      *driverLoginConfig
+	RevokeConfig     *driverRevokeConfig
 	BuildSource      sourceClientsFactory
 	BuildSink        sinkClientsFactory
 	BuildPushIngress pushIngressFactory
@@ -81,7 +83,9 @@ var driverRegistrations = map[string]driverRegistration{
 				SupportsHealth:     true,
 			},
 		},
-		BuildSink: graph.NewEWSWriterClients,
+		LoginConfig:  microsoftDriverLoginConfig,
+		RevokeConfig: microsoftDriverRevokeConfig,
+		BuildSink:    graph.NewEWSWriterClients,
 	},
 	"file": {
 		Spec: provider.DriverSpec{
@@ -122,8 +126,10 @@ var driverRegistrations = map[string]driverRegistration{
 				SupportsHealth:     true,
 			},
 		},
-		BuildSource: graph.BuildSourceClientsWithTokenSource,
-		BuildSink:   graph.NewWriterClients,
+		LoginConfig:  microsoftDriverLoginConfig,
+		RevokeConfig: microsoftDriverRevokeConfig,
+		BuildSource:  graph.BuildSourceClientsWithTokenSource,
+		BuildSink:    graph.NewWriterClients,
 	},
 	"imap": {
 		Spec: provider.DriverSpec{
@@ -151,8 +157,10 @@ var driverRegistrations = map[string]driverRegistration{
 				SupportsHealth:     true,
 			},
 		},
-		BuildSource: imap.BuildSourceClientsWithTokenSource,
-		BuildSink:   imap.NewWriterClients,
+		LoginConfig:  microsoftDriverLoginConfig,
+		RevokeConfig: microsoftDriverRevokeConfig,
+		BuildSource:  imap.BuildSourceClientsWithTokenSource,
+		BuildSink:    imap.NewWriterClients,
 	},
 	"webhook": {
 		Spec: provider.DriverSpec{

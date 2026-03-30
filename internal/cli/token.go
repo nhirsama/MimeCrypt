@@ -45,7 +45,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			}
 			cfg = resolved.Config
 
-			service, err := appruntime.BuildTokenStateService(cfg)
+			service, err := appruntime.BuildTokenStateService(resolved)
 			if err != nil {
 				return fmt.Errorf("token status 失败: %w", err)
 			}
@@ -111,7 +111,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 			}
 			cfg = resolved.Config
 
-			service, err := appruntime.BuildTokenStateService(cfg)
+			service, err := appruntime.BuildTokenStateService(resolved)
 			if err != nil {
 				return fmt.Errorf("token import 失败: %w", err)
 			}

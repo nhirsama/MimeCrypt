@@ -120,28 +120,41 @@ func TestBuildLoginServiceFallsBackToIMAPUsernameIdentity(t *testing.T) {
 	}
 }
 
-func TestLoginAuthConfigUsesCredentialBindingsToTrimScopes(t *testing.T) {
+func TestBuildLoginServiceUsesDriverLoginConfigToTrimScopes(t *testing.T) {
 	t.Parallel()
 
-	authCfg := loginAuthConfig(CredentialPlan{
+	service, err := BuildLoginService(CredentialPlan{
 		Config: appconfig.Config{
 			Auth: appconfig.AuthConfig{
-				GraphScopes: []string{"scope-graph"},
-				EWSScopes:   []string{"scope-ews"},
-				IMAPScopes:  []string{"scope-imap"},
+				ClientID:         "client-id",
+				Tenant:           "organizations",
+				AuthorityBaseURL: "https://login.microsoftonline.com",
+				GraphScopes:      []string{"scope-graph"},
+				EWSScopes:        []string{"scope-ews"},
+				IMAPScopes:       []string{"scope-imap"},
+				StateDir:         t.TempDir(),
+				TokenStore:       "file",
+			},
+			Mail: appconfig.MailConfig{
+				Client: appconfig.MailClientConfig{
+					IMAPUsername: "user@example.com",
+				},
 			},
 		},
 		AuthDrivers: []string{"imap"},
 	})
-
-	if len(authCfg.GraphScopes) != 0 {
-		t.Fatalf("GraphScopes = %#v, want empty", authCfg.GraphScopes)
+	if err != nil {
+		t.Fatalf("BuildLoginService() error = %v", err)
 	}
-	if len(authCfg.EWSScopes) != 0 {
-		t.Fatalf("EWSScopes = %#v, want empty", authCfg.EWSScopes)
+	if service.IdentityProbe == nil {
+		t.Fatalf("IdentityProbe = nil")
 	}
-	if got := strings.Join(authCfg.IMAPScopes, " "); got != "scope-imap" {
-		t.Fatalf("IMAPScopes = %#v, want [scope-imap]", authCfg.IMAPScopes)
+	user, err := service.IdentityProbe(context.Background())
+	if err != nil {
+		t.Fatalf("IdentityProbe() error = %v", err)
+	}
+	if user.Account() != "user@example.com" {
+		t.Fatalf("Account() = %q, want user@example.com", user.Account())
 	}
 }
 
