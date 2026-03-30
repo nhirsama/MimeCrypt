@@ -58,6 +58,55 @@ func TestResolveCredentialPlanRejectsNamedCredentialWithoutTopology(t *testing.T
 	}
 }
 
+func TestResolveCredentialCommandPlanAllowsExplicitCredentialWithoutTopology(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	plan, err := ResolveCredentialCommandPlan(appconfig.Config{
+		TopologyPath: filepath.Join(stateDir, "missing-topology.json"),
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "office-auth")
+	if err != nil {
+		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
+	}
+	if plan.CredentialName != "office-auth" {
+		t.Fatalf("CredentialName = %q, want office-auth", plan.CredentialName)
+	}
+	if plan.Config.Auth.StateDir != filepath.Join(stateDir, "credentials", "office-auth") {
+		t.Fatalf("Auth.StateDir = %q", plan.Config.Auth.StateDir)
+	}
+}
+
+func TestResolveCredentialCommandPlanFallsBackWhenTopologyIsInvalid(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	if err := os.WriteFile(topologyPath, []byte("{invalid json"), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	plan, err := ResolveCredentialCommandPlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "office-auth")
+	if err != nil {
+		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
+	}
+	if plan.CredentialName != "office-auth" {
+		t.Fatalf("CredentialName = %q, want office-auth", plan.CredentialName)
+	}
+	if len(plan.Bindings) != 0 {
+		t.Fatalf("Bindings = %+v, want empty bootstrap bindings", plan.Bindings)
+	}
+}
+
 func TestResolveCredentialPlanUsesExplicitCredentialFromTopology(t *testing.T) {
 	t.Parallel()
 

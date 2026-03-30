@@ -2,6 +2,8 @@ package appconfig
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,6 +26,27 @@ const (
 	defaultTokenStore       = "file"
 	defaultKeyringService   = "mimecrypt"
 )
+
+var trustedAuthorityHosts = []string{
+	"login.microsoftonline.com",
+	"login.microsoftonline.us",
+	"login.microsoftonline.de",
+	"login.chinacloudapi.cn",
+}
+
+var trustedGraphHosts = []string{
+	"graph.microsoft.com",
+	"graph.microsoft.us",
+	"graph.microsoft.de",
+	"microsoftgraph.chinacloudapi.cn",
+}
+
+var trustedEWSHosts = []string{
+	"outlook.office365.com",
+	"outlook.office.com",
+	"outlook.office.de",
+	"partner.outlook.cn",
+}
 
 type Config struct {
 	TopologyPath string
@@ -140,6 +163,9 @@ func (c AuthConfig) Validate() error {
 	if strings.TrimSpace(c.AuthorityBaseURL) == "" {
 		return fmt.Errorf("authority base URL 不能为空")
 	}
+	if err := validateTrustedHTTPBaseURL(c.AuthorityBaseURL, "authority base URL", trustedAuthorityHosts); err != nil {
+		return err
+	}
 	if strings.TrimSpace(c.StateDir) == "" {
 		return fmt.Errorf("state dir 不能为空")
 	}
@@ -169,6 +195,9 @@ func (c MailClientConfig) Validate() error {
 	if strings.TrimSpace(c.GraphBaseURL) == "" {
 		return fmt.Errorf("graph base URL 不能为空")
 	}
+	if err := validateTrustedHTTPBaseURL(c.GraphBaseURL, "graph base URL", trustedGraphHosts); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -176,6 +205,9 @@ func (c MailClientConfig) Validate() error {
 func (c MailClientConfig) ValidateEWS() error {
 	if strings.TrimSpace(c.EWSBaseURL) == "" {
 		return fmt.Errorf("ews base URL 不能为空")
+	}
+	if err := validateTrustedHTTPBaseURL(c.EWSBaseURL, "ews base URL", trustedEWSHosts); err != nil {
+		return err
 	}
 
 	return nil
@@ -263,6 +295,59 @@ func getenvDefault(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+func validateTrustedHTTPBaseURL(rawValue, label string, trustedHosts []string) error {
+	parsed, err := url.Parse(strings.TrimSpace(rawValue))
+	if err != nil {
+		return fmt.Errorf("解析 %s 失败: %w", label, err)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("%s 不允许包含用户信息", label)
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("%s 不允许包含 query 或 fragment", label)
+	}
+
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return fmt.Errorf("%s 缺少 host", label)
+	}
+	if isLoopbackHost(host) {
+		switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
+		case "http", "https":
+			return nil
+		default:
+			return fmt.Errorf("%s 仅支持 http 或 https", label)
+		}
+	}
+
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return fmt.Errorf("%s 必须使用 https", label)
+	}
+	if !matchesTrustedHost(host, trustedHosts) {
+		return fmt.Errorf("%s host 不受信任: %s", label, host)
+	}
+	return nil
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(strings.TrimSpace(host), "localhost") {
+		return true
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	return ip != nil && ip.IsLoopback()
+}
+
+func matchesTrustedHost(host string, trustedHosts []string) bool {
+	host = strings.ToLower(strings.TrimSpace(host))
+	for _, trusted := range trustedHosts {
+		trusted = strings.ToLower(strings.TrimSpace(trusted))
+		if host == trusted || strings.HasSuffix(host, "."+trusted) {
+			return true
+		}
+	}
+	return false
 }
 
 func getenvBoolDefault(key string, fallback bool) (bool, error) {

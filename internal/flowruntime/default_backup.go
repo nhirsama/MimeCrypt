@@ -18,7 +18,11 @@ func backupEnabled(cfg appconfig.Config) bool {
 }
 
 func routeHasBackupTarget(route appconfig.Route) bool {
-	for _, target := range route.Targets {
+	return targetsHaveBackupArtifact(route.Targets)
+}
+
+func targetsHaveBackupArtifact(targets []appconfig.RouteTarget) bool {
+	for _, target := range targets {
 		if strings.EqualFold(strings.TrimSpace(target.Artifact), defaultBackupArtifact) {
 			return true
 		}
@@ -26,17 +30,16 @@ func routeHasBackupTarget(route appconfig.Route) bool {
 	return false
 }
 
-func appendDefaultBackupTarget(route appconfig.Route) appconfig.Route {
-	if routeHasBackupTarget(route) {
-		return route
+func appendDefaultBackupTarget(targets []appconfig.RouteTarget) []appconfig.RouteTarget {
+	if targetsHaveBackupArtifact(targets) {
+		return targets
 	}
-	route.Targets = append(route.Targets, appconfig.RouteTarget{
+	return append(targets, appconfig.RouteTarget{
 		Name:     defaultBackupTargetName,
 		SinkRef:  defaultBackupSinkRef,
 		Artifact: defaultBackupArtifact,
 		Required: true,
 	})
-	return route
 }
 
 func defaultBackupSinkPlan(cfg appconfig.Config) SinkPlan {

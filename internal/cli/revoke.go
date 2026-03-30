@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -23,7 +24,7 @@ func newRevokeCmd() *cobra.Command {
 			}
 			cfg := credentialFlags.apply(bootstrap.Config())
 
-			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
+			resolved, err := appruntime.ResolveCredentialCommandPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("revoke 失败: %w", err)
 			}
@@ -33,7 +34,7 @@ func newRevokeCmd() *cobra.Command {
 				return fmt.Errorf("revoke 失败: %w", err)
 			}
 
-			if err := service.Run(cmd.Context()); err != nil {
+			if err := service.Run(cmd.Context(), os.Stdout); err != nil {
 				return fmt.Errorf("revoke 失败: %w", err)
 			}
 

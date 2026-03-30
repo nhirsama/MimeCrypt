@@ -96,9 +96,6 @@ func (r *reader) LatestMessagesInFolder(ctx context.Context, folder string, skip
 }
 
 func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, error) {
-	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
-		return provider.WriteResult{}, fmt.Errorf("原邮件 ID 不能为空")
-	}
 	if len(req.MIME) == 0 && req.MIMEOpener == nil {
 		return provider.WriteResult{}, fmt.Errorf("回写 MIME 不能为空")
 	}
@@ -106,9 +103,6 @@ func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (p
 }
 
 func (w *writer) ReconcileMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, bool, error) {
-	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
-		return provider.WriteResult{}, false, fmt.Errorf("原邮件 ID 不能为空")
-	}
 	return w.client.reconcileMessage(ctx, req)
 }
 

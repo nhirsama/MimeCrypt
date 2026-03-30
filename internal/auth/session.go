@@ -124,11 +124,20 @@ func loopbackTLSAuthority(raw string) bool {
 
 // Login 通过 device code 引导用户完成登录，并把 token 保存到本地缓存。
 func (s *Session) Login(ctx context.Context, out io.Writer) (Token, error) {
+	return s.LoginForScopes(ctx, consentScopes(s.cfg.GraphScopes, s.cfg.EWSScopes, s.cfg.IMAPScopes), out)
+}
+
+// LoginForScopes 通过 device code 引导用户完成指定 scopes 的登录，并把 token 保存到本地缓存。
+func (s *Session) LoginForScopes(ctx context.Context, scopes []string, out io.Writer) (Token, error) {
 	if out == nil {
 		out = io.Discard
 	}
+	scopes = normalizeScopes(scopes)
+	if len(scopes) == 0 {
+		return Token{}, fmt.Errorf("scope 不能为空")
+	}
 
-	deviceCode, err := s.client.AcquireTokenByDeviceCode(ctx, consentScopes(s.cfg.GraphScopes, s.cfg.EWSScopes, s.cfg.IMAPScopes))
+	deviceCode, err := s.client.AcquireTokenByDeviceCode(ctx, scopes)
 	if err != nil {
 		return Token{}, fmt.Errorf("发起 device code 登录失败: %w", err)
 	}
@@ -159,6 +168,24 @@ func (s *Session) Login(ctx context.Context, out io.Writer) (Token, error) {
 		return Token{}, err
 	}
 	return token, nil
+}
+
+// EnsureAccessTokenForScopes 优先静默获取 token，失败后回退到一次显式 device code 登录。
+func (s *Session) EnsureAccessTokenForScopes(ctx context.Context, scopes []string, out io.Writer) (string, error) {
+	accessToken, err := s.AccessTokenForScopes(ctx, scopes)
+	if err == nil {
+		return accessToken, nil
+	}
+
+	if _, loginErr := s.LoginForScopes(ctx, scopes, out); loginErr != nil {
+		return "", fmt.Errorf("获取交互授权失败: %w", loginErr)
+	}
+
+	accessToken, err = s.AccessTokenForScopes(ctx, scopes)
+	if err != nil {
+		return "", err
+	}
+	return accessToken, nil
 }
 
 // AccessToken 返回可直接用于 Graph 调用的 access token，必要时会自动刷新。

@@ -37,6 +37,52 @@ type CredentialPlan struct {
 	AuthDrivers    []string
 }
 
+// ResolveCredentialCommandPlan 为 login/revoke/token 这类 credential 生命周期命令解析配置。
+// 这些命令优先管理 credential 自身；topology 仅用于补充 overlay、绑定摘要与最小 scopes。
+func ResolveCredentialCommandPlan(cfg appconfig.Config, explicit string) (CredentialPlan, error) {
+	plan, err := resolveBootstrapCredentialPlanForCommand(cfg, explicit)
+	if err != nil {
+		return CredentialPlan{}, err
+	}
+
+	topologyPath := strings.TrimSpace(cfg.TopologyPath)
+	if topologyPath == "" {
+		return plan, nil
+	}
+
+	topology, err := appconfig.LoadTopologyFile(topologyPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) && isDefaultCredentialTopologyPath(cfg, topologyPath) {
+			return plan, nil
+		}
+		return plan, nil
+	}
+
+	credentialName, err := resolveCredentialRefForCommand(topology, explicit)
+	if err != nil {
+		return CredentialPlan{}, err
+	}
+	if credentialName == "" {
+		return plan, nil
+	}
+
+	credential, err := topology.CredentialConfig(credentialName)
+	if err != nil {
+		return CredentialPlan{}, err
+	}
+
+	plan.Topology = topology
+	plan.Credential = credential
+	plan.CredentialName = credential.Name
+	plan.Config = cfg.WithCredential(credential.Name, credential)
+	plan.Config, err = applyLocalConfigOverlay(plan.Config)
+	if err != nil {
+		return CredentialPlan{}, err
+	}
+	plan.Bindings, plan.AuthDrivers = resolveCredentialBindingsForCommand(topology, credential.Name)
+	return plan, nil
+}
+
 func ResolveCredentialPlan(cfg appconfig.Config, explicit string) (CredentialPlan, error) {
 	topologyPath := strings.TrimSpace(cfg.TopologyPath)
 	if topologyPath == "" {
@@ -100,6 +146,31 @@ func resolveBootstrapCredentialPlan(cfg appconfig.Config) (CredentialPlan, error
 		return CredentialPlan{}, err
 	}
 	plan.Config = resolvedCfg
+	return plan, nil
+}
+
+func resolveBootstrapCredentialPlanForCommand(cfg appconfig.Config, explicit string) (CredentialPlan, error) {
+	plan, err := resolveBootstrapCredentialPlan(cfg)
+	if err != nil {
+		return CredentialPlan{}, err
+	}
+
+	explicit = strings.TrimSpace(explicit)
+	if explicit == "" {
+		return plan, nil
+	}
+
+	credential := appconfig.Credential{
+		Name: explicit,
+		Kind: appconfig.CredentialKindOAuth,
+	}
+	plan.Credential = credential
+	plan.CredentialName = explicit
+	plan.Config = plan.Config.WithCredential(explicit, credential)
+	plan.Config, err = applyLocalConfigOverlay(plan.Config)
+	if err != nil {
+		return CredentialPlan{}, err
+	}
 	return plan, nil
 }
 
@@ -204,6 +275,30 @@ func resolveCredentialBindings(topology appconfig.Topology, credentialName strin
 	sort.Strings(drivers)
 
 	return bindings, drivers, nil
+}
+
+func resolveCredentialBindingsForCommand(topology appconfig.Topology, credentialName string) ([]CredentialBinding, []string) {
+	bindings, drivers, err := resolveCredentialBindings(topology, credentialName)
+	if err == nil {
+		return bindings, drivers
+	}
+	return nil, nil
+}
+
+func resolveCredentialRefForCommand(topology appconfig.Topology, explicit string) (string, error) {
+	explicit = strings.TrimSpace(explicit)
+	if explicit != "" {
+		if _, err := topology.CredentialConfig(explicit); err != nil {
+			return "", err
+		}
+		return explicit, nil
+	}
+
+	resolved, err := topology.ResolveCredentialRef("")
+	if err != nil {
+		return "", nil
+	}
+	return resolved, nil
 }
 
 func credentialBindingKindRank(kind CredentialBindingKind) int {

@@ -26,14 +26,6 @@ func (c *client) appendViaGoIMAP(ctx context.Context, folder string, flags []str
 	var result appendResult
 
 	err := c.withReadWriteMailbox(ctx, folder, func(cli *goimapclient.Client, _ mailboxStatus) error {
-		ok, err := cli.Support("UIDPLUS")
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("IMAP 服务器未声明 UIDPLUS，无法安全删除原邮件")
-		}
-
 		literal, closer, err := openAppendLiteral(open)
 		if err != nil {
 			return err

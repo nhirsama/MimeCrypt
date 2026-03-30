@@ -33,10 +33,6 @@ func newWriter(cfg appconfig.MailClientConfig, tokenSource accessTokenSource, ht
 }
 
 func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, error) {
-	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
-		return provider.WriteResult{}, fmt.Errorf("原邮件 ID 不能为空")
-	}
-
 	targetFolderID, err := w.targetFolderID(ctx, req)
 	if err != nil {
 		return provider.WriteResult{}, err
@@ -66,20 +62,10 @@ func (w *writer) WriteMessage(ctx context.Context, req provider.WriteRequest) (p
 		}
 	}
 
-	if req.DeleteSource {
-		if err := w.deleteOriginalIfExists(ctx, req.Source.ID); err != nil {
-			return provider.WriteResult{}, w.createdMessageRetainedError(created.ID, req.Source.ID, fmt.Errorf("删除原邮件 %s 失败: %w", req.Source.ID, err))
-		}
-	}
-
 	return provider.WriteResult{Verified: req.Verify}, nil
 }
 
 func (w *writer) ReconcileMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, bool, error) {
-	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
-		return provider.WriteResult{}, false, fmt.Errorf("原邮件 ID 不能为空")
-	}
-
 	targetFolderID, err := w.targetFolderID(ctx, req)
 	if err != nil {
 		return provider.WriteResult{}, false, err
@@ -296,12 +282,6 @@ func (w *writer) reconcileInTarget(ctx context.Context, req provider.WriteReques
 	if req.Verify {
 		if err := w.verifyMessage(ctx, existing.ID, targetFolderID); err != nil {
 			return provider.WriteResult{}, false, fmt.Errorf("发现已有加密邮件 %s，但校验失败: %w", existing.ID, err)
-		}
-	}
-
-	if req.DeleteSource {
-		if err := w.deleteOriginalIfExists(ctx, req.Source.ID); err != nil {
-			return provider.WriteResult{}, false, fmt.Errorf("发现已有加密邮件 %s，但删除原邮件 %s 失败: %w", existing.ID, req.Source.ID, err)
 		}
 	}
 

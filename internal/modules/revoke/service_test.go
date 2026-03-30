@@ -3,6 +3,7 @@ package revoke
 import (
 	"context"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -25,7 +26,7 @@ type fakeRemoteRevoker struct {
 	revokeErr error
 }
 
-func (f *fakeRemoteRevoker) Revoke(context.Context) error {
+func (f *fakeRemoteRevoker) Revoke(context.Context, io.Writer) error {
 	if f.order != nil {
 		*f.order = append(*f.order, "remote")
 	}
@@ -46,7 +47,7 @@ func TestServiceRunDefaultCallsRemoteBeforeLocalCleanup(t *testing.T) {
 		},
 	}
 
-	if err := service.Run(context.Background()); err != nil {
+	if err := service.Run(context.Background(), io.Discard); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if !reflect.DeepEqual(order, []string{"remote", "logout", "clear"}) {
@@ -58,7 +59,7 @@ func TestServiceRunRejectsNilSession(t *testing.T) {
 	t.Parallel()
 
 	service := Service{ClearLocal: func() error { return nil }}
-	if err := service.Run(context.Background()); err == nil {
+	if err := service.Run(context.Background(), io.Discard); err == nil {
 		t.Fatalf("Run() error = nil, want validation error")
 	}
 }
@@ -77,7 +78,7 @@ func TestServiceRunStopsWhenRemoteRevokeFails(t *testing.T) {
 		},
 	}
 
-	err := service.Run(context.Background())
+	err := service.Run(context.Background(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "远端吊销失败") {
 		t.Fatalf("Run() error = %v, want remote revoke error", err)
 	}
@@ -101,7 +102,7 @@ func TestServiceRunForceContinuesAfterRemoteFailure(t *testing.T) {
 		RequireRemote: true,
 	}
 
-	err := service.Run(context.Background())
+	err := service.Run(context.Background(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "远端吊销未完成") {
 		t.Fatalf("Run() error = %v, want force-mode aggregate error", err)
 	}
@@ -125,7 +126,7 @@ func TestServiceRunForceContinuesWhenRemoteRevokerCannotInitialize(t *testing.T)
 		RequireRemote: true,
 	}
 
-	err := service.Run(context.Background())
+	err := service.Run(context.Background(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "missing graph base URL") {
 		t.Fatalf("Run() error = %v, want remote init error", err)
 	}
@@ -146,7 +147,7 @@ func TestServiceRunAggregatesLocalCleanupErrors(t *testing.T) {
 		},
 	}
 
-	err := service.Run(context.Background())
+	err := service.Run(context.Background(), io.Discard)
 	if err == nil {
 		t.Fatalf("Run() error = nil, want local cleanup errors")
 	}
@@ -170,7 +171,7 @@ func TestServiceRunSkipsRemoteWhenNotRequired(t *testing.T) {
 		},
 	}
 
-	if err := service.Run(context.Background()); err != nil {
+	if err := service.Run(context.Background(), io.Discard); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if !reflect.DeepEqual(order, []string{"logout", "clear"}) {

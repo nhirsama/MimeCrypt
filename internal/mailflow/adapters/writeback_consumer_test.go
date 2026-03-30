@@ -66,9 +66,6 @@ func TestWritebackConsumerForwardsWithoutDeleteSource(t *testing.T) {
 	if !result.Verified {
 		t.Fatalf("Verified = false, want true")
 	}
-	if writer.req.DeleteSource {
-		t.Fatalf("DeleteSource = true, want false")
-	}
 	if writer.req.Source.ID != "m1" || writer.req.Source.FolderID != "INBOX" {
 		t.Fatalf("unexpected source ref: %+v", writer.req.Source)
 	}

@@ -23,6 +23,7 @@ import (
 
 const (
 	webhookHeaderDeliveryID = "X-MimeCrypt-Delivery-ID"
+	webhookHeaderBodySHA256 = "X-MimeCrypt-Body-SHA256"
 	webhookHeaderSignature  = "X-MimeCrypt-Signature"
 	webhookHeaderTimestamp  = "X-MimeCrypt-Timestamp"
 
@@ -166,13 +167,22 @@ func (w *webhookIngress) handle(rw http.ResponseWriter, req *http.Request) {
 		http.Error(rw, "invalid signature", http.StatusUnauthorized)
 		return
 	}
+	bodyHash, ok := normalizeWebhookBodyHash(req.Header.Get(webhookHeaderBodySHA256))
+	if !ok {
+		http.Error(rw, "invalid body hash", http.StatusUnauthorized)
+		return
+	}
+	if !w.validSignatureForBodyHash(req.Method, req.URL.Path, timestamp, deliveryID, bodyHash, signature) {
+		http.Error(rw, "invalid signature", http.StatusUnauthorized)
+		return
+	}
 	if req.ContentLength > 0 && req.ContentLength > w.maxBodyBytes {
 		http.Error(rw, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
 	req.Body = http.MaxBytesReader(rw, req.Body, w.maxBodyBytes)
-	bodyPath, bodyHash, err := spoolRequestBody(req.Body)
+	bodyPath, actualBodyHash, err := spoolRequestBody(req.Body)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
@@ -185,13 +195,12 @@ func (w *webhookIngress) handle(rw http.ResponseWriter, req *http.Request) {
 	defer func() {
 		_ = os.Remove(bodyPath)
 	}()
-	if strings.TrimSpace(bodyHash) == "" {
+	if strings.TrimSpace(actualBodyHash) == "" {
 		http.Error(rw, "empty request body", http.StatusBadRequest)
 		return
 	}
-
-	if !w.validSignatureForBodyHash(req.Method, req.URL.Path, timestamp, deliveryID, bodyHash, signature) {
-		http.Error(rw, "invalid signature", http.StatusUnauthorized)
+	if !sameWebhookDigest(bodyHash, actualBodyHash) {
+		http.Error(rw, "body hash mismatch", http.StatusUnauthorized)
 		return
 	}
 
@@ -259,11 +268,19 @@ func (w *webhookIngress) validSignatureForBodyHash(method, path string, timestam
 }
 
 func normalizeWebhookSignature(signature string) (string, bool) {
-	signature = strings.TrimPrefix(strings.TrimSpace(signature), "sha256=")
-	if len(signature) != sha256.Size*2 {
+	return normalizeWebhookHexDigest(signature, sha256.Size)
+}
+
+func normalizeWebhookBodyHash(bodyHash string) (string, bool) {
+	return normalizeWebhookHexDigest(bodyHash, sha256.Size)
+}
+
+func normalizeWebhookHexDigest(value string, size int) (string, bool) {
+	value = strings.TrimPrefix(strings.TrimSpace(value), "sha256=")
+	if len(value) != size*2 {
 		return "", false
 	}
-	for _, ch := range signature {
+	for _, ch := range value {
 		switch {
 		case ch >= '0' && ch <= '9':
 		case ch >= 'a' && ch <= 'f':
@@ -272,7 +289,7 @@ func normalizeWebhookSignature(signature string) (string, bool) {
 			return "", false
 		}
 	}
-	return strings.ToLower(signature), true
+	return strings.ToLower(value), true
 }
 
 func webhookSignature(secret []byte, sourceName, method, path string, timestamp time.Time, deliveryID string, body []byte) string {
@@ -368,6 +385,21 @@ func spoolRequestBody(src io.Reader) (string, string, error) {
 	}
 
 	return file.Name(), hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func sameWebhookDigest(expected, actual string) bool {
+	expected, ok := normalizeWebhookBodyHash(expected)
+	if !ok {
+		return false
+	}
+	actual, ok = normalizeWebhookBodyHash(actual)
+	if !ok {
+		return false
+	}
+	if len(expected) != len(actual) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(expected), []byte(actual)) == 1
 }
 
 func firstNonEmpty(values ...string) string {

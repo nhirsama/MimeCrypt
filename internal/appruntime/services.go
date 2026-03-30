@@ -120,7 +120,7 @@ func effectiveRevokeCredentialKind(plan CredentialPlan) (string, appconfig.Crede
 	return appconfig.NormalizeCredentialKind(kind), spec, nil
 }
 
-func buildRemoteRevoker(cfg appconfig.Config, credentialKind string, tokenSource provider.TokenSource) (provider.RemoteRevoker, error) {
+func buildRemoteRevoker(cfg appconfig.Config, credentialKind string, tokenSource provider.TokenSource) (revoke.RemoteRevoker, error) {
 	kind := appconfig.NormalizeCredentialKind(credentialKind)
 	spec, ok := appconfig.LookupCredentialKindSpec(kind)
 	if !ok {

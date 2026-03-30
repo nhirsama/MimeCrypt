@@ -243,11 +243,14 @@ func TestResolveSingleSourceRunInjectsDefaultBackupTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveSingleSourceRun() error = %v", err)
 	}
+	if len(run.Route.Targets) != 1 {
+		t.Fatalf("len(Route.Targets) = %d, want 1 declarative target", len(run.Route.Targets))
+	}
 	if _, ok := run.Sinks[defaultBackupSinkRef]; !ok {
 		t.Fatalf("missing default backup sink in run.Sinks")
 	}
 	found := false
-	for _, target := range run.Route.Targets {
+	for _, target := range run.RuntimeTargets {
 		if target.SinkRef == defaultBackupSinkRef && target.Artifact == defaultBackupArtifact {
 			found = true
 			if !target.Required {
@@ -256,7 +259,10 @@ func TestResolveSingleSourceRunInjectsDefaultBackupTarget(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("default backup target not injected: %+v", run.Route.Targets)
+		t.Fatalf("default backup target not injected: %+v", run.RuntimeTargets)
+	}
+	if len(run.ExecutionPlan.Targets) != 2 {
+		t.Fatalf("len(ExecutionPlan.Targets) = %d, want 2", len(run.ExecutionPlan.Targets))
 	}
 }
 
@@ -583,8 +589,8 @@ func testRuntimeConfig(stateDir, topologyPath string) appconfig.Config {
 			Client: appconfig.MailClientConfig{
 				IMAPAddr:     "imap.example.com:993",
 				IMAPUsername: "user@example.com",
-				GraphBaseURL: "https://graph.example.com/v1.0",
-				EWSBaseURL:   "https://ews.example.com/EWS/Exchange.asmx",
+				GraphBaseURL: "https://graph.microsoft.com/v1.0",
+				EWSBaseURL:   "https://outlook.office365.com/EWS/Exchange.asmx",
 			},
 			Pipeline: appconfig.MailPipelineConfig{
 				AuditLogPath: appconfig.DefaultAuditLogPath(stateDir),

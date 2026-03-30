@@ -172,7 +172,7 @@ func TestBuildRevokeServiceForceStillClearsLocalStateWhenRemoteRevokerInitFails(
 		t.Fatalf("BuildRevokeService() error = %v", err)
 	}
 
-	err = service.Run(context.Background())
+	err = service.Run(context.Background(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "初始化远端吊销器失败") {
 		t.Fatalf("Run() error = %v, want remote init failure", err)
 	}
@@ -241,7 +241,7 @@ func TestBuildRevokeServiceSharedSessionSkipsRemoteRevoke(t *testing.T) {
 		t.Fatalf("RequireRemote = true, want false for shared-session")
 	}
 
-	if err := service.Run(context.Background()); err != nil {
+	if err := service.Run(context.Background(), io.Discard); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if _, statErr := os.Stat(cfg.Auth.TokenPath()); !errors.Is(statErr, os.ErrNotExist) {

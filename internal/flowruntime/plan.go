@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers"
 )
@@ -36,6 +37,8 @@ type SinkPlan struct {
 type SourceRun struct {
 	Source                appconfig.Source
 	Route                 appconfig.Route
+	RuntimeTargets        []appconfig.RouteTarget
+	ExecutionPlan         mailflow.ExecutionPlan
 	Config                appconfig.Config
 	Sinks                 map[string]SinkPlan
 	SourceDeleteSemantics provider.DeleteSemantics
@@ -229,16 +232,17 @@ func buildSourceRun(cfg appconfig.Config, topology appconfig.Topology, route app
 	}
 
 	runRoute := route
-	runRoute.Targets = append([]appconfig.RouteTarget(nil), route.Targets...)
 	if strings.TrimSpace(runRoute.StateDir) == "" {
 		runRoute.StateDir = sourceCfg.Mail.FlowStateDirFor(route.Name, source.Name, source.Driver, source.Folder)
 	}
-	if backupEnabled(sourceCfg) {
-		runRoute = appendDefaultBackupTarget(runRoute)
+	runtimeTargets := compileRuntimeTargets(route.Targets, backupEnabled(sourceCfg))
+	executionPlan, err := buildMailflowPlan(runRoute, runtimeTargets)
+	if err != nil {
+		return SourceRun{}, err
 	}
 
 	sinks := make(map[string]SinkPlan)
-	for _, target := range runRoute.Targets {
+	for _, target := range runtimeTargets {
 		sinkRef := strings.TrimSpace(target.SinkRef)
 		if sinkRef == "" {
 			continue
@@ -267,6 +271,8 @@ func buildSourceRun(cfg appconfig.Config, topology appconfig.Topology, route app
 	return SourceRun{
 		Source:                source,
 		Route:                 runRoute,
+		RuntimeTargets:        runtimeTargets,
+		ExecutionPlan:         executionPlan,
 		Config:                sourceCfg,
 		Sinks:                 sinks,
 		SourceDeleteSemantics: sourceDeleteSemantics(source.Driver),
@@ -387,6 +393,14 @@ func applyTopologyCredential(cfg appconfig.Config, topology appconfig.Topology, 
 		return appconfig.Config{}, err
 	}
 	return cfg.WithCredential(credential.Name, credential), nil
+}
+
+func compileRuntimeTargets(targets []appconfig.RouteTarget, includeDefaultBackup bool) []appconfig.RouteTarget {
+	runtimeTargets := append([]appconfig.RouteTarget(nil), targets...)
+	if includeDefaultBackup {
+		runtimeTargets = appendDefaultBackupTarget(runtimeTargets)
+	}
+	return runtimeTargets
 }
 
 func normalizeDriver(value, fallback string) string {

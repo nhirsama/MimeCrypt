@@ -39,7 +39,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg = credentialFlags.apply(cfg)
 
-			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
+			resolved, err := appruntime.ResolveCredentialCommandPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("token status 失败: %w", err)
 			}
@@ -105,7 +105,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg = credentialFlags.apply(cfg)
 
-			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
+			resolved, err := appruntime.ResolveCredentialCommandPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("token import 失败: %w", err)
 			}

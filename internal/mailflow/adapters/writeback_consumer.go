@@ -22,7 +22,6 @@ func (c *WritebackConsumer) Consume(ctx context.Context, req mailflow.ConsumeReq
 		MIMEOpener:          provider.MIMEOpener(req.Artifact.MIME),
 		DestinationFolderID: c.DestinationFolderID,
 		Verify:              c.Verify,
-		DeleteSource:        false,
 	})
 	if err != nil {
 		return mailflow.DeliveryReceipt{}, err

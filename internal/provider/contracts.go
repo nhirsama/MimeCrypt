@@ -79,10 +79,6 @@ type TokenSource interface {
 	AccessTokenForScopes(ctx context.Context, scopes []string) (string, error)
 }
 
-type RemoteRevoker interface {
-	Revoke(ctx context.Context) error
-}
-
 // Reader 抽象收件相关的底层 API。
 type Reader interface {
 	Me(ctx context.Context) (User, error)
@@ -103,7 +99,6 @@ type WriteRequest struct {
 	MIMEOpener          MIMEOpener
 	DestinationFolderID string
 	Verify              bool
-	DeleteSource        bool
 }
 
 // OpenMIME 以流的形式打开待回写的 MIME。

@@ -76,7 +76,7 @@ func TestIdentityRevokerUsesGraphRevokeEndpoint(t *testing.T) {
 		t.Fatalf("NewIdentityRevoker() error = %v", err)
 	}
 
-	if err := revoker.Revoke(context.Background()); err != nil {
+	if err := revoker.Revoke(context.Background(), io.Discard); err != nil {
 		t.Fatalf("Revoke() error = %v", err)
 	}
 	if !reflect.DeepEqual(session.scopes, []string{"scope-graph", revokeSessionsScope}) {
@@ -104,7 +104,7 @@ func TestIdentityRevokerRejectsNegativeGraphResponse(t *testing.T) {
 		t.Fatalf("NewIdentityRevoker() error = %v", err)
 	}
 
-	if err := revoker.Revoke(context.Background()); err == nil {
+	if err := revoker.Revoke(context.Background(), io.Discard); err == nil {
 		t.Fatalf("Revoke() error = nil, want negative response error")
 	}
 }

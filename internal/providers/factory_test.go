@@ -171,8 +171,8 @@ func testProviderConfig(t *testing.T) appconfig.Config {
 		},
 		Mail: appconfig.MailConfig{
 			Client: appconfig.MailClientConfig{
-				GraphBaseURL: "https://graph.example.com/v1.0",
-				EWSBaseURL:   "https://ews.example.com/EWS/Exchange.asmx",
+				GraphBaseURL: "https://graph.microsoft.com/v1.0",
+				EWSBaseURL:   "https://outlook.office365.com/EWS/Exchange.asmx",
 				IMAPAddr:     "imap.example.com:993",
 				IMAPUsername: "user@example.com",
 			},

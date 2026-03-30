@@ -124,12 +124,6 @@ func (c *client) writeMessage(ctx context.Context, req provider.WriteRequest) (p
 		}
 	}
 
-	if req.DeleteSource {
-		if err := c.deleteOriginalIfExists(ctx, req.Source); err != nil {
-			return provider.WriteResult{}, c.createdMessageRetainedError(strconv.FormatUint(createdUID, 10), req.Source.ID, fmt.Errorf("删除原邮件失败: %w", err))
-		}
-	}
-
 	return provider.WriteResult{Verified: req.Verify}, nil
 }
 
@@ -155,12 +149,6 @@ func (c *client) reconcileMessage(ctx context.Context, req provider.WriteRequest
 		}
 		if !ok {
 			return provider.WriteResult{}, false, fmt.Errorf("发现已有加密邮件 %d，但校验失败", uid)
-		}
-	}
-
-	if req.DeleteSource {
-		if err := c.deleteOriginalIfExists(ctx, req.Source); err != nil {
-			return provider.WriteResult{}, false, fmt.Errorf("发现已有加密邮件 %d，但删除原邮件 %s 失败: %w", uid, req.Source.ID, err)
 		}
 	}
 

@@ -85,9 +85,10 @@ func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, er
 		service.Session = tokenState
 	}
 
-	probes := make([]health.WriteBackProbe, 0, len(run.Route.Targets))
-	seen := make(map[string]struct{}, len(run.Route.Targets))
-	for _, target := range run.Route.Targets {
+	runtimeTargets := effectiveRuntimeTargets(run)
+	probes := make([]health.WriteBackProbe, 0, len(runtimeTargets))
+	seen := make(map[string]struct{}, len(runtimeTargets))
+	for _, target := range runtimeTargets {
 		sinkRef := strings.TrimSpace(target.SinkRef)
 		if sinkRef == "" {
 			continue
@@ -190,9 +191,13 @@ func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 }
 
 func buildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflow.StateStore) (*mailflow.Coordinator, error) {
-	plan, err := buildMailflowPlan(run.Route)
-	if err != nil {
-		return nil, err
+	plan := run.ExecutionPlan
+	if len(plan.Targets) == 0 {
+		compiledPlan, err := buildMailflowPlan(run.Route, effectiveRuntimeTargets(run))
+		if err != nil {
+			return nil, err
+		}
+		plan = compiledPlan
 	}
 
 	backupEncryptor, err := buildCatchAllBackupEncryptor(run.Config)
@@ -229,7 +234,7 @@ func buildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflo
 
 func buildMailflowConsumers(ctx context.Context, run SourceRun, auditor *audit.Service) (map[string]mailflow.Consumer, error) {
 	consumers := make(map[string]mailflow.Consumer)
-	for _, target := range run.Route.Targets {
+	for _, target := range effectiveRuntimeTargets(run) {
 		sinkRef := strings.TrimSpace(target.SinkRef)
 		if sinkRef == "" {
 			continue
@@ -278,9 +283,9 @@ func buildMailflowConsumers(ctx context.Context, run SourceRun, auditor *audit.S
 	return consumers, nil
 }
 
-func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
-	targets := make([]mailflow.DeliveryTarget, 0, len(route.Targets))
-	for _, target := range route.Targets {
+func buildMailflowPlan(route appconfig.Route, runtimeTargets []appconfig.RouteTarget) (mailflow.ExecutionPlan, error) {
+	targets := make([]mailflow.DeliveryTarget, 0, len(runtimeTargets))
+	for _, target := range runtimeTargets {
 		artifact := strings.TrimSpace(target.Artifact)
 		if artifact == "" {
 			artifact = "primary"
@@ -305,6 +310,13 @@ func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
 		return mailflow.ExecutionPlan{}, err
 	}
 	return plan, nil
+}
+
+func effectiveRuntimeTargets(run SourceRun) []appconfig.RouteTarget {
+	if len(run.RuntimeTargets) > 0 {
+		return run.RuntimeTargets
+	}
+	return append([]appconfig.RouteTarget(nil), run.Route.Targets...)
 }
 
 func buildSourceBundle(plan SourcePlan) (sourceBundle, error) {

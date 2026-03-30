@@ -48,7 +48,7 @@ func newCredentialConfigFlags(cfg appconfig.Config) credentialConfigFlags {
 
 func (f *credentialConfigFlags) addFlags(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.topologyFile, "topology-file", f.topologyFile, "命名 source / sink / route / credential 配置文件路径（JSON）")
-	cmd.Flags().StringVar(&f.credentialName, "credential", f.credentialName, "选择 topology 中的 credential 名称")
+	cmd.Flags().StringVar(&f.credentialName, "credential", f.credentialName, "选择要管理的 credential 名称；如 topology 可用则优先复用其中定义")
 }
 
 func (f credentialConfigFlags) apply(cfg appconfig.Config) appconfig.Config {

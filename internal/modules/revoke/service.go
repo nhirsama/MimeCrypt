@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 )
 
 type Session interface {
@@ -11,7 +12,7 @@ type Session interface {
 }
 
 type RemoteRevoker interface {
-	Revoke(context.Context) error
+	Revoke(context.Context, io.Writer) error
 }
 
 type Service struct {
@@ -23,7 +24,7 @@ type Service struct {
 	RemotePrepareErr error
 }
 
-func (s *Service) Run(ctx context.Context) error {
+func (s *Service) Run(ctx context.Context, out io.Writer) error {
 	if s == nil {
 		return fmt.Errorf("revoke service 不能为空")
 	}
@@ -37,7 +38,7 @@ func (s *Service) Run(ctx context.Context) error {
 	var errs []error
 
 	if s.RequireRemote {
-		if err := s.runRemote(ctx); err != nil {
+		if err := s.runRemote(ctx, out); err != nil {
 			if !s.Force {
 				return err
 			}
@@ -55,14 +56,14 @@ func (s *Service) Run(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (s *Service) runRemote(ctx context.Context) error {
+func (s *Service) runRemote(ctx context.Context, out io.Writer) error {
 	if s.RemotePrepareErr != nil {
 		return s.RemotePrepareErr
 	}
 	if s.RemoteRevoker == nil {
 		return fmt.Errorf("远端吊销器不能为空")
 	}
-	if err := s.RemoteRevoker.Revoke(ctx); err != nil {
+	if err := s.RemoteRevoker.Revoke(ctx, out); err != nil {
 		return fmt.Errorf("远端吊销失败: %w", err)
 	}
 	return nil

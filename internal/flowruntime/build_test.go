@@ -13,7 +13,7 @@ import (
 func TestBuildMailflowPlanAddsConfiguredTargets(t *testing.T) {
 	t.Parallel()
 
-	plan, err := buildMailflowPlan(appconfig.Route{
+	route := appconfig.Route{
 		Name: "default",
 		Targets: []appconfig.RouteTarget{
 			{Name: "local-output", SinkRef: "local-output", Artifact: "primary", Required: true},
@@ -24,7 +24,8 @@ func TestBuildMailflowPlanAddsConfiguredTargets(t *testing.T) {
 			RequireSameStore: true,
 			EligibleSinks:    []string{"write-back"},
 		},
-	})
+	}
+	plan, err := buildMailflowPlan(route, route.Targets)
 	if err != nil {
 		t.Fatalf("buildMailflowPlan() error = %v", err)
 	}
@@ -42,12 +43,13 @@ func TestBuildMailflowPlanAddsConfiguredTargets(t *testing.T) {
 func TestBuildMailflowPlanFallsBackToDiscardTarget(t *testing.T) {
 	t.Parallel()
 
-	plan, err := buildMailflowPlan(appconfig.Route{
+	route := appconfig.Route{
 		Name: "default",
 		Targets: []appconfig.RouteTarget{
 			{Name: "discard-primary", SinkRef: "discard", Artifact: "primary", Required: true},
 		},
-	})
+	}
+	plan, err := buildMailflowPlan(route, route.Targets)
 	if err != nil {
 		t.Fatalf("buildMailflowPlan() error = %v", err)
 	}

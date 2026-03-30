@@ -3,6 +3,7 @@ package graph
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 
 	abstractions "github.com/microsoft/kiota-abstractions-go"
@@ -15,7 +16,9 @@ import (
 const revokeSessionsScope = "https://graph.microsoft.com/User.RevokeSessions.All"
 
 type identityRevoker struct {
-	client *graphClient
+	client      *graphClient
+	tokenSource provider.TokenSource
+	scopes      []string
 }
 
 func NewIdentityRevoker(cfg appconfig.Config, tokenSource provider.TokenSource, httpClient *http.Client) (*identityRevoker, error) {
@@ -31,12 +34,19 @@ func NewIdentityRevoker(cfg appconfig.Config, tokenSource provider.TokenSource, 
 		return nil, err
 	}
 
-	return &identityRevoker{client: client}, nil
+	return &identityRevoker{
+		client:      client,
+		tokenSource: tokenSource,
+		scopes:      appendRevokeScope(cfg.Auth.GraphScopes),
+	}, nil
 }
 
-func (r *identityRevoker) Revoke(ctx context.Context) error {
+func (r *identityRevoker) Revoke(ctx context.Context, out io.Writer) error {
 	if r == nil || r.client == nil {
 		return fmt.Errorf("identity revoker 未初始化")
+	}
+	if err := r.ensureAuthorization(ctx, out); err != nil {
+		return err
 	}
 
 	requestInfo, err := r.client.newRequest(abstractions.POST, r.client.baseURL+"/me/revokeSignInSessions")
@@ -56,6 +66,28 @@ func (r *identityRevoker) Revoke(ctx context.Context) error {
 	}
 	if resp.GetValue() == nil || !*resp.GetValue() {
 		return fmt.Errorf("revokeSignInSessions 未确认吊销成功")
+	}
+	return nil
+}
+
+func (r *identityRevoker) ensureAuthorization(ctx context.Context, out io.Writer) error {
+	if r == nil || r.tokenSource == nil {
+		return fmt.Errorf("identity revoker token source 未初始化")
+	}
+
+	type interactiveScopeTokenSource interface {
+		EnsureAccessTokenForScopes(context.Context, []string, io.Writer) (string, error)
+	}
+
+	if interactive, ok := r.tokenSource.(interactiveScopeTokenSource); ok {
+		if _, err := interactive.EnsureAccessTokenForScopes(ctx, r.scopes, out); err != nil {
+			return fmt.Errorf("获取远端吊销授权失败: %w", err)
+		}
+		return nil
+	}
+
+	if _, err := r.tokenSource.AccessTokenForScopes(ctx, r.scopes); err != nil {
+		return fmt.Errorf("获取远端吊销授权失败: %w", err)
 	}
 	return nil
 }

@@ -267,6 +267,45 @@ func TestMailConfigValidatePipelineBase(t *testing.T) {
 	}
 }
 
+func TestAuthConfigValidateRejectsUntrustedAuthorityBaseURL(t *testing.T) {
+	t.Parallel()
+
+	cfg := AuthConfig{
+		ClientID:         "client-id",
+		Tenant:           "organizations",
+		AuthorityBaseURL: "https://authority.example.com",
+		GraphScopes:      []string{"scope-graph"},
+		StateDir:         t.TempDir(),
+		TokenStore:       "file",
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "host 不受信任") {
+		t.Fatalf("Validate() error = %v, want trusted host error", err)
+	}
+}
+
+func TestMailClientConfigValidateAllowsLoopbackAndRejectsUntrustedHosts(t *testing.T) {
+	t.Parallel()
+
+	if err := (MailClientConfig{GraphBaseURL: "http://127.0.0.1:8080/v1.0"}).Validate(); err != nil {
+		t.Fatalf("loopback Validate() error = %v", err)
+	}
+	if err := (MailClientConfig{EWSBaseURL: "https://localhost:8443/EWS/Exchange.asmx"}).ValidateEWS(); err != nil {
+		t.Fatalf("loopback ValidateEWS() error = %v", err)
+	}
+
+	err := (MailClientConfig{GraphBaseURL: "https://graph.example.com/v1.0"}).Validate()
+	if err == nil || !strings.Contains(err.Error(), "host 不受信任") {
+		t.Fatalf("Validate() error = %v, want trusted host error", err)
+	}
+
+	err = (MailClientConfig{EWSBaseURL: "https://ews.example.com/EWS/Exchange.asmx"}).ValidateEWS()
+	if err == nil || !strings.Contains(err.Error(), "host 不受信任") {
+		t.Fatalf("ValidateEWS() error = %v, want trusted host error", err)
+	}
+}
+
 func TestStateLayoutHelpersUseFullScope(t *testing.T) {
 	t.Parallel()
 

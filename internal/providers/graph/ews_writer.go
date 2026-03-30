@@ -178,10 +178,6 @@ func newEWSClient(cfg appconfig.MailClientConfig, scopes []string, tokenSource p
 }
 
 func (w *ewsWriter) WriteMessage(ctx context.Context, req provider.WriteRequest) (provider.WriteResult, error) {
-	if req.DeleteSource && strings.TrimSpace(req.Source.ID) == "" {
-		return provider.WriteResult{}, fmt.Errorf("原邮件 ID 不能为空")
-	}
-
 	targetFolderID, err := w.graphHelper.targetFolderID(ctx, req)
 	if err != nil {
 		return provider.WriteResult{}, err
@@ -219,12 +215,6 @@ func (w *ewsWriter) WriteMessage(ctx context.Context, req provider.WriteRequest)
 	if req.Verify {
 		if err := w.graphHelper.verifyMessage(ctx, createdGraphID, targetFolderID); err != nil {
 			return provider.WriteResult{}, w.graphHelper.createdMessageRetainedError(createdGraphID, req.Source.ID, fmt.Errorf("校验新消息 %s 失败: %w", createdGraphID, err))
-		}
-	}
-
-	if req.DeleteSource {
-		if err := w.graphHelper.deleteOriginalIfExists(ctx, req.Source.ID); err != nil {
-			return provider.WriteResult{}, w.graphHelper.createdMessageRetainedError(createdGraphID, req.Source.ID, fmt.Errorf("删除原邮件 %s 失败: %w", req.Source.ID, err))
 		}
 	}
 

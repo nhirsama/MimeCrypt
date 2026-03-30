@@ -28,7 +28,7 @@ func newLoginCmd() *cobra.Command {
 			}
 			cfg := credentialFlags.apply(bootstrap.Config())
 
-			resolved, err := appruntime.ResolveCredentialPlan(cfg, credentialFlags.credentialName)
+			resolved, err := appruntime.ResolveCredentialCommandPlan(cfg, credentialFlags.credentialName)
 			if err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}

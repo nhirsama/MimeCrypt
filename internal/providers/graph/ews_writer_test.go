@@ -93,8 +93,6 @@ func TestEWSWriterWriteMessageCreatesNonDraftMessage(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"encrypted-1","parentFolderId":"source-folder"}`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-1":
-			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -123,9 +121,8 @@ func TestEWSWriterWriteMessageCreatesNonDraftMessage(t *testing.T) {
 			InternetMessageID: "<m1@example.com>",
 			FolderID:          "source-folder",
 		},
-		MIME:         mimeBytes,
-		Verify:       true,
-		DeleteSource: true,
+		MIME:   mimeBytes,
+		Verify: true,
 	})
 	if err != nil {
 		t.Fatalf("WriteMessage() error = %v", err)
@@ -198,8 +195,6 @@ func TestEWSWriterWriteMessageFallsBackToTranslateCreatedItemID(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"id":"graph-item-2","parentFolderId":"source-folder"}`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-2":
-			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -227,8 +222,7 @@ func TestEWSWriterWriteMessageFallsBackToTranslateCreatedItemID(t *testing.T) {
 			ID:       "original-2",
 			FolderID: "source-folder",
 		},
-		MIME:         []byte("encrypted"),
-		DeleteSource: true,
+		MIME: []byte("encrypted"),
 	})
 	if err != nil {
 		t.Fatalf("WriteMessage() error = %v", err)
@@ -241,7 +235,6 @@ func TestEWSWriterWriteMessageFallsBackToTranslateCreatedItemID(t *testing.T) {
 func TestEWSWriterWriteMessageKeepsBothWhenVerifyFails(t *testing.T) {
 	t.Parallel()
 
-	var deleteOriginalCalled bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1.0/me/translateExchangeIds":
@@ -294,9 +287,6 @@ func TestEWSWriterWriteMessageKeepsBothWhenVerifyFails(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1.0/me/messages/graph-item-3/$value":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("Content-Type: text/plain\r\n\r\nbody"))
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1.0/me/messages/original-3":
-			deleteOriginalCalled = true
-			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -324,15 +314,11 @@ func TestEWSWriterWriteMessageKeepsBothWhenVerifyFails(t *testing.T) {
 			ID:       "original-3",
 			FolderID: "source-folder",
 		},
-		MIME:         []byte("encrypted"),
-		Verify:       true,
-		DeleteSource: true,
+		MIME:   []byte("encrypted"),
+		Verify: true,
 	})
 	if err == nil {
 		t.Fatalf("expected verify failure")
-	}
-	if deleteOriginalCalled {
-		t.Fatalf("unexpected delete of original after verify failure")
 	}
 	if got := err.Error(); !strings.Contains(got, "缺少 MimeCrypt 处理标记") {
 		t.Fatalf("error = %q, want processed marker failure", got)
