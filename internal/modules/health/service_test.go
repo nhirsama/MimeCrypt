@@ -140,6 +140,7 @@ func TestServiceRunDeepUsesReaderAndWriterProbes(t *testing.T) {
 	service := Service{
 		StateDir:          t.TempDir(),
 		Provider:          "imap",
+		ProviderProbeKind: provider.ProviderProbeFolderList,
 		WriteBackProvider: "imap",
 		Folder:            "INBOX",
 		Deep:              true,
@@ -165,6 +166,38 @@ func TestServiceRunDeepUsesReaderAndWriterProbes(t *testing.T) {
 	}
 	if writer.healthCalls != 1 {
 		t.Fatalf("HealthCheck() calls = %d, want 1", writer.healthCalls)
+	}
+}
+
+func TestServiceRunDeepUsesIdentityProbeKind(t *testing.T) {
+	t.Parallel()
+
+	reader := &fakeReader{meUser: provider.User{Mail: "user@example.com"}}
+	service := Service{
+		StateDir:          t.TempDir(),
+		ProviderProbeKind: provider.ProviderProbeIdentity,
+		Deep:              true,
+		Session: fakeSession{
+			loadToken: provider.Token{ExpiresAt: time.Now().Add(time.Hour)},
+		},
+		Reader: reader,
+		LookPath: func(string) (string, error) {
+			return "/usr/bin/gpg", nil
+		},
+	}
+
+	result, err := service.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !result.OK() {
+		t.Fatalf("Run() = %+v, want all checks OK", result)
+	}
+	if reader.listCalls != 0 {
+		t.Fatalf("LatestMessagesInFolder() calls = %d, want 0", reader.listCalls)
+	}
+	if reader.meCalls != 1 {
+		t.Fatalf("Me() calls = %d, want 1", reader.meCalls)
 	}
 }
 

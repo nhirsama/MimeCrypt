@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"mimecrypt/internal/provider"
 )
 
 const (
@@ -297,24 +299,33 @@ func (s Source) Validate(name string, credentials map[string]Credential) error {
 	if strings.TrimSpace(s.Driver) == "" {
 		return fmt.Errorf("source %s 缺少 driver", name)
 	}
+	sourceSpec, ok := provider.LookupSourceSpec(s.Driver)
+	if !ok {
+		return fmt.Errorf("source %s 不支持 driver: %s", name, s.Driver)
+	}
 	if strings.TrimSpace(s.Mode) == "" {
 		return fmt.Errorf("source %s 缺少 mode", name)
 	}
+	modeSpec, ok := sourceSpec.ModeSpec(s.Mode)
+	if !ok {
+		return fmt.Errorf("source %s 的 driver %s 不支持 mode: %s", name, s.Driver, s.Mode)
+	}
 	if ref := strings.TrimSpace(s.CredentialRef); ref != "" {
+		if !sourceSpec.RequiresCredential {
+			return fmt.Errorf("source %s 的 driver %s 不接受 credential_ref", name, s.Driver)
+		}
 		if _, ok := credentials[ref]; !ok {
 			return fmt.Errorf("source %s 引用了不存在的 credential: %s", name, ref)
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(s.Mode), "poll") {
-		if strings.TrimSpace(s.StatePath) == "" {
-			return fmt.Errorf("source %s 缺少 state path", name)
-		}
-		if s.PollInterval <= 0 {
-			return fmt.Errorf("source %s poll interval 必须大于 0", name)
-		}
-		if s.CycleTimeout <= 0 {
-			return fmt.Errorf("source %s cycle timeout 必须大于 0", name)
-		}
+	if modeSpec.RequiresStatePath && strings.TrimSpace(s.StatePath) == "" {
+		return fmt.Errorf("source %s 缺少 state path", name)
+	}
+	if modeSpec.RequiresPollInterval && s.PollInterval <= 0 {
+		return fmt.Errorf("source %s poll interval 必须大于 0", name)
+	}
+	if modeSpec.RequiresCycleTimeout && s.CycleTimeout <= 0 {
+		return fmt.Errorf("source %s cycle timeout 必须大于 0", name)
 	}
 	return nil
 }
@@ -332,13 +343,23 @@ func (s Sink) Validate(name string, credentials map[string]Credential) error {
 	if strings.TrimSpace(s.Driver) == "" {
 		return fmt.Errorf("sink %s 缺少 driver", name)
 	}
+	sinkSpec, ok := provider.LookupSinkSpec(s.Driver)
+	if !ok {
+		return fmt.Errorf("sink %s 不支持 driver: %s", name, s.Driver)
+	}
 	if ref := strings.TrimSpace(s.CredentialRef); ref != "" {
+		if !sinkSpec.RequiresCredential {
+			return fmt.Errorf("sink %s 的 driver %s 不接受 credential_ref", name, s.Driver)
+		}
 		if _, ok := credentials[ref]; !ok {
 			return fmt.Errorf("sink %s 引用了不存在的 credential: %s", name, ref)
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(s.Driver), "file") && strings.TrimSpace(s.OutputDir) == "" {
+	if sinkSpec.RequiresOutputDir && strings.TrimSpace(s.OutputDir) == "" {
 		return fmt.Errorf("sink %s 缺少 output dir", name)
+	}
+	if s.Verify && !sinkSpec.SupportsVerify {
+		return fmt.Errorf("sink %s 的 driver %s 不支持 verify", name, s.Driver)
 	}
 	return nil
 }
@@ -377,6 +398,25 @@ func (r Route) Validate(name string, sources map[string]Source, sinks map[string
 	}
 	if r.DeleteSource.Enabled && len(r.DeleteSource.EligibleSinks) == 0 {
 		return fmt.Errorf("route %s 启用 delete source 时必须声明 eligible sinks", name)
+	}
+	if r.DeleteSource.Enabled {
+		for _, sourceRef := range r.SourceRefs {
+			source, ok := sources[strings.TrimSpace(sourceRef)]
+			if !ok {
+				continue
+			}
+			sourceSpec, ok := provider.LookupSourceSpec(source.Driver)
+			if !ok || !sourceSpec.SupportsDelete {
+				return fmt.Errorf("route %s 启用 delete source 时，source %s 的 driver %s 不支持删除", name, source.Name, source.Driver)
+			}
+			switch sourceSpec.DeleteSemantics {
+			case provider.DeleteSemanticsHard:
+			case provider.DeleteSemanticsSoft:
+				return fmt.Errorf("route %s 启用 delete source 时，source %s 的 driver %s 仅支持 soft delete", name, source.Name, source.Driver)
+			default:
+				return fmt.Errorf("route %s 启用 delete source 时，source %s 的 driver %s 删除语义未知", name, source.Name, source.Driver)
+			}
+		}
 	}
 	for _, ref := range r.DeleteSource.EligibleSinks {
 		if _, ok := sinks[strings.TrimSpace(ref)]; !ok {

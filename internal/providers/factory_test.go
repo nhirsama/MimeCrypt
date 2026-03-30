@@ -69,6 +69,20 @@ func TestBuildSinkClientsUsesExplicitDriver(t *testing.T) {
 	if clients.Health == nil {
 		t.Fatalf("Health = nil")
 	}
+	if clients.Reconciler == nil {
+		t.Fatalf("Reconciler = nil")
+	}
+}
+
+func TestBuildSinkClientsRejectsLocalConsumerDriver(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+
+	_, err := BuildSinkClients(cfg, "file", "")
+	if err == nil || err.Error() != "sink driver file 未提供 provider clients" {
+		t.Fatalf("BuildSinkClients() error = %v, want local consumer rejection", err)
+	}
 }
 
 func TestBuildSinkClientsGraphHealthUsesGraphScopes(t *testing.T) {

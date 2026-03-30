@@ -407,6 +407,59 @@ func TestResolveSourcePlanRejectsAmbiguousImplicitCredential(t *testing.T) {
 	}
 }
 
+func TestResolveRoutePlanAllowsLocalSinkWithoutCredentialResolution(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		Credentials: map[string]appconfig.Credential{
+			"office-auth":  {Name: "office-auth", Kind: "oauth"},
+			"archive-auth": {Name: "archive-auth", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"archive": {
+				Name:          "archive",
+				Driver:        "imap",
+				Mode:          "poll",
+				CredentialRef: "office-auth",
+				Folder:        "Archive/2026",
+				PollInterval:  time.Minute,
+				CycleTimeout:  2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"local-output": {
+				Name:      "local-output",
+				Driver:    "file",
+				OutputDir: filepath.Join(stateDir, "output"),
+			},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"archive"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "local-output", SinkRef: "local-output", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{}, RoutePlanAllSources)
+	if err != nil {
+		t.Fatalf("ResolveRoutePlan() error = %v", err)
+	}
+	sink, ok := plan.Runs[0].Sinks["local-output"]
+	if !ok {
+		t.Fatalf("missing local-output sink")
+	}
+	if sink.Config.Auth.StateDir != stateDir {
+		t.Fatalf("sink Auth.StateDir = %q, want %q", sink.Config.Auth.StateDir, stateDir)
+	}
+}
+
 func testRuntimeConfig(stateDir, topologyPath string) appconfig.Config {
 	return appconfig.Config{
 		TopologyPath: topologyPath,

@@ -44,10 +44,11 @@ func NewWriterClients(cfg appconfig.Config, session provider.Session) (provider.
 		return provider.SinkClients{}, err
 	}
 	return provider.SinkClients{
-		Session: session,
-		Reader:  reader,
-		Writer:  writer,
-		Health:  writer,
+		Session:    session,
+		Reader:     reader,
+		Writer:     writer,
+		Reconciler: writer,
+		Health:     writer,
 	}, nil
 }
 
@@ -64,10 +65,11 @@ func NewEWSWriterClients(cfg appconfig.Config, session provider.Session) (provid
 		return provider.SinkClients{}, err
 	}
 	return provider.SinkClients{
-		Session: session,
-		Reader:  reader,
-		Writer:  writer,
-		Health:  writer,
+		Session:    session,
+		Reader:     reader,
+		Writer:     writer,
+		Reconciler: writer,
+		Health:     writer,
 	}, nil
 }
 

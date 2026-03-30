@@ -36,6 +36,7 @@ type Service struct {
 	StateDir          string
 	Folder            string
 	Provider          string
+	ProviderProbeKind provider.ProviderProbeKind
 	WriteBackProvider string
 	Deep              bool
 	Session           provider.Session
@@ -139,8 +140,8 @@ func (s *Service) checkCachedToken() Check {
 }
 
 func (s *Service) checkProvider(ctx context.Context) Check {
-	switch strings.ToLower(strings.TrimSpace(s.Provider)) {
-	case "imap":
+	switch s.providerProbeKind() {
+	case provider.ProviderProbeFolderList:
 		folder := strings.TrimSpace(s.Folder)
 		if folder == "" {
 			folder = "INBOX"
@@ -150,13 +151,25 @@ func (s *Service) checkProvider(ctx context.Context) Check {
 			return Check{Name: "provider_probe", Detail: err.Error()}
 		}
 		return Check{Name: "provider_probe", OK: true, Detail: "imap folder=" + folder}
-	default:
+	case provider.ProviderProbeIdentity:
 		user, err := s.Reader.Me(ctx)
 		if err != nil {
 			return Check{Name: "provider_probe", Detail: err.Error()}
 		}
 		return Check{Name: "provider_probe", OK: true, Detail: user.Account()}
+	default:
+		return Check{Name: "provider_probe", Detail: "未声明 provider 探测策略"}
 	}
+}
+
+func (s *Service) providerProbeKind() provider.ProviderProbeKind {
+	if s != nil && s.ProviderProbeKind != "" {
+		return s.ProviderProbeKind
+	}
+	if sourceSpec, ok := provider.LookupSourceSpec(s.Provider); ok && sourceSpec.ProbeKind != "" {
+		return sourceSpec.ProbeKind
+	}
+	return provider.ProviderProbeIdentity
 }
 
 func (s *Service) checkWriteBack(ctx context.Context) Check {

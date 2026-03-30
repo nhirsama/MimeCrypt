@@ -94,6 +94,9 @@ func TestNewWriterClientsUsesScopedGraphToken(t *testing.T) {
 	if _, err := clients.Health.HealthCheck(context.Background()); err != nil {
 		t.Fatalf("HealthCheck() error = %v", err)
 	}
+	if clients.Reconciler == nil {
+		t.Fatalf("Reconciler = nil")
+	}
 	if session.accessCalls != 0 {
 		t.Fatalf("AccessToken() calls = %d, want 0", session.accessCalls)
 	}

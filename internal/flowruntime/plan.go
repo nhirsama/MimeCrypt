@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/provider"
 )
 
 type RoutePlanMode string
@@ -320,10 +321,24 @@ func topologySourceNames(sources map[string]appconfig.Source) []string {
 }
 
 func configForSource(cfg appconfig.Config, topology appconfig.Topology, source appconfig.Source) (appconfig.Config, error) {
+	sourceSpec, ok := provider.LookupSourceSpec(source.Driver)
+	if !ok {
+		return appconfig.Config{}, fmt.Errorf("source %s 不支持 driver: %s", source.Name, source.Driver)
+	}
+	if !sourceSpec.RequiresCredential {
+		return cfg, nil
+	}
 	return applyTopologyCredential(cfg, topology, source.CredentialRef)
 }
 
 func configForSink(cfg appconfig.Config, topology appconfig.Topology, sink appconfig.Sink) (appconfig.Config, error) {
+	sinkSpec, ok := provider.LookupSinkSpec(sink.Driver)
+	if !ok {
+		return appconfig.Config{}, fmt.Errorf("sink %s 不支持 driver: %s", sink.Name, sink.Driver)
+	}
+	if !sinkSpec.RequiresCredential {
+		return cfg, nil
+	}
 	sinkCfg, err := applyTopologyCredential(cfg, topology, sink.CredentialRef)
 	if err != nil {
 		return appconfig.Config{}, err

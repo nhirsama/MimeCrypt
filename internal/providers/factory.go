@@ -7,8 +7,6 @@ import (
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
 	"mimecrypt/internal/provider"
-	"mimecrypt/internal/providers/graph"
-	"mimecrypt/internal/providers/imap"
 )
 
 func BuildSourceClients(cfg appconfig.Config, driver, folder string) (provider.SourceClients, error) {
@@ -17,22 +15,22 @@ func BuildSourceClients(cfg appconfig.Config, driver, folder string) (provider.S
 
 func BuildSourceClientsWithSession(cfg appconfig.Config, driver, folder string, session provider.Session) (provider.SourceClients, error) {
 	driver = normalizeDriver(driver)
-	if session == nil {
+	sourceSpec, ok := provider.LookupSourceSpec(driver)
+	if !ok {
+		return provider.SourceClients{}, fmt.Errorf("不支持的 source driver: %s", driver)
+	}
+	builder, ok := lookupDriverBuilder(driver)
+	if !ok || builder.buildSource == nil {
+		return provider.SourceClients{}, fmt.Errorf("source driver %s 未提供 provider clients", driver)
+	}
+	if session == nil && sourceSpec.RequiresCredential {
 		var err error
 		session, err = auth.NewSession(SessionAuthConfigForDrivers(cfg, driver), nil)
 		if err != nil {
 			return provider.SourceClients{}, err
 		}
 	}
-
-	switch driver {
-	case "graph":
-		return graph.BuildSourceClientsWithSession(cfg, session)
-	case "imap":
-		return imap.BuildSourceClientsWithSession(cfg, folder, session)
-	default:
-		return provider.SourceClients{}, fmt.Errorf("不支持的 source driver: %s", driver)
-	}
+	return builder.buildSource(cfg, folder, session)
 }
 
 func BuildSinkClients(cfg appconfig.Config, driver, folder string) (provider.SinkClients, error) {
@@ -41,24 +39,22 @@ func BuildSinkClients(cfg appconfig.Config, driver, folder string) (provider.Sin
 
 func BuildSinkClientsWithSession(cfg appconfig.Config, driver, folder string, session provider.Session) (provider.SinkClients, error) {
 	driver = normalizeDriver(driver)
-	if session == nil {
+	sinkSpec, ok := provider.LookupSinkSpec(driver)
+	if !ok {
+		return provider.SinkClients{}, fmt.Errorf("不支持的 sink driver: %s", driver)
+	}
+	builder, ok := lookupDriverBuilder(driver)
+	if !ok || builder.buildSink == nil {
+		return provider.SinkClients{}, fmt.Errorf("sink driver %s 未提供 provider clients", driver)
+	}
+	if session == nil && sinkSpec.RequiresCredential {
 		var err error
 		session, err = auth.NewSession(SessionAuthConfigForDrivers(cfg, driver), nil)
 		if err != nil {
 			return provider.SinkClients{}, err
 		}
 	}
-
-	switch driver {
-	case "graph":
-		return graph.NewWriterClients(cfg, session)
-	case "ews":
-		return graph.NewEWSWriterClients(cfg, session)
-	case "imap":
-		return imap.NewWriterClients(cfg, folder, session)
-	default:
-		return provider.SinkClients{}, fmt.Errorf("不支持的 sink driver: %s", driver)
-	}
+	return builder.buildSink(cfg, folder, session)
 }
 
 func SessionAuthConfigForDrivers(cfg appconfig.Config, drivers ...string) appconfig.AuthConfig {
@@ -68,13 +64,17 @@ func SessionAuthConfigForDrivers(cfg appconfig.Config, drivers ...string) appcon
 	needsEWS := false
 	needsIMAP := false
 	for _, driver := range drivers {
-		switch normalizeDriver(driver) {
-		case "graph":
+		spec, ok := provider.LookupDriverSpec(driver)
+		if !ok {
+			continue
+		}
+		if spec.Auth.Graph {
 			needsGraph = true
-		case "ews":
-			needsGraph = true
+		}
+		if spec.Auth.EWS {
 			needsEWS = true
-		case "imap":
+		}
+		if spec.Auth.IMAP {
 			needsIMAP = true
 		}
 	}

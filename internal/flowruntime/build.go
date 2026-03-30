@@ -62,6 +62,9 @@ func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, er
 		Session:  source.Clients.Session,
 		Reader:   source.Clients.Reader,
 	}
+	if sourceSpec, ok := provider.LookupSourceSpec(run.Source.Driver); ok {
+		service.ProviderProbeKind = sourceSpec.ProbeKind
+	}
 
 	probes := make([]health.WriteBackProbe, 0, len(run.Route.Targets))
 	seen := make(map[string]struct{}, len(run.Route.Targets))
@@ -79,8 +82,11 @@ func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, er
 		if !ok {
 			return nil, fmt.Errorf("route %s 引用了不存在的 sink: %s", run.Route.Name, sinkRef)
 		}
-		switch normalizeDriver(sink.Sink.Driver, "") {
-		case "file", "discard":
+		sinkSpec, ok := provider.LookupSinkSpec(sink.Sink.Driver)
+		if !ok {
+			return nil, fmt.Errorf("route %s 引用了不支持的 sink driver: %s", run.Route.Name, sink.Sink.Driver)
+		}
+		if !sinkSpec.SupportsHealth {
 			continue
 		}
 
@@ -120,8 +126,16 @@ func buildEnvelopeBuilderFromSourceBundle(ctx context.Context, run SourceRun, so
 }
 
 func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
-	if !strings.EqualFold(run.Source.Mode, "poll") {
-		return nil, fmt.Errorf("run 仅支持 polling source，当前 source=%s mode=%s", run.Source.Name, run.Source.Mode)
+	sourceSpec, ok := provider.LookupSourceSpec(run.Source.Driver)
+	if !ok {
+		return nil, fmt.Errorf("run 不支持 source driver=%s", run.Source.Driver)
+	}
+	mode := strings.TrimSpace(run.Source.Mode)
+	if _, ok := sourceSpec.ModeSpec(mode); !ok {
+		return nil, fmt.Errorf("run 不支持 source=%s driver=%s mode=%s", run.Source.Name, run.Source.Driver, mode)
+	}
+	if !strings.EqualFold(mode, "poll") {
+		return nil, fmt.Errorf("run 尚未实现 source=%s 的 mode=%s", run.Source.Name, mode)
 	}
 	source, err := buildSourceBundle(SourcePlan{
 		Source: run.Source,
@@ -208,32 +222,53 @@ func buildMailflowConsumers(ctx context.Context, run SourceRun) (map[string]mail
 			return nil, fmt.Errorf("route %s 引用了不存在的 sink: %s", run.Route.Name, sinkRef)
 		}
 
-		switch normalizeDriver(sink.Sink.Driver, "") {
-		case "discard":
-			consumers[sinkRef] = &adapters.DiscardConsumer{}
-		case "file":
-			consumers[sinkRef] = &adapters.FileConsumer{OutputDir: sink.Sink.OutputDir}
-		default:
-			sinkBundle, err := buildSinkBundle(sink)
+		sinkSpec, ok := provider.LookupSinkSpec(sink.Sink.Driver)
+		if !ok {
+			return nil, fmt.Errorf("route %s 引用了不支持的 sink driver: %s", run.Route.Name, sink.Sink.Driver)
+		}
+
+		if sinkSpec.LocalConsumer {
+			consumer, err := buildLocalConsumer(sink, sinkSpec)
 			if err != nil {
 				return nil, err
 			}
-			sinkStore, err := buildMailflowSinkStore(ctx, sink.Config, sinkBundle.Clients.Reader, sink.Sink.Driver, sink.Mailbox, run.Route.DeleteSource.Enabled)
-			if err != nil {
-				return nil, err
-			}
-			consumers[sinkRef] = &adapters.WritebackConsumer{
-				Service: &writeback.Service{
-					Writer:     sinkBundle.Clients.Writer,
-					Reconciler: sinkBundle.Clients.Reconciler,
-				},
-				DestinationFolderID: sink.Mailbox,
-				Verify:              sink.Sink.Verify,
-				Store:               sinkStore,
-			}
+			consumers[sinkRef] = consumer
+			continue
+		}
+
+		sinkBundle, err := buildSinkBundle(sink)
+		if err != nil {
+			return nil, err
+		}
+		sinkStore, err := buildMailflowSinkStore(ctx, sink.Config, sinkBundle.Clients.Reader, sink.Sink.Driver, sink.Mailbox, run.Route.DeleteSource.Enabled)
+		if err != nil {
+			return nil, err
+		}
+		consumers[sinkRef] = &adapters.WritebackConsumer{
+			Service: &writeback.Service{
+				Writer:     sinkBundle.Clients.Writer,
+				Reconciler: sinkBundle.Clients.Reconciler,
+			},
+			DestinationFolderID: sink.Mailbox,
+			Verify:              sink.Sink.Verify,
+			Store:               sinkStore,
 		}
 	}
 	return consumers, nil
+}
+
+func buildLocalConsumer(sink SinkPlan, sinkSpec *provider.SinkSpec) (mailflow.Consumer, error) {
+	if sinkSpec == nil {
+		return nil, fmt.Errorf("sink %s 缺少 capability", sink.Sink.Name)
+	}
+	switch sinkSpec.LocalConsumerKind {
+	case provider.LocalConsumerDiscard:
+		return &adapters.DiscardConsumer{}, nil
+	case provider.LocalConsumerFile:
+		return &adapters.FileConsumer{OutputDir: sink.Sink.OutputDir}, nil
+	default:
+		return nil, fmt.Errorf("sink driver %s 缺少本地 consumer 适配", sink.Sink.Driver)
+	}
 }
 
 func buildMailflowPlan(route appconfig.Route) (mailflow.ExecutionPlan, error) {
@@ -323,7 +358,7 @@ func buildMailflowSinkStore(ctx context.Context, cfg appconfig.Config, reader pr
 
 func resolveStoreAccount(ctx context.Context, driver string, cfg appconfig.Config, reader provider.Reader) (string, error) {
 	driver = normalizeDriver(driver, "")
-	if driver == "imap" {
+	if sourceSpec, ok := provider.LookupSourceSpec(driver); ok && sourceSpec.ProbeKind == provider.ProviderProbeFolderList {
 		return strings.TrimSpace(cfg.Mail.Client.IMAPUsername), nil
 	}
 	if reader == nil {

@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/mailflow/adapters"
+	"mimecrypt/internal/provider"
 )
 
 func TestBuildMailflowPlanAddsConfiguredTargets(t *testing.T) {
@@ -108,5 +110,30 @@ func TestApplyTopologyCredentialUsesNamedStateDir(t *testing.T) {
 	}
 	if got.Auth.TokenStore != "keyring" {
 		t.Fatalf("TokenStore = %q, want keyring", got.Auth.TokenStore)
+	}
+}
+
+func TestBuildLocalConsumerUsesCapabilityKind(t *testing.T) {
+	t.Parallel()
+
+	consumer, err := buildLocalConsumer(SinkPlan{
+		Sink: appconfig.Sink{
+			Name:      "local-output",
+			Driver:    "file",
+			OutputDir: "/tmp/out",
+		},
+	}, &provider.SinkSpec{
+		LocalConsumer:     true,
+		LocalConsumerKind: provider.LocalConsumerFile,
+	})
+	if err != nil {
+		t.Fatalf("buildLocalConsumer() error = %v", err)
+	}
+	fileConsumer, ok := consumer.(*adapters.FileConsumer)
+	if !ok {
+		t.Fatalf("consumer type = %T, want *adapters.FileConsumer", consumer)
+	}
+	if fileConsumer.OutputDir != "/tmp/out" {
+		t.Fatalf("OutputDir = %q, want /tmp/out", fileConsumer.OutputDir)
 	}
 }
