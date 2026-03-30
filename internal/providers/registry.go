@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers/graph"
 	"mimecrypt/internal/providers/imap"
+	webhookdevice "mimecrypt/internal/providers/webhook"
 )
 
 type PushIngress interface {
@@ -36,6 +38,8 @@ type driverRegistration struct {
 	BuildSink        sinkClientsFactory
 	BuildPushIngress pushIngressFactory
 	BuildLocalSink   localConsumerFactory
+	ConfigureSource  func(appconfig.Source, io.Reader, io.Writer) (appconfig.Source, error)
+	DescribeSource   func(appconfig.Source) []string
 	ValidateSource   func(source appconfig.Source) error
 	ValidateSink     func(sink appconfig.Sink) error
 }
@@ -173,8 +177,12 @@ var driverRegistrations = map[string]driverRegistration{
 				},
 			},
 		},
-		BuildPushIngress: buildWebhookIngress,
-		ValidateSource:   validateWebhookSourceConfig,
+		BuildPushIngress: func(cfg appconfig.Config, route appconfig.Route, source appconfig.Source, spool *adapters.PushSpool) (PushIngress, error) {
+			return webhookdevice.BuildIngress(cfg, route, source, spool)
+		},
+		ConfigureSource: webhookdevice.ConfigureSource,
+		DescribeSource:  webhookdevice.DescribeSource,
+		ValidateSource:  webhookdevice.ValidateSourceConfig,
 	},
 }
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"slices"
@@ -12,6 +13,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/appruntime"
+	"mimecrypt/internal/interact"
 	"mimecrypt/internal/providers"
 )
 
@@ -43,6 +45,10 @@ func newLoginCmd() *cobra.Command {
 			configureDrivers := loginDriversForConfig(resolved)
 			localCfg, cfg, resolvedDrivers, err := providers.ConfigureLoginLocalConfig(cfg, localCfg, cmd.InOrStdin(), out, configureDrivers...)
 			if err != nil {
+				if errors.Is(err, interact.ErrAbort) {
+					_, _ = fmt.Fprintln(out, "已取消 credential 登录配置")
+					return nil
+				}
 				return fmt.Errorf("login 失败: %w", err)
 			}
 			if err := appconfig.SaveLocalConfig(cfg.Auth.StateDir, localCfg); err != nil {

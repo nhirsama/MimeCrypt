@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/interact"
 )
 
 func TestBuildLoginRuntimeUsesDriverLoginConfigForIMAP(t *testing.T) {
@@ -112,5 +114,20 @@ func TestConfigureLoginLocalConfigPromptsForDriversAndPersistsMicrosoftOverrides
 	}
 	if resolvedCfg.Mail.Client.IMAPUsername != "mailbox@example.com" {
 		t.Fatalf("resolved IMAP username = %q, want mailbox@example.com", resolvedCfg.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestConfigureLoginLocalConfigAllowsAbort(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+	_, _, _, err := ConfigureLoginLocalConfig(
+		cfg,
+		appconfig.LocalConfig{},
+		strings.NewReader("q\n"),
+		io.Discard,
+	)
+	if !errors.Is(err, interact.ErrAbort) {
+		t.Fatalf("ConfigureLoginLocalConfig() error = %v, want interact.ErrAbort", err)
 	}
 }

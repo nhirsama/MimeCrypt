@@ -146,3 +146,54 @@ func TestLoadTopologyFileNormalizesNames(t *testing.T) {
 		t.Fatalf("poll interval = %s, want %s", topology.Sources["office"].PollInterval, time.Minute)
 	}
 }
+
+func TestSaveTopologyFileRoundTrips(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "nested", "topology.json")
+	want := Topology{
+		Sources: map[string]Source{
+			"incoming": {
+				Name:   "incoming",
+				Driver: "webhook",
+				Mode:   "push",
+				Webhook: &WebhookSource{
+					ListenAddr:         "127.0.0.1:8080",
+					Path:               "/mail/incoming",
+					SecretEnv:          "MIMECRYPT_WEBHOOK_SECRET",
+					MaxBodyBytes:       25 << 20,
+					TimestampTolerance: 5 * time.Minute,
+				},
+			},
+		},
+		Sinks: map[string]Sink{
+			"archive": {Name: "archive", Driver: "file", OutputDir: "/tmp/out"},
+		},
+		Routes: map[string]Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"incoming"},
+				Targets: []RouteTarget{
+					{Name: "archive", SinkRef: "archive", Artifact: "primary", Required: true},
+				},
+			},
+		},
+		DefaultSource: "incoming",
+		DefaultRoute:  "default",
+	}
+
+	if err := SaveTopologyFile(path, want); err != nil {
+		t.Fatalf("SaveTopologyFile() error = %v", err)
+	}
+
+	got, err := LoadTopologyFile(path)
+	if err != nil {
+		t.Fatalf("LoadTopologyFile() error = %v", err)
+	}
+	if got.DefaultSource != want.DefaultSource || got.DefaultRoute != want.DefaultRoute {
+		t.Fatalf("defaults = %+v, want %+v", got, want)
+	}
+	if got.Sources["incoming"].Webhook == nil || got.Sources["incoming"].Webhook.Path != "/mail/incoming" {
+		t.Fatalf("sources = %+v", got.Sources)
+	}
+}

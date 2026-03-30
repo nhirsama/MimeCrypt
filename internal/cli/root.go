@@ -30,6 +30,7 @@ func newRootCmd() *cobra.Command {
 	}
 	rootCmd.SetFlagErrorFunc(newFlagUsageError)
 
+	rootCmd.AddCommand(newConfigCmd())
 	rootCmd.AddCommand(newLoginCmd())
 	rootCmd.AddCommand(newRevokeCmd())
 	rootCmd.AddCommand(newHealthCmd())

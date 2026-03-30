@@ -3,6 +3,7 @@ package providers
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -12,6 +13,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
+	"mimecrypt/internal/interact"
 	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers/graph"
 )
@@ -128,6 +130,7 @@ func ConfigureLoginLocalConfig(cfg appconfig.Config, localCfg appconfig.LocalCon
 
 	resolvedDrivers := effectiveCredentialDrivers(drivers...)
 	if len(resolvedDrivers) == 0 {
+		_, _ = fmt.Fprintln(out, "请选择 credential 需要绑定的驱动，输入 q 可退出。")
 		var err error
 		resolvedDrivers, err = promptDriverSelection(reader, out, localCfg.Drivers)
 		if err != nil {
@@ -215,7 +218,7 @@ func configureMicrosoftLocalConfig(cfg appconfig.Config, localCfg appconfig.Loca
 		microsoft = &appconfig.MicrosoftLocalConfig{}
 	}
 
-	_, _ = fmt.Fprintf(out, "配置登录驱动: microsoft-oauth (drivers=%s)\n", strings.Join(drivers, ","))
+	_, _ = fmt.Fprintf(out, "配置登录驱动: microsoft-oauth (drivers=%s，输入 q 可退出)\n", strings.Join(drivers, ","))
 
 	clientID, err := promptConfigValue(reader, out, "Client ID", cfg.Auth.ClientID, microsoft.ClientID)
 	if err != nil {
@@ -333,9 +336,12 @@ func promptConfigValue(reader *bufio.Reader, out io.Writer, label, current, over
 		return "", fmt.Errorf("读取交互输入失败: %w", err)
 	}
 	value := strings.TrimSpace(line)
+	if interact.IsAbortInput(value) {
+		return "", interact.ErrAbort
+	}
 	switch value {
 	case "":
-		return override, nil
+		return effective, nil
 	case "-":
 		return "", nil
 	default:
@@ -379,6 +385,9 @@ func promptDriverSelection(reader *bufio.Reader, out io.Writer, current []string
 			return nil, fmt.Errorf("读取驱动选择失败: %w", err)
 		}
 		selection := strings.TrimSpace(line)
+		if interact.IsAbortInput(selection) {
+			return nil, interact.ErrAbort
+		}
 		if selection == "" {
 			if len(current) > 0 {
 				return append([]string(nil), current...), nil
@@ -393,6 +402,9 @@ func promptDriverSelection(reader *bufio.Reader, out io.Writer, current []string
 		selected, parseErr := parseDriverSelection(selection, candidates)
 		if parseErr == nil {
 			return selected, nil
+		}
+		if errors.Is(parseErr, interact.ErrAbort) {
+			return nil, parseErr
 		}
 		if err == io.EOF {
 			return nil, parseErr

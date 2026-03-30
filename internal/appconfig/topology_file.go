@@ -41,3 +41,23 @@ func LoadTopologyFile(path string) (Topology, error) {
 	}
 	return topology.Normalize(), nil
 }
+
+func SaveTopologyFile(path string, topology Topology) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("topology path 不能为空")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("创建 topology 目录失败: %w", err)
+	}
+
+	content, err := json.MarshalIndent(topology.Normalize(), "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化 topology 配置失败: %w", err)
+	}
+	content = append(content, '\n')
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		return fmt.Errorf("写入 topology 配置失败: %w", err)
+	}
+	return nil
+}
