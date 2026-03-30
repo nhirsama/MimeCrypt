@@ -6,11 +6,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
 type LocalConfig struct {
-	IMAPUsername string `json:"imapUsername,omitempty"`
+	Drivers      []string              `json:"drivers,omitempty"`
+	LoginConfig  string                `json:"loginConfig,omitempty"`
+	IMAPUsername string                `json:"imapUsername,omitempty"`
+	Microsoft    *MicrosoftLocalConfig `json:"microsoft,omitempty"`
+}
+
+type MicrosoftLocalConfig struct {
+	ClientID         string `json:"clientId,omitempty"`
+	Tenant           string `json:"tenant,omitempty"`
+	AuthorityBaseURL string `json:"authorityBaseURL,omitempty"`
+	IMAPUsername     string `json:"imapUsername,omitempty"`
 }
 
 func LoadLocalConfig(stateDir string) (LocalConfig, error) {
@@ -27,8 +38,7 @@ func LoadLocalConfig(stateDir string) (LocalConfig, error) {
 	if err := json.Unmarshal(content, &cfg); err != nil {
 		return LocalConfig{}, fmt.Errorf("解析本地配置失败: %w", err)
 	}
-	cfg.IMAPUsername = strings.TrimSpace(cfg.IMAPUsername)
-	return cfg, nil
+	return normalizeLocalConfig(cfg), nil
 }
 
 func SaveLocalConfig(stateDir string, cfg LocalConfig) error {
@@ -39,7 +49,7 @@ func SaveLocalConfig(stateDir string, cfg LocalConfig) error {
 		return fmt.Errorf("创建本地配置目录失败: %w", err)
 	}
 
-	cfg.IMAPUsername = strings.TrimSpace(cfg.IMAPUsername)
+	cfg = normalizeLocalConfig(cfg)
 	content, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return fmt.Errorf("序列化本地配置失败: %w", err)
@@ -66,4 +76,43 @@ func ClearLocalConfig(stateDir string) error {
 
 func LocalConfigPath(stateDir string) string {
 	return filepath.Join(stateDir, "config.json")
+}
+
+func normalizeLocalConfig(cfg LocalConfig) LocalConfig {
+	cfg.LoginConfig = strings.TrimSpace(cfg.LoginConfig)
+	cfg.IMAPUsername = strings.TrimSpace(cfg.IMAPUsername)
+
+	seen := make(map[string]struct{}, len(cfg.Drivers))
+	drivers := make([]string, 0, len(cfg.Drivers))
+	for _, driver := range cfg.Drivers {
+		driver = strings.ToLower(strings.TrimSpace(driver))
+		if driver == "" {
+			continue
+		}
+		if _, ok := seen[driver]; ok {
+			continue
+		}
+		seen[driver] = struct{}{}
+		drivers = append(drivers, driver)
+	}
+	sort.Strings(drivers)
+	cfg.Drivers = drivers
+
+	if cfg.Microsoft != nil {
+		cfg.Microsoft.ClientID = strings.TrimSpace(cfg.Microsoft.ClientID)
+		cfg.Microsoft.Tenant = strings.TrimSpace(cfg.Microsoft.Tenant)
+		cfg.Microsoft.AuthorityBaseURL = strings.TrimSpace(cfg.Microsoft.AuthorityBaseURL)
+		cfg.Microsoft.IMAPUsername = strings.TrimSpace(cfg.Microsoft.IMAPUsername)
+		if cfg.IMAPUsername == "" {
+			cfg.IMAPUsername = cfg.Microsoft.IMAPUsername
+		}
+		if cfg.Microsoft.ClientID == "" &&
+			cfg.Microsoft.Tenant == "" &&
+			cfg.Microsoft.AuthorityBaseURL == "" &&
+			cfg.Microsoft.IMAPUsername == "" {
+			cfg.Microsoft = nil
+		}
+	}
+
+	return cfg
 }

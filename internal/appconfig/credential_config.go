@@ -60,6 +60,20 @@ func (c Config) WithLocalConfig(localCfg LocalConfig) Config {
 	if value := strings.TrimSpace(localCfg.IMAPUsername); value != "" {
 		cfg.Mail.Client.IMAPUsername = value
 	}
+	if localCfg.Microsoft != nil {
+		if value := strings.TrimSpace(localCfg.Microsoft.ClientID); value != "" {
+			cfg.Auth.ClientID = value
+		}
+		if value := strings.TrimSpace(localCfg.Microsoft.Tenant); value != "" {
+			cfg.Auth.Tenant = value
+		}
+		if value := strings.TrimSpace(localCfg.Microsoft.AuthorityBaseURL); value != "" {
+			cfg.Auth.AuthorityBaseURL = value
+		}
+		if value := strings.TrimSpace(localCfg.Microsoft.IMAPUsername); value != "" {
+			cfg.Mail.Client.IMAPUsername = value
+		}
+	}
 	return cfg
 }
 

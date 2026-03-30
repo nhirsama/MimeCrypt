@@ -203,6 +203,41 @@ func TestConfigWithLocalConfigAppliesStoredIMAPUsername(t *testing.T) {
 	}
 }
 
+func TestConfigWithLocalConfigAppliesMicrosoftOverrides(t *testing.T) {
+	t.Parallel()
+
+	cfg := Config{
+		Auth: AuthConfig{
+			ClientID:         "base-client",
+			Tenant:           "base-tenant",
+			AuthorityBaseURL: "https://login.microsoftonline.com",
+		},
+		Mail: MailConfig{
+			Client: MailClientConfig{
+				IMAPUsername: "base@example.com",
+			},
+		},
+	}
+
+	got := cfg.WithLocalConfig(LocalConfig{
+		Microsoft: &MicrosoftLocalConfig{
+			ClientID:         "override-client",
+			Tenant:           "override-tenant",
+			AuthorityBaseURL: "https://login.microsoftonline.com",
+			IMAPUsername:     "override@example.com",
+		},
+	})
+	if got.Auth.ClientID != "override-client" {
+		t.Fatalf("ClientID = %q, want override-client", got.Auth.ClientID)
+	}
+	if got.Auth.Tenant != "override-tenant" {
+		t.Fatalf("Tenant = %q, want override-tenant", got.Auth.Tenant)
+	}
+	if got.Mail.Client.IMAPUsername != "override@example.com" {
+		t.Fatalf("IMAPUsername = %q, want override@example.com", got.Mail.Client.IMAPUsername)
+	}
+}
+
 func TestConfigWithCredentialAllowsExplicitScopeClear(t *testing.T) {
 	t.Parallel()
 

@@ -80,6 +80,38 @@ func TestResolveCredentialCommandPlanAllowsExplicitCredentialWithoutTopology(t *
 	}
 }
 
+func TestResolveCredentialCommandPlanRestoresDriversFromLocalConfig(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	credentialStateDir := filepath.Join(stateDir, "credentials", "office-auth")
+	if err := appconfig.SaveLocalConfig(credentialStateDir, appconfig.LocalConfig{
+		Drivers: []string{"imap", "graph"},
+		Microsoft: &appconfig.MicrosoftLocalConfig{
+			IMAPUsername: "stored@example.com",
+		},
+	}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	plan, err := ResolveCredentialCommandPlan(appconfig.Config{
+		TopologyPath: filepath.Join(stateDir, "missing-topology.json"),
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "office-auth")
+	if err != nil {
+		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
+	}
+	if got := strings.Join(plan.AuthDrivers, ","); got != "graph,imap" {
+		t.Fatalf("AuthDrivers = %q, want graph,imap", got)
+	}
+	if plan.Config.Mail.Client.IMAPUsername != "stored@example.com" {
+		t.Fatalf("IMAPUsername = %q, want stored@example.com", plan.Config.Mail.Client.IMAPUsername)
+	}
+}
+
 func TestResolveCredentialCommandPlanFallsBackWhenTopologyIsInvalid(t *testing.T) {
 	t.Parallel()
 

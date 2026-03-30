@@ -3,7 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
-	"os"
+	"io"
 	"slices"
 	"strings"
 	"time"
@@ -12,6 +12,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/appruntime"
+	"mimecrypt/internal/providers"
 )
 
 func newLoginCmd() *cobra.Command {
@@ -19,10 +20,10 @@ func newLoginCmd() *cobra.Command {
 	credentialFlags := newCredentialConfigFlags(bootstrap.Config())
 
 	cmd := &cobra.Command{
-		Use:   "login [imap-username]",
-		Short: "为 credential 创建设备登录状态并写入本地 token 缓存",
-		Args:  argRange(0, 1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		Use:   "login",
+		Short: "交互式配置 credential 并写入本地登录状态",
+		Args:  noArgs(),
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := bootstrap.Error(); err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
@@ -33,8 +34,22 @@ func newLoginCmd() *cobra.Command {
 				return fmt.Errorf("login 失败: %w", err)
 			}
 			cfg = resolved.Config
-			cfg = applyLoginIMAPUsernameArg(cfg, args)
+
+			localCfg, err := appconfig.LoadLocalConfig(cfg.Auth.StateDir)
+			if err != nil {
+				return fmt.Errorf("login 失败: %w", err)
+			}
+			out := cmd.OutOrStdout()
+			configureDrivers := loginDriversForConfig(resolved)
+			localCfg, cfg, resolvedDrivers, err := providers.ConfigureLoginLocalConfig(cfg, localCfg, cmd.InOrStdin(), out, configureDrivers...)
+			if err != nil {
+				return fmt.Errorf("login 失败: %w", err)
+			}
+			if err := appconfig.SaveLocalConfig(cfg.Auth.StateDir, localCfg); err != nil {
+				return fmt.Errorf("login 失败: 保存本地驱动配置失败: %w", err)
+			}
 			resolved.Config = cfg
+			resolved.AuthDrivers = resolvedDrivers
 
 			loginCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
 			defer cancel()
@@ -44,22 +59,16 @@ func newLoginCmd() *cobra.Command {
 				return fmt.Errorf("login 失败: %w", err)
 			}
 
-			result, err := service.Run(loginCtx, os.Stdout)
+			result, err := service.Run(loginCtx, out)
 			if err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
-			if username := strings.TrimSpace(cfg.Mail.Client.IMAPUsername); username != "" {
-				if err := appconfig.SaveLocalConfig(cfg.Auth.StateDir, appconfig.LocalConfig{IMAPUsername: username}); err != nil {
-					return fmt.Errorf("login 成功，但保存 IMAP 用户名失败: %w", err)
-				}
-			}
-
-			fmt.Printf("登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
+			_, _ = fmt.Fprintf(out, "登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
 			if strings.TrimSpace(resolved.CredentialName) != "" {
-				fmt.Printf("credential=%s\n", resolved.CredentialName)
+				_, _ = fmt.Fprintf(out, "credential=%s\n", resolved.CredentialName)
 			}
-			printCredentialBindingSummary(resolved)
-			fmt.Printf("token 已缓存到 %s\n", result.StateDir)
+			printCredentialBindingSummary(out, resolved)
+			_, _ = fmt.Fprintf(out, "token 已缓存到 %s\n", result.StateDir)
 
 			return nil
 		},
@@ -70,27 +79,26 @@ func newLoginCmd() *cobra.Command {
 	return cmd
 }
 
-func printCredentialBindingSummary(plan appruntime.CredentialPlan) {
+func printCredentialBindingSummary(out io.Writer, plan appruntime.CredentialPlan) {
+	if out == nil {
+		out = io.Discard
+	}
 	if len(plan.AuthDrivers) > 0 {
 		drivers := append([]string(nil), plan.AuthDrivers...)
 		slices.Sort(drivers)
-		fmt.Printf("drivers=%s\n", strings.Join(drivers, ","))
+		_, _ = fmt.Fprintf(out, "drivers=%s\n", strings.Join(drivers, ","))
 	}
 	if sources := plan.BindingNames(appruntime.CredentialBindingSource); len(sources) > 0 {
-		fmt.Printf("sources=%s\n", strings.Join(sources, ","))
+		_, _ = fmt.Fprintf(out, "sources=%s\n", strings.Join(sources, ","))
 	}
 	if sinks := plan.BindingNames(appruntime.CredentialBindingSink); len(sinks) > 0 {
-		fmt.Printf("sinks=%s\n", strings.Join(sinks, ","))
+		_, _ = fmt.Fprintf(out, "sinks=%s\n", strings.Join(sinks, ","))
 	}
 }
 
-func applyLoginIMAPUsernameArg(cfg appconfig.Config, args []string) appconfig.Config {
-	if len(args) != 1 {
-		return cfg
+func loginDriversForConfig(plan appruntime.CredentialPlan) []string {
+	if len(plan.Bindings) == 0 {
+		return nil
 	}
-	if os.Getenv("MIMECRYPT_IMAP_USERNAME") != "" {
-		return cfg
-	}
-	cfg.Mail.Client.IMAPUsername = strings.TrimSpace(args[0])
-	return cfg
+	return append([]string(nil), plan.AuthDrivers...)
 }

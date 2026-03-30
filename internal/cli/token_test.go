@@ -11,6 +11,9 @@ import (
 
 func TestTokenStatusCommandFallsBackWithoutTopology(t *testing.T) {
 	stateDir := t.TempDir()
+	if err := appconfig.SaveLocalConfig(stateDir, appconfig.LocalConfig{Drivers: []string{"imap"}}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
 	cmd := newTokenStatusCmd(appconfig.Config{
 		TopologyPath: appconfig.DefaultTopologyPath(stateDir),
 		Auth: appconfig.AuthConfig{

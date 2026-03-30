@@ -1,11 +1,14 @@
 package providers
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
+	"unicode"
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
@@ -36,6 +39,7 @@ type LoginRuntime struct {
 type driverLoginConfig struct {
 	Name               string
 	ApplyConfig        func(appconfig.Config, []string) appconfig.Config
+	ConfigureLocal     func(appconfig.Config, appconfig.LocalConfig, []string, io.Reader, io.Writer) (appconfig.LocalConfig, error)
 	BuildSession       func(appconfig.Config) (CredentialSession, error)
 	BuildIdentityProbe func(appconfig.Config, []string, provider.TokenSource) (func(context.Context) (provider.User, error), error)
 }
@@ -46,12 +50,15 @@ type driverRevokeConfig struct {
 	BuildRemoteRevoker func(appconfig.Config, []string, provider.TokenSource) (CredentialRemoteRevoker, error)
 }
 
+const microsoftCredentialConfigName = "microsoft-oauth"
+
 var microsoftDriverLoginConfig = &driverLoginConfig{
-	Name: "microsoft-oauth",
+	Name: microsoftCredentialConfigName,
 	ApplyConfig: func(cfg appconfig.Config, drivers []string) appconfig.Config {
 		cfg.Auth = applyMicrosoftDriverAuthConfig(cfg.Auth, drivers)
 		return cfg
 	},
+	ConfigureLocal: configureMicrosoftLocalConfig,
 	BuildSession: func(cfg appconfig.Config) (CredentialSession, error) {
 		return auth.NewSession(cfg.Auth, nil)
 	},
@@ -59,7 +66,7 @@ var microsoftDriverLoginConfig = &driverLoginConfig{
 }
 
 var microsoftDriverRevokeConfig = &driverRevokeConfig{
-	Name: "microsoft-oauth",
+	Name: microsoftCredentialConfigName,
 	ApplyConfig: func(cfg appconfig.Config, drivers []string) appconfig.Config {
 		cfg.Auth = applyMicrosoftDriverAuthConfig(cfg.Auth, drivers)
 		return cfg
@@ -70,13 +77,13 @@ var microsoftDriverRevokeConfig = &driverRevokeConfig{
 }
 
 func BuildLoginRuntime(cfg appconfig.Config, drivers ...string) (LoginRuntime, error) {
-	resolvedDrivers := effectiveCredentialDrivers(cfg, drivers...)
+	resolvedDrivers := effectiveCredentialDrivers(drivers...)
 	loginConfig, resolvedDrivers, err := resolveDriverLoginConfig(resolvedDrivers)
 	if err != nil {
 		return LoginRuntime{}, err
 	}
 	if loginConfig == nil {
-		return LoginRuntime{}, fmt.Errorf("未找到可用的 login 驱动配置")
+		return LoginRuntime{}, fmt.Errorf("credential 未配置登录驱动，请先执行 login 进行交互式配置")
 	}
 
 	effectiveCfg := cfg
@@ -106,14 +113,55 @@ func BuildLoginRuntime(cfg appconfig.Config, drivers ...string) (LoginRuntime, e
 	}, nil
 }
 
+func ConfigureLoginLocalConfig(cfg appconfig.Config, localCfg appconfig.LocalConfig, in io.Reader, out io.Writer, drivers ...string) (appconfig.LocalConfig, appconfig.Config, []string, error) {
+	if in == nil {
+		in = strings.NewReader("")
+	}
+	if out == nil {
+		out = io.Discard
+	}
+
+	reader, ok := in.(*bufio.Reader)
+	if !ok {
+		reader = bufio.NewReader(in)
+	}
+
+	resolvedDrivers := effectiveCredentialDrivers(drivers...)
+	if len(resolvedDrivers) == 0 {
+		var err error
+		resolvedDrivers, err = promptDriverSelection(reader, out, localCfg.Drivers)
+		if err != nil {
+			return appconfig.LocalConfig{}, appconfig.Config{}, nil, err
+		}
+	}
+	loginConfig, resolvedDrivers, err := resolveDriverLoginConfig(resolvedDrivers)
+	if err != nil {
+		return appconfig.LocalConfig{}, appconfig.Config{}, nil, err
+	}
+	if loginConfig == nil {
+		return appconfig.LocalConfig{}, appconfig.Config{}, nil, fmt.Errorf("未找到可用的 login 驱动配置")
+	}
+
+	updated := localCfg
+	updated.Drivers = append([]string(nil), resolvedDrivers...)
+	updated.LoginConfig = loginConfig.Name
+	if loginConfig.ConfigureLocal != nil {
+		updated, err = loginConfig.ConfigureLocal(cfg, updated, resolvedDrivers, reader, out)
+		if err != nil {
+			return appconfig.LocalConfig{}, appconfig.Config{}, nil, err
+		}
+	}
+	return updated, cfg.WithLocalConfig(updated), resolvedDrivers, nil
+}
+
 func BuildRemoteRevoker(cfg appconfig.Config, tokenSource provider.TokenSource, drivers ...string) (CredentialRemoteRevoker, appconfig.Config, error) {
-	resolvedDrivers := effectiveCredentialDrivers(cfg, drivers...)
+	resolvedDrivers := effectiveCredentialDrivers(drivers...)
 	revokeConfig, resolvedDrivers, err := resolveDriverRevokeConfig(resolvedDrivers)
 	if err != nil {
 		return nil, appconfig.Config{}, err
 	}
 	if revokeConfig == nil {
-		return nil, cfg, fmt.Errorf("未找到可用的 revoke 驱动配置")
+		return nil, cfg, fmt.Errorf("credential 未配置 revoke 驱动，请先执行 login 进行交互式配置")
 	}
 
 	effectiveCfg := cfg
@@ -150,6 +198,59 @@ func buildMicrosoftLoginIdentityProbe(cfg appconfig.Config, _ []string, tokenSou
 	}
 }
 
+func configureMicrosoftLocalConfig(cfg appconfig.Config, localCfg appconfig.LocalConfig, drivers []string, in io.Reader, out io.Writer) (appconfig.LocalConfig, error) {
+	if in == nil {
+		in = strings.NewReader("")
+	}
+	if out == nil {
+		out = io.Discard
+	}
+
+	reader, ok := in.(*bufio.Reader)
+	if !ok {
+		reader = bufio.NewReader(in)
+	}
+	microsoft := localCfg.Microsoft
+	if microsoft == nil {
+		microsoft = &appconfig.MicrosoftLocalConfig{}
+	}
+
+	_, _ = fmt.Fprintf(out, "配置登录驱动: microsoft-oauth (drivers=%s)\n", strings.Join(drivers, ","))
+
+	clientID, err := promptConfigValue(reader, out, "Client ID", cfg.Auth.ClientID, microsoft.ClientID)
+	if err != nil {
+		return appconfig.LocalConfig{}, err
+	}
+	tenant, err := promptConfigValue(reader, out, "Tenant", cfg.Auth.Tenant, microsoft.Tenant)
+	if err != nil {
+		return appconfig.LocalConfig{}, err
+	}
+	authorityBaseURL, err := promptConfigValue(reader, out, "Authority Base URL", cfg.Auth.AuthorityBaseURL, microsoft.AuthorityBaseURL)
+	if err != nil {
+		return appconfig.LocalConfig{}, err
+	}
+
+	microsoft.ClientID = clientID
+	microsoft.Tenant = tenant
+	microsoft.AuthorityBaseURL = authorityBaseURL
+	if containsDriver(drivers, "imap") {
+		imapUsername, err := promptConfigValue(reader, out, "IMAP Username", cfg.Mail.Client.IMAPUsername, microsoft.IMAPUsername)
+		if err != nil {
+			return appconfig.LocalConfig{}, err
+		}
+		microsoft.IMAPUsername = imapUsername
+		localCfg.IMAPUsername = imapUsername
+	} else {
+		microsoft.IMAPUsername = ""
+		localCfg.IMAPUsername = ""
+	}
+
+	localCfg.Microsoft = microsoft
+	localCfg.LoginConfig = microsoftCredentialConfigName
+	localCfg.Drivers = append([]string(nil), drivers...)
+	return localCfg, nil
+}
+
 func applyMicrosoftDriverAuthConfig(authCfg appconfig.AuthConfig, drivers []string) appconfig.AuthConfig {
 	needsGraph := false
 	needsEWS := false
@@ -178,23 +279,8 @@ func applyMicrosoftDriverAuthConfig(authCfg appconfig.AuthConfig, drivers []stri
 	return authCfg
 }
 
-func effectiveCredentialDrivers(cfg appconfig.Config, drivers ...string) []string {
-	normalized := uniqueNormalizedDrivers(drivers)
-	if len(normalized) > 0 {
-		return normalized
-	}
-
-	inferred := make([]string, 0, 3)
-	if len(cfg.Auth.GraphScopes) > 0 {
-		inferred = append(inferred, "graph")
-	}
-	if len(cfg.Auth.EWSScopes) > 0 {
-		inferred = append(inferred, "ews")
-	}
-	if len(cfg.Auth.IMAPScopes) > 0 {
-		inferred = append(inferred, "imap")
-	}
-	return uniqueNormalizedDrivers(inferred)
+func effectiveCredentialDrivers(drivers ...string) []string {
+	return uniqueNormalizedDrivers(drivers)
 }
 
 func uniqueNormalizedDrivers(drivers []string) []string {
@@ -215,7 +301,167 @@ func uniqueNormalizedDrivers(drivers []string) []string {
 	return normalized
 }
 
+func containsDriver(drivers []string, target string) bool {
+	target = normalizeDriver(target)
+	for _, driver := range drivers {
+		if normalizeDriver(driver) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func promptConfigValue(reader *bufio.Reader, out io.Writer, label, current, override string) (string, error) {
+	current = strings.TrimSpace(current)
+	override = strings.TrimSpace(override)
+
+	effective := current
+	if override != "" {
+		effective = override
+	}
+	prompt := label
+	if effective != "" {
+		prompt += " [" + effective + "]"
+	}
+	prompt += " (回车保留，输入 - 清空覆盖): "
+	if _, err := fmt.Fprint(out, prompt); err != nil {
+		return "", fmt.Errorf("输出交互提示失败: %w", err)
+	}
+
+	line, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", fmt.Errorf("读取交互输入失败: %w", err)
+	}
+	value := strings.TrimSpace(line)
+	switch value {
+	case "":
+		return override, nil
+	case "-":
+		return "", nil
+	default:
+		return value, nil
+	}
+}
+
+func promptDriverSelection(reader *bufio.Reader, out io.Writer, current []string) ([]string, error) {
+	candidates := availableLoginDrivers()
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("当前没有支持交互式 login 配置的驱动")
+	}
+
+	current = filterDriversByCandidateSet(current, candidates)
+	_, _ = fmt.Fprintln(out, "请选择 credential 需要绑定的邮件驱动，可输入编号或名称，多个值用逗号分隔。")
+	for idx, driver := range candidates {
+		registration, _ := lookupDriverRegistration(driver)
+		configName := ""
+		if registration.LoginConfig != nil {
+			configName = registration.LoginConfig.Name
+		}
+		if configName == "" {
+			_, _ = fmt.Fprintf(out, "  %d) %s\n", idx+1, driver)
+			continue
+		}
+		_, _ = fmt.Fprintf(out, "  %d) %s (%s)\n", idx+1, driver, configName)
+	}
+
+	for {
+		prompt := "驱动"
+		if len(current) > 0 {
+			prompt += " [" + strings.Join(current, ",") + "]"
+		}
+		prompt += ": "
+		if _, err := fmt.Fprint(out, prompt); err != nil {
+			return nil, fmt.Errorf("输出驱动选择提示失败: %w", err)
+		}
+
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return nil, fmt.Errorf("读取驱动选择失败: %w", err)
+		}
+		selection := strings.TrimSpace(line)
+		if selection == "" {
+			if len(current) > 0 {
+				return append([]string(nil), current...), nil
+			}
+			if err == io.EOF {
+				return nil, fmt.Errorf("至少需要选择一个驱动")
+			}
+			_, _ = fmt.Fprintln(out, "至少需要选择一个驱动。")
+			continue
+		}
+
+		selected, parseErr := parseDriverSelection(selection, candidates)
+		if parseErr == nil {
+			return selected, nil
+		}
+		if err == io.EOF {
+			return nil, parseErr
+		}
+		_, _ = fmt.Fprintf(out, "驱动选择无效: %v\n", parseErr)
+	}
+}
+
+func availableLoginDrivers() []string {
+	drivers := make([]string, 0, len(driverRegistrations))
+	for name, registration := range driverRegistrations {
+		if registration.LoginConfig == nil {
+			continue
+		}
+		drivers = append(drivers, normalizeDriver(name))
+	}
+	sort.Strings(drivers)
+	return drivers
+}
+
+func filterDriversByCandidateSet(drivers, candidates []string) []string {
+	if len(drivers) == 0 || len(candidates) == 0 {
+		return nil
+	}
+	allowed := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		allowed[normalizeDriver(candidate)] = struct{}{}
+	}
+
+	filtered := make([]string, 0, len(drivers))
+	for _, driver := range uniqueNormalizedDrivers(drivers) {
+		if _, ok := allowed[driver]; !ok {
+			continue
+		}
+		filtered = append(filtered, driver)
+	}
+	return filtered
+}
+
+func parseDriverSelection(selection string, candidates []string) ([]string, error) {
+	tokens := strings.FieldsFunc(selection, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+	if len(tokens) == 0 {
+		return nil, fmt.Errorf("至少需要选择一个驱动")
+	}
+
+	candidateIndex := make(map[string]string, len(candidates))
+	for idx, candidate := range candidates {
+		candidateIndex[strconv.Itoa(idx+1)] = candidate
+		candidateIndex[normalizeDriver(candidate)] = candidate
+	}
+
+	selected := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		key := normalizeDriver(token)
+		driver, ok := candidateIndex[key]
+		if !ok {
+			return nil, fmt.Errorf("不支持的驱动: %s", strings.TrimSpace(token))
+		}
+		selected = append(selected, driver)
+	}
+	return uniqueNormalizedDrivers(selected), nil
+}
+
 func resolveDriverLoginConfig(drivers []string) (*driverLoginConfig, []string, error) {
+	if len(drivers) == 0 {
+		return nil, nil, nil
+	}
 	var selected *driverLoginConfig
 	for _, driver := range uniqueNormalizedDrivers(drivers) {
 		registration, ok := lookupDriverRegistration(driver)
@@ -237,6 +483,9 @@ func resolveDriverLoginConfig(drivers []string) (*driverLoginConfig, []string, e
 }
 
 func resolveDriverRevokeConfig(drivers []string) (*driverRevokeConfig, []string, error) {
+	if len(drivers) == 0 {
+		return nil, nil, nil
+	}
 	var selected *driverRevokeConfig
 	for _, driver := range uniqueNormalizedDrivers(drivers) {
 		registration, ok := lookupDriverRegistration(driver)

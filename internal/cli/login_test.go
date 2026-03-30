@@ -1,47 +1,36 @@
 package cli
 
 import (
+	"reflect"
 	"testing"
 
-	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/appruntime"
 )
 
-func TestApplyLoginIMAPUsernameArgUsesPositionalArgWhenNoHigherPrioritySource(t *testing.T) {
+func TestLoginDriversForConfigUsesBindingsWhenPresent(t *testing.T) {
 	t.Parallel()
 
-	cfg := appconfig.Config{}
-
-	got := applyLoginIMAPUsernameArg(cfg, []string{"user@example.com"})
-	if got.Mail.Client.IMAPUsername != "user@example.com" {
-		t.Fatalf("IMAPUsername = %q, want user@example.com", got.Mail.Client.IMAPUsername)
-	}
-}
-
-func TestApplyLoginIMAPUsernameArgPreservesEnvOverride(t *testing.T) {
-	t.Setenv("MIMECRYPT_IMAP_USERNAME", "env@example.com")
-	cfg := appconfig.Config{
-		Mail: appconfig.MailConfig{
-			Client: appconfig.MailClientConfig{IMAPUsername: "env@example.com"},
+	plan := appruntime.CredentialPlan{
+		AuthDrivers: []string{"imap", "graph"},
+		Bindings: []appruntime.CredentialBinding{
+			{Kind: appruntime.CredentialBindingSource, Name: "inbox", Driver: "imap"},
 		},
 	}
 
-	got := applyLoginIMAPUsernameArg(cfg, []string{"arg@example.com"})
-	if got.Mail.Client.IMAPUsername != "env@example.com" {
-		t.Fatalf("IMAPUsername = %q, want env@example.com", got.Mail.Client.IMAPUsername)
+	got := loginDriversForConfig(plan)
+	if !reflect.DeepEqual(got, []string{"imap", "graph"}) {
+		t.Fatalf("loginDriversForConfig() = %#v, want [imap graph]", got)
 	}
 }
 
-func TestApplyLoginIMAPUsernameArgOverridesStoredConfigWhenExplicit(t *testing.T) {
+func TestLoginDriversForConfigAllowsInteractiveReconfigureWithoutBindings(t *testing.T) {
 	t.Parallel()
 
-	cfg := appconfig.Config{
-		Mail: appconfig.MailConfig{
-			Client: appconfig.MailClientConfig{IMAPUsername: "stored@example.com"},
-		},
+	plan := appruntime.CredentialPlan{
+		AuthDrivers: []string{"imap"},
 	}
 
-	got := applyLoginIMAPUsernameArg(cfg, []string{"arg@example.com"})
-	if got.Mail.Client.IMAPUsername != "arg@example.com" {
-		t.Fatalf("IMAPUsername = %q, want arg@example.com", got.Mail.Client.IMAPUsername)
+	if got := loginDriversForConfig(plan); got != nil {
+		t.Fatalf("loginDriversForConfig() = %#v, want nil", got)
 	}
 }

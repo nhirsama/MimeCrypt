@@ -60,7 +60,10 @@ func TestBuildLoginServiceGraphIdentityProbeUsesGraphToken(t *testing.T) {
 		},
 	}
 
-	service, err := BuildLoginService(CredentialPlan{Config: cfg})
+	service, err := BuildLoginService(CredentialPlan{
+		Config:      cfg,
+		AuthDrivers: []string{"graph"},
+	})
 	if err != nil {
 		t.Fatalf("BuildLoginService() error = %v", err)
 	}
@@ -103,6 +106,7 @@ func TestBuildLoginServiceFallsBackToIMAPUsernameIdentity(t *testing.T) {
 				},
 			},
 		},
+		AuthDrivers: []string{"imap"},
 	})
 	if err != nil {
 		t.Fatalf("BuildLoginService() error = %v", err)
@@ -180,7 +184,10 @@ func TestBuildRevokeServiceForceStillClearsLocalStateWhenRemoteRevokerInitFails(
 		t.Fatalf("SaveLocalConfig() error = %v", err)
 	}
 
-	service, err := BuildRevokeService(CredentialPlan{Config: cfg}, true)
+	service, err := BuildRevokeService(CredentialPlan{
+		Config:      cfg,
+		AuthDrivers: []string{"imap"},
+	}, true)
 	if err != nil {
 		t.Fatalf("BuildRevokeService() error = %v", err)
 	}
@@ -211,6 +218,7 @@ func TestBuildRevokeServiceRejectsRemoteRevokerInitFailureWithoutForce(t *testin
 				TokenStore:       "file",
 			},
 		},
+		AuthDrivers: []string{"imap"},
 	}, false)
 	if err == nil || !strings.Contains(err.Error(), "初始化远端吊销器失败") {
 		t.Fatalf("BuildRevokeService() error = %v, want remote init failure", err)
@@ -240,7 +248,8 @@ func TestBuildRevokeServiceSharedSessionSkipsRemoteRevoke(t *testing.T) {
 	}
 
 	service, err := BuildRevokeService(CredentialPlan{
-		Config: cfg,
+		Config:      cfg,
+		AuthDrivers: []string{"imap"},
 		Credential: appconfig.Credential{
 			Name: "default",
 			Kind: appconfig.CredentialKindSharedSession,
