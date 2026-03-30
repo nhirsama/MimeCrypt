@@ -51,6 +51,19 @@ func SaveLocalConfig(stateDir string, cfg LocalConfig) error {
 	return nil
 }
 
+func ClearLocalConfig(stateDir string) error {
+	if strings.TrimSpace(stateDir) == "" {
+		return fmt.Errorf("state dir 不能为空")
+	}
+	if err := os.Remove(LocalConfigPath(stateDir)); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("删除本地配置失败: %w", err)
+	}
+	return nil
+}
+
 func ResolveStoredIMAPUsernamePreferStored(stateDir, fallback string) string {
 	fallback = strings.TrimSpace(fallback)
 	localCfg, err := LoadLocalConfig(stateDir)

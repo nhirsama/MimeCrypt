@@ -2,14 +2,16 @@ package appruntime
 
 import (
 	"context"
+	"fmt"
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
 	"mimecrypt/internal/modules/login"
-	"mimecrypt/internal/modules/logout"
+	"mimecrypt/internal/modules/revoke"
 	"mimecrypt/internal/modules/tokenstate"
 	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers"
+	"mimecrypt/internal/providers/graph"
 )
 
 func BuildLoginService(cfg appconfig.Config) (*login.Service, error) {
@@ -53,12 +55,30 @@ func buildLoginIdentityProbe(cfg appconfig.Config, session provider.Session) (fu
 	}
 }
 
-func BuildLogoutService(cfg appconfig.Config) (*logout.Service, error) {
+func BuildRevokeService(cfg appconfig.Config, force bool) (*revoke.Service, error) {
 	session, err := auth.NewSession(cfg.Auth, nil)
 	if err != nil {
 		return nil, err
 	}
-	return &logout.Service{Session: session}, nil
+
+	service := &revoke.Service{
+		Session: session,
+		ClearLocal: func() error {
+			return appconfig.ClearLocalConfig(cfg.Auth.StateDir)
+		},
+		Force: force,
+	}
+
+	remoteRevoker, err := graph.NewIdentityRevoker(cfg, session, nil)
+	if err != nil {
+		if !force {
+			return nil, fmt.Errorf("初始化远端吊销器失败: %w", err)
+		}
+		service.RemotePrepareErr = fmt.Errorf("初始化远端吊销器失败: %w", err)
+		return service, nil
+	}
+	service.RemoteRevoker = remoteRevoker
+	return service, nil
 }
 
 func BuildTokenStateService(cfg appconfig.Config) (*tokenstate.Service, error) {

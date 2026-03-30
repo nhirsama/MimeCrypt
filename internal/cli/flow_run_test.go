@@ -119,13 +119,13 @@ func TestHealthCommandExposesTopologyFlags(t *testing.T) {
 	}
 }
 
-func TestLoginTokenLogoutCommandsExposeCredentialFlags(t *testing.T) {
+func TestLoginTokenRevokeCommandsExposeCredentialFlags(t *testing.T) {
 	t.Parallel()
 
 	for _, cmd := range []*cobra.Command{
 		newLoginCmd(),
 		newTokenStatusCmd(appconfig.Config{}),
-		newLogoutCmd(),
+		newRevokeCmd(),
 	} {
 		for _, name := range []string{"topology-file", "credential"} {
 			if cmd.Flags().Lookup(name) == nil {
@@ -140,12 +140,23 @@ func TestLoginTokenLogoutCommandsExposeCredentialFlags(t *testing.T) {
 	}
 }
 
+func TestRevokeCommandExposesForceFlag(t *testing.T) {
+	t.Parallel()
+
+	if newRevokeCmd().Flags().Lookup("force") == nil {
+		t.Fatalf("expected force flag on revoke command")
+	}
+}
+
 func TestRootCommandDoesNotExposeRemovedFlowRunAlias(t *testing.T) {
 	t.Parallel()
 
 	root := newRootCmd()
 	for _, cmd := range root.Commands() {
 		if cmd.Name() == "flow-run" {
+			t.Fatalf("unexpected removed command alias: %s", cmd.Name())
+		}
+		if cmd.Name() == "logout" {
 			t.Fatalf("unexpected removed command alias: %s", cmd.Name())
 		}
 	}

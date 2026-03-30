@@ -2,9 +2,11 @@ package appruntime
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -112,5 +114,62 @@ func TestBuildLoginServiceFallsBackToIMAPUsernameIdentity(t *testing.T) {
 	}
 	if user.Account() != "user@example.com" {
 		t.Fatalf("Account() = %q, want user@example.com", user.Account())
+	}
+}
+
+func TestBuildRevokeServiceForceStillClearsLocalStateWhenRemoteRevokerInitFails(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	cfg := appconfig.Config{
+		Auth: appconfig.AuthConfig{
+			ClientID:         "client-id",
+			Tenant:           "organizations",
+			AuthorityBaseURL: "https://login.microsoftonline.com",
+			IMAPScopes:       []string{"scope-imap"},
+			StateDir:         stateDir,
+			TokenStore:       "file",
+		},
+	}
+
+	if err := os.WriteFile(cfg.Auth.TokenPath(), []byte(`{"access_token":"token"}`), 0o600); err != nil {
+		t.Fatalf("WriteFile(token) error = %v", err)
+	}
+	if err := appconfig.SaveLocalConfig(stateDir, appconfig.LocalConfig{IMAPUsername: "user@example.com"}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	service, err := BuildRevokeService(cfg, true)
+	if err != nil {
+		t.Fatalf("BuildRevokeService() error = %v", err)
+	}
+
+	err = service.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "初始化远端吊销器失败") {
+		t.Fatalf("Run() error = %v, want remote init failure", err)
+	}
+	if _, statErr := os.Stat(cfg.Auth.TokenPath()); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("Stat(token) error = %v, want os.ErrNotExist", statErr)
+	}
+	if _, statErr := os.Stat(appconfig.LocalConfigPath(stateDir)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("Stat(local config) error = %v, want os.ErrNotExist", statErr)
+	}
+}
+
+func TestBuildRevokeServiceRejectsRemoteRevokerInitFailureWithoutForce(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildRevokeService(appconfig.Config{
+		Auth: appconfig.AuthConfig{
+			ClientID:         "client-id",
+			Tenant:           "organizations",
+			AuthorityBaseURL: "https://login.microsoftonline.com",
+			IMAPScopes:       []string{"scope-imap"},
+			StateDir:         t.TempDir(),
+			TokenStore:       "file",
+		},
+	}, false)
+	if err == nil || !strings.Contains(err.Error(), "初始化远端吊销器失败") {
+		t.Fatalf("BuildRevokeService() error = %v, want remote init failure", err)
 	}
 }

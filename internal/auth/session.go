@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -183,7 +184,13 @@ func (s *Session) Logout() error {
 		return err
 	}
 	defer release()
-	return s.store.delete()
+	if err := s.store.delete(); err != nil {
+		if errors.Is(err, errTokenNotFound) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func sessionStoreLock(s *Session) *sync.Mutex {

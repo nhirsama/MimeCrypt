@@ -31,7 +31,7 @@ func newRootCmd() *cobra.Command {
 	rootCmd.SetFlagErrorFunc(newFlagUsageError)
 
 	rootCmd.AddCommand(newLoginCmd())
-	rootCmd.AddCommand(newLogoutCmd())
+	rootCmd.AddCommand(newRevokeCmd())
 	rootCmd.AddCommand(newHealthCmd())
 	rootCmd.AddCommand(newTokenCmd())
 	rootCmd.AddCommand(newListCmd())

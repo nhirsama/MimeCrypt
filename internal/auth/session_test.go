@@ -310,3 +310,22 @@ func TestSessionIgnoresLegacyTokenPath(t *testing.T) {
 		t.Fatalf("LoadCachedToken() error = %v, want ErrLoginRequired", err)
 	}
 }
+
+func TestSessionLogoutIgnoresMissingToken(t *testing.T) {
+	t.Parallel()
+
+	session, err := NewSession(appconfig.AuthConfig{
+		ClientID:         "client-id",
+		Tenant:           "organizations",
+		AuthorityBaseURL: "https://login.microsoftonline.com",
+		IMAPScopes:       []string{"scope-imap"},
+		StateDir:         t.TempDir(),
+	}, nil)
+	if err != nil {
+		t.Fatalf("NewSession() error = %v", err)
+	}
+
+	if err := session.Logout(); err != nil {
+		t.Fatalf("Logout() error = %v", err)
+	}
+}
