@@ -89,7 +89,7 @@ func TestBuildSinkClientsGraphHealthUsesGraphScopes(t *testing.T) {
 	t.Parallel()
 
 	var refreshScope string
-	authServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	authServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/organizations/oauth2/v2.0/token" {
 			t.Fatalf("unexpected auth request: %s %s", r.Method, r.URL.Path)
 		}
@@ -108,6 +108,7 @@ func TestBuildSinkClientsGraphHealthUsesGraphScopes(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer access-graph" {
 			t.Fatalf("Authorization = %q, want Bearer access-graph", got)
 		}
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"u1","mail":"user@example.com","userPrincipalName":"user@example.com"}`)
 	}))
 	defer graphServer.Close()
@@ -116,7 +117,7 @@ func TestBuildSinkClientsGraphHealthUsesGraphScopes(t *testing.T) {
 	cfg.Auth.AuthorityBaseURL = authServer.URL
 	cfg.Mail.Client.GraphBaseURL = graphServer.URL + "/v1.0"
 
-	session, err := auth.NewSession(SessionAuthConfigForDrivers(cfg, "graph"), nil)
+	session, err := auth.NewSession(SessionAuthConfigForDrivers(cfg, "graph"), authServer.Client())
 	if err != nil {
 		t.Fatalf("NewSession() error = %v", err)
 	}

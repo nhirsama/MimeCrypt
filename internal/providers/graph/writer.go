@@ -1,13 +1,16 @@
 package graph
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
+
+	abstractions "github.com/microsoft/kiota-abstractions-go"
+	models "github.com/microsoftgraph/msgraph-sdk-go/models"
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mimeutil"
@@ -101,101 +104,121 @@ func (w *writer) targetFolderID(ctx context.Context, req provider.WriteRequest) 
 
 func (w *writer) resolveFolderID(ctx context.Context, folder string) (string, error) {
 	endpoint := fmt.Sprintf("%s/me/mailFolders/%s?$select=id", w.baseURL, url.PathEscape(folder))
-
-	req, err := w.newRequest(ctx, http.MethodGet, endpoint, nil)
+	requestInfo, err := w.newRequest(abstractions.GET, endpoint)
 	if err != nil {
 		return "", err
 	}
+	requestInfo.Headers.Add("Accept", "application/json")
 
-	var payload struct {
-		ID string `json:"id"`
-	}
-	if err := w.doJSON(req, &payload, http.StatusOK); err != nil {
+	parsed, err := w.doParsable(ctx, requestInfo, models.CreateMailFolderFromDiscriminatorValue)
+	if err != nil {
 		return "", fmt.Errorf("解析回写目标文件夹失败: %w", err)
 	}
-	if strings.TrimSpace(payload.ID) == "" {
-		return "", fmt.Errorf("回写目标文件夹不存在: %s", folder)
+
+	folderModel, ok := parsed.(models.MailFolderable)
+	if !ok {
+		return "", fmt.Errorf("Graph 文件夹响应类型异常: %T", parsed)
 	}
 
-	return payload.ID, nil
+	folderID := stringValue(folderModel.GetId())
+	if folderID == "" {
+		return "", fmt.Errorf("回写目标文件夹不存在: %s", folder)
+	}
+	return folderID, nil
 }
 
 func (w *writer) createDraftMessage(ctx context.Context, open provider.MIMEOpener) (provider.Message, error) {
-	endpoint := fmt.Sprintf("%s/me/messages", w.baseURL)
-
 	body, err := newBase64MIMEReader(open)
 	if err != nil {
 		return provider.Message{}, err
 	}
 	defer body.Close()
 
-	req, err := w.newRequest(ctx, http.MethodPost, endpoint, body)
+	content, err := io.ReadAll(body)
+	if err != nil {
+		return provider.Message{}, fmt.Errorf("读取待回写 MIME 失败: %w", err)
+	}
+
+	requestInfo, err := w.newRequest(abstractions.POST, w.baseURL+"/me/messages")
 	if err != nil {
 		return provider.Message{}, err
 	}
-	req.Header.Set("Content-Type", "text/plain")
+	requestInfo.Headers.Add("Accept", "application/json")
+	requestInfo.SetStreamContentAndContentType(content, "text/plain")
 
-	var message provider.Message
-	if err := w.doJSON(req, &message, http.StatusCreated); err != nil {
+	parsed, err := w.doParsable(ctx, requestInfo, models.CreateMessageFromDiscriminatorValue)
+	if err != nil {
 		return provider.Message{}, fmt.Errorf("创建回写草稿失败: %w", err)
 	}
-	if strings.TrimSpace(message.ID) == "" {
-		return provider.Message{}, fmt.Errorf("创建回写草稿失败: 响应中缺少消息 ID")
+
+	message, ok := parsed.(models.Messageable)
+	if !ok {
+		return provider.Message{}, fmt.Errorf("Graph 草稿响应类型异常: %T", parsed)
 	}
 
-	return message, nil
+	result := providerMessageFromModel(message)
+	if strings.TrimSpace(result.ID) == "" {
+		return provider.Message{}, fmt.Errorf("创建回写草稿失败: 响应中缺少消息 ID")
+	}
+	return result, nil
 }
 
 func (w *writer) moveMessage(ctx context.Context, messageID, targetFolderID string) (provider.Message, error) {
-	endpoint := fmt.Sprintf("%s/me/messages/%s/move", w.baseURL, url.PathEscape(messageID))
-	body, err := json.Marshal(struct {
-		DestinationID string `json:"destinationId"`
-	}{
-		DestinationID: targetFolderID,
+	body, err := json.Marshal(map[string]string{
+		"destinationId": targetFolderID,
 	})
 	if err != nil {
 		return provider.Message{}, fmt.Errorf("序列化移动邮件请求失败: %w", err)
 	}
 
-	req, err := w.newRequest(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	requestInfo, err := w.newRequest(
+		abstractions.POST,
+		fmt.Sprintf("%s/me/messages/%s/move", w.baseURL, url.PathEscape(messageID)),
+	)
 	if err != nil {
 		return provider.Message{}, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	requestInfo.Headers.Add("Accept", "application/json")
+	requestInfo.SetStreamContentAndContentType(body, "application/json")
 
-	var message provider.Message
-	if err := w.doJSON(req, &message, http.StatusCreated); err != nil {
+	parsed, err := w.doParsable(ctx, requestInfo, models.CreateMessageFromDiscriminatorValue)
+	if err != nil {
 		return provider.Message{}, fmt.Errorf("移动回写邮件失败: %w", err)
 	}
-	if strings.TrimSpace(message.ID) == "" {
-		return provider.Message{}, fmt.Errorf("移动回写邮件失败: 响应中缺少消息 ID")
+
+	message, ok := parsed.(models.Messageable)
+	if !ok {
+		return provider.Message{}, fmt.Errorf("Graph 移动响应类型异常: %T", parsed)
 	}
 
-	return message, nil
+	result := providerMessageFromModel(message)
+	if strings.TrimSpace(result.ID) == "" {
+		return provider.Message{}, fmt.Errorf("移动回写邮件失败: 响应中缺少消息 ID")
+	}
+	return result, nil
 }
 
 func (w *writer) markUnread(ctx context.Context, messageID string) error {
-	endpoint := fmt.Sprintf("%s/me/messages/%s", w.baseURL, url.PathEscape(messageID))
-	body, err := json.Marshal(struct {
-		IsRead bool `json:"isRead"`
-	}{
-		IsRead: false,
+	body, err := json.Marshal(map[string]bool{
+		"isRead": false,
 	})
 	if err != nil {
 		return fmt.Errorf("序列化标记未读请求失败: %w", err)
 	}
 
-	req, err := w.newRequest(ctx, http.MethodPatch, endpoint, bytes.NewReader(body))
+	requestInfo, err := w.newRequest(
+		abstractions.PATCH,
+		fmt.Sprintf("%s/me/messages/%s", w.baseURL, url.PathEscape(messageID)),
+	)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	requestInfo.Headers.Add("Accept", "application/json")
+	requestInfo.SetStreamContentAndContentType(body, "application/json")
 
-	var message provider.Message
-	if err := w.doJSON(req, &message, http.StatusOK); err != nil {
+	if _, err := w.doParsable(ctx, requestInfo, models.CreateMessageFromDiscriminatorValue); err != nil {
 		return fmt.Errorf("更新回写邮件未读状态失败: %w", err)
 	}
-
 	return nil
 }
 
@@ -218,28 +241,27 @@ func (w *writer) verifyMessage(ctx context.Context, messageID, targetFolderID st
 	if !ok {
 		return fmt.Errorf("校验回写邮件失败: 缺少 MimeCrypt 处理标记")
 	}
-
 	return nil
 }
 
 func (w *writer) messageMetadata(ctx context.Context, messageID string) (provider.Message, error) {
-	endpoint := fmt.Sprintf(
-		"%s/me/messages/%s?$select=id,parentFolderId",
-		w.baseURL,
-		url.PathEscape(messageID),
-	)
+	endpoint := fmt.Sprintf("%s/me/messages/%s?$select=id,parentFolderId", w.baseURL, url.PathEscape(messageID))
+	requestInfo, err := w.newRequest(abstractions.GET, endpoint)
+	if err != nil {
+		return provider.Message{}, err
+	}
+	requestInfo.Headers.Add("Accept", "application/json")
 
-	req, err := w.newRequest(ctx, http.MethodGet, endpoint, nil)
+	parsed, err := w.doParsable(ctx, requestInfo, models.CreateMessageFromDiscriminatorValue)
 	if err != nil {
 		return provider.Message{}, err
 	}
 
-	var message provider.Message
-	if err := w.doJSON(req, &message, http.StatusOK); err != nil {
-		return provider.Message{}, err
+	message, ok := parsed.(models.Messageable)
+	if !ok {
+		return provider.Message{}, fmt.Errorf("Graph 邮件响应类型异常: %T", parsed)
 	}
-
-	return message, nil
+	return providerMessageFromModel(message), nil
 }
 
 func (w *writer) messageHasProcessedEncryptedMIME(ctx context.Context, messageID string) (bool, error) {
@@ -253,14 +275,14 @@ func (w *writer) messageHasProcessedEncryptedMIME(ctx context.Context, messageID
 }
 
 func (w *writer) deleteMessage(ctx context.Context, messageID string) error {
-	endpoint := fmt.Sprintf("%s/me/messages/%s", w.baseURL, url.PathEscape(messageID))
-
-	req, err := w.newRequest(ctx, http.MethodDelete, endpoint, nil)
+	requestInfo, err := w.newRequest(
+		abstractions.DELETE,
+		fmt.Sprintf("%s/me/messages/%s", w.baseURL, url.PathEscape(messageID)),
+	)
 	if err != nil {
 		return err
 	}
-
-	return w.doEmpty(req, http.StatusNoContent)
+	return w.doNoContent(ctx, requestInfo)
 }
 
 func (w *writer) reconcileInTarget(ctx context.Context, req provider.WriteRequest, targetFolderID string) (provider.WriteResult, bool, error) {
@@ -298,37 +320,35 @@ func (w *writer) findProcessedMessage(ctx context.Context, folderID, internetMes
 	query.Set("$filter", "internetMessageId eq "+odataStringLiteral(internetMessageID))
 	query.Set("$top", "10")
 
-	endpoint := fmt.Sprintf(
-		"%s/me/mailFolders/%s/messages?%s",
-		w.baseURL,
-		url.PathEscape(folderID),
-		query.Encode(),
-	)
-
-	req, err := w.newRequest(ctx, http.MethodGet, endpoint, nil)
+	endpoint := fmt.Sprintf("%s/me/mailFolders/%s/messages?%s", w.baseURL, url.PathEscape(folderID), query.Encode())
+	requestInfo, err := w.newRequest(abstractions.GET, endpoint)
 	if err != nil {
 		return provider.Message{}, false, err
 	}
-	req.Header.Add("Prefer", `IdType="ImmutableId"`)
+	requestInfo.Headers.Add("Accept", "application/json")
+	requestInfo.Headers.Add("Prefer", `IdType="ImmutableId"`)
 
-	var payload struct {
-		Value []provider.Message `json:"value"`
-	}
-	if err := w.doJSON(req, &payload, http.StatusOK); err != nil {
+	parsed, err := w.doParsable(ctx, requestInfo, models.CreateMessageCollectionResponseFromDiscriminatorValue)
+	if err != nil {
 		return provider.Message{}, false, fmt.Errorf("查询目标文件夹中的已处理邮件失败: %w", err)
 	}
 
-	for _, message := range payload.Value {
-		if strings.TrimSpace(message.ID) == "" || message.ID == originalMessageID {
+	collection, ok := parsed.(models.MessageCollectionResponseable)
+	if !ok {
+		return provider.Message{}, false, fmt.Errorf("Graph 列表响应类型异常: %T", parsed)
+	}
+
+	for _, candidate := range providerMessagesFromModels(collection.GetValue()) {
+		if strings.TrimSpace(candidate.ID) == "" || candidate.ID == originalMessageID {
 			continue
 		}
 
-		ok, err := w.messageHasProcessedEncryptedMIME(ctx, message.ID)
+		ok, err := w.messageHasProcessedEncryptedMIME(ctx, candidate.ID)
 		if err != nil {
-			return provider.Message{}, false, fmt.Errorf("读取候选邮件 %s 的 MIME 失败: %w", message.ID, err)
+			return provider.Message{}, false, fmt.Errorf("读取候选邮件 %s 的 MIME 失败: %w", candidate.ID, err)
 		}
 		if ok {
-			return message, true, nil
+			return candidate, true, nil
 		}
 	}
 
@@ -361,7 +381,7 @@ func (*writer) DeleteSemantics() provider.DeleteSemantics {
 }
 
 func isGraphNotFound(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "status=404")
+	return err != nil && (strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "NotFound"))
 }
 
 func odataStringLiteral(value string) string {

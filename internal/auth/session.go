@@ -2,10 +2,12 @@ package auth
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -13,20 +15,12 @@ import (
 	"sync"
 	"time"
 
+	msalcache "github.com/AzureAD/microsoft-authentication-library-for-go/apps/cache"
+	"github.com/AzureAD/microsoft-authentication-library-for-go/apps/public"
+
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/provider"
 )
-
-type DeviceCode struct {
-	DeviceCode       string `json:"device_code"`
-	UserCode         string `json:"user_code"`
-	VerificationURI  string `json:"verification_uri"`
-	ExpiresIn        int    `json:"expires_in"`
-	Interval         int    `json:"interval"`
-	Message          string `json:"message"`
-	Error            string `json:"error"`
-	ErrorDescription string `json:"error_description"`
-}
 
 type Token = provider.Token
 
@@ -40,15 +34,17 @@ type tokenResponse struct {
 	ErrorDescription string `json:"error_description"`
 }
 
-type client struct {
+type legacyClient struct {
 	httpClient *http.Client
 	cfg        appconfig.AuthConfig
 	now        func() time.Time
 }
 
 type Session struct {
-	client *client
-	store  *tokenStore
+	cfg          appconfig.AuthConfig
+	client       public.Client
+	legacyClient *legacyClient
+	store        *tokenStore
 }
 
 var _ provider.Session = (*Session)(nil)
@@ -62,7 +58,7 @@ func NewSession(cfg appconfig.AuthConfig, httpClient *http.Client) (*Session, er
 	}
 
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+		httpClient = defaultSessionHTTPClient(cfg)
 	}
 
 	store, err := newTokenStore(cfg)
@@ -70,8 +66,15 @@ func NewSession(cfg appconfig.AuthConfig, httpClient *http.Client) (*Session, er
 		return nil, err
 	}
 
+	client, err := newMSALClient(cfg, httpClient, &msalCacheAccessor{store: store})
+	if err != nil {
+		return nil, err
+	}
+
 	return &Session{
-		client: &client{
+		cfg:    cfg,
+		client: client,
+		legacyClient: &legacyClient{
 			httpClient: httpClient,
 			cfg:        cfg,
 			now:        time.Now,
@@ -80,26 +83,69 @@ func NewSession(cfg appconfig.AuthConfig, httpClient *http.Client) (*Session, er
 	}, nil
 }
 
+func defaultSessionHTTPClient(cfg appconfig.AuthConfig) *http.Client {
+	transport := http.DefaultTransport
+	if loopbackTLSAuthority(cfg.AuthorityBaseURL) {
+		if base, ok := http.DefaultTransport.(*http.Transport); ok {
+			cloned := base.Clone()
+			if cloned.TLSClientConfig == nil {
+				cloned.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+			} else {
+				cloned.TLSClientConfig = cloned.TLSClientConfig.Clone()
+			}
+			cloned.TLSClientConfig.InsecureSkipVerify = true
+			transport = cloned
+		}
+	}
+	return &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+	}
+}
+
+func loopbackTLSAuthority(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return false
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // Login 通过 device code 引导用户完成登录，并把 token 保存到本地缓存。
 func (s *Session) Login(ctx context.Context, out io.Writer) (Token, error) {
-	deviceCode, err := s.client.startDeviceCode(ctx)
-	if err != nil {
-		return Token{}, err
+	if out == nil {
+		out = io.Discard
 	}
 
-	if deviceCode.Message != "" {
-		if _, err := fmt.Fprintln(out, deviceCode.Message); err != nil {
+	deviceCode, err := s.client.AcquireTokenByDeviceCode(ctx, consentScopes(s.cfg.GraphScopes, s.cfg.EWSScopes, s.cfg.IMAPScopes))
+	if err != nil {
+		return Token{}, fmt.Errorf("发起 device code 登录失败: %w", err)
+	}
+
+	if strings.TrimSpace(deviceCode.Result.Message) != "" {
+		if _, err := fmt.Fprintln(out, deviceCode.Result.Message); err != nil {
 			return Token{}, fmt.Errorf("输出登录提示失败: %w", err)
 		}
 	} else {
-		if _, err := fmt.Fprintf(out, "请访问 %s 并输入验证码 %s 完成登录。\n", deviceCode.VerificationURI, deviceCode.UserCode); err != nil {
+		if _, err := fmt.Fprintf(out, "请访问 %s 并输入验证码 %s 完成登录。\n", deviceCode.Result.VerificationURL, deviceCode.Result.UserCode); err != nil {
 			return Token{}, fmt.Errorf("输出登录提示失败: %w", err)
 		}
 	}
 
-	token, err := s.client.waitForToken(ctx, deviceCode)
+	result, err := deviceCode.AuthenticationResult(ctx)
 	if err != nil {
-		return Token{}, err
+		return Token{}, fmt.Errorf("等待用户完成登录失败: %w", err)
 	}
 
 	release, err := acquireSessionStoreGuard(s)
@@ -107,16 +153,17 @@ func (s *Session) Login(ctx context.Context, out io.Writer) (Token, error) {
 		return Token{}, err
 	}
 	defer release()
-	if err := s.store.save(token); err != nil {
+
+	token := authResultToToken(result)
+	if err := s.persistMSALToken(token); err != nil {
 		return Token{}, err
 	}
-
 	return token, nil
 }
 
 // AccessToken 返回可直接用于 Graph 调用的 access token，必要时会自动刷新。
 func (s *Session) AccessToken(ctx context.Context) (string, error) {
-	return s.AccessTokenForScopes(ctx, defaultAccessScopes(s.client.cfg))
+	return s.AccessTokenForScopes(ctx, defaultAccessScopes(s.cfg))
 }
 
 // AccessTokenForScopes 返回满足指定 scopes 的 access token，必要时会自动刷新。
@@ -127,28 +174,40 @@ func (s *Session) AccessTokenForScopes(ctx context.Context, scopes []string) (st
 	}
 	defer release()
 
-	token, err := s.store.load()
-	if err != nil {
+	scopes = normalizeScopes(scopes)
+	if len(scopes) == 0 {
+		return "", fmt.Errorf("scope 不能为空")
+	}
+
+	if account, ok, err := s.currentAccount(ctx); err != nil {
 		return "", err
+	} else if ok {
+		result, err := s.client.AcquireTokenSilent(ctx, scopes, public.WithSilentAccount(account))
+		if err == nil {
+			token := authResultToToken(result)
+			if err := s.persistMSALToken(token); err != nil {
+				return "", err
+			}
+			return token.AccessToken, nil
+		}
+		legacyAccessToken, legacyOK, legacyErr := s.accessTokenFromLegacyRecord(ctx, scopes)
+		if legacyErr == nil && legacyOK {
+			return legacyAccessToken, nil
+		}
+		if legacyErr != nil {
+			return "", legacyErr
+		}
+		return "", fmt.Errorf("获取 access token 失败: %w", err)
 	}
 
-	if token.AccessToken != "" && time.Until(token.ExpiresAt) > 2*time.Minute && tokenCoversScopes(token.Scope, scopes) {
-		return token.AccessToken, nil
+	legacyAccessToken, legacyOK, legacyErr := s.accessTokenFromLegacyRecord(ctx, scopes)
+	if legacyErr != nil {
+		return "", legacyErr
 	}
-	if token.RefreshToken == "" {
-		return "", fmt.Errorf("本地 token 缓存中没有 refresh token，请先执行 login")
+	if legacyOK {
+		return legacyAccessToken, nil
 	}
-
-	refreshed, err := s.client.refreshTokenForScopes(ctx, token.RefreshToken, scopes)
-	if err != nil {
-		return "", err
-	}
-
-	if err := s.store.save(refreshed); err != nil {
-		return "", err
-	}
-
-	return refreshed.AccessToken, nil
+	return "", fmt.Errorf("%w，请先执行 login", ErrLoginRequired)
 }
 
 // LoadCachedToken 读取本地缓存 token，便于调试和状态检查。
@@ -158,7 +217,21 @@ func (s *Session) LoadCachedToken() (Token, error) {
 		return Token{}, err
 	}
 	defer release()
-	return s.store.load()
+
+	record, err := s.store.loadRecord()
+	if err != nil {
+		return Token{}, err
+	}
+	if !tokenEmpty(record.Token) {
+		return record.Token, nil
+	}
+	if len(record.Cache) > 0 {
+		return Token{
+			TokenType: "Bearer",
+			Scope:     strings.Join(consentScopes(s.cfg.GraphScopes, s.cfg.EWSScopes, s.cfg.IMAPScopes), " "),
+		}, nil
+	}
+	return Token{}, fmt.Errorf("%w，请先执行 login", ErrLoginRequired)
 }
 
 // StoreToken 将外部提供的 token 写入当前配置对应的存储后端。
@@ -225,83 +298,137 @@ func acquireSessionStoreGuard(s *Session) (func(), error) {
 	}, nil
 }
 
-func (c *client) startDeviceCode(ctx context.Context) (DeviceCode, error) {
-	form := url.Values{}
-	form.Set("client_id", c.cfg.ClientID)
-	form.Set("scope", strings.Join(consentScopes(c.cfg.GraphScopes, c.cfg.EWSScopes, c.cfg.IMAPScopes), " "))
-
-	endpoint := fmt.Sprintf(
-		"%s/%s/oauth2/v2.0/devicecode",
-		strings.TrimRight(c.cfg.AuthorityBaseURL, "/"),
-		url.PathEscape(c.cfg.Tenant),
+func newMSALClient(cfg appconfig.AuthConfig, httpClient *http.Client, accessor msalcache.ExportReplace) (public.Client, error) {
+	authority, err := authorityURL(cfg)
+	if err != nil {
+		return public.Client{}, err
+	}
+	client, err := public.New(
+		cfg.ClientID,
+		public.WithAuthority(authority),
+		public.WithCache(accessor),
+		public.WithHTTPClient(httpClient),
+		public.WithInstanceDiscovery(false),
 	)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return DeviceCode{}, fmt.Errorf("构造 device code 请求失败: %w", err)
+		return public.Client{}, fmt.Errorf("初始化认证客户端失败: %w", err)
 	}
-
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return DeviceCode{}, fmt.Errorf("执行 device code 请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var deviceCode DeviceCode
-	if err := json.NewDecoder(resp.Body).Decode(&deviceCode); err != nil {
-		return DeviceCode{}, fmt.Errorf("解析 device code 响应失败: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		if deviceCode.Error != "" {
-			return DeviceCode{}, fmt.Errorf("device code 接口返回异常状态: %s: %s", deviceCode.Error, deviceCode.ErrorDescription)
-		}
-		return DeviceCode{}, fmt.Errorf("device code 接口返回异常状态: %s", resp.Status)
-	}
-	if deviceCode.DeviceCode == "" {
-		return DeviceCode{}, fmt.Errorf("device code 响应中缺少 device_code")
-	}
-
-	return deviceCode, nil
+	return client, nil
 }
 
-func (c *client) waitForToken(ctx context.Context, deviceCode DeviceCode) (Token, error) {
-	interval := time.Duration(deviceCode.Interval) * time.Second
-	if interval <= 0 {
-		interval = 5 * time.Second
+func authorityURL(cfg appconfig.AuthConfig) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(cfg.AuthorityBaseURL), "/")
+	tenant := strings.TrimSpace(cfg.Tenant)
+	if base == "" {
+		return "", fmt.Errorf("authority base URL 不能为空")
+	}
+	if tenant == "" {
+		return "", fmt.Errorf("tenant 不能为空")
+	}
+	return base + "/" + url.PathEscape(tenant), nil
+}
+
+func (s *Session) currentAccount(ctx context.Context) (public.Account, bool, error) {
+	accounts, err := s.client.Accounts(ctx)
+	if err != nil {
+		return public.Account{}, false, fmt.Errorf("读取本地登录账号失败: %w", err)
+	}
+	if len(accounts) == 0 {
+		return public.Account{}, false, nil
+	}
+	return accounts[0], true, nil
+}
+
+func (s *Session) accessTokenFromLegacyRecord(ctx context.Context, scopes []string) (string, bool, error) {
+	record, found, err := s.store.loadRecordIfExists()
+	if err != nil {
+		return "", false, err
+	}
+	if !found || tokenEmpty(record.Token) {
+		return "", false, nil
 	}
 
-	for {
-		token, pending, nextInterval, err := c.pollDeviceToken(ctx, deviceCode.DeviceCode)
-		if err != nil {
-			return Token{}, err
-		}
-		if !pending {
-			return token, nil
-		}
-		if nextInterval > 0 {
-			interval = nextInterval
-		}
+	token := record.Token
+	if token.AccessToken != "" && time.Until(token.ExpiresAt) > 2*time.Minute && tokenCoversScopes(token.Scope, scopes) {
+		return token.AccessToken, true, nil
+	}
+	if token.RefreshToken == "" {
+		return "", false, nil
+	}
 
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return Token{}, fmt.Errorf("等待用户登录超时或被取消: %w", ctx.Err())
-		case <-timer.C:
-		}
+	refreshed, err := s.legacyClient.refreshTokenForScopes(ctx, token.RefreshToken, scopes)
+	if err != nil {
+		return "", false, err
+	}
+	if err := s.store.save(refreshed); err != nil {
+		return "", false, err
+	}
+	return refreshed.AccessToken, true, nil
+}
+
+func (s *Session) persistMSALToken(token Token) error {
+	record, found, err := s.store.loadRecordIfExists()
+	if err != nil {
+		return err
+	}
+	if !found {
+		record = sessionRecord{}
+	}
+	record.Format = sessionRecordFormatMSAL
+	record.Token = token
+	return s.store.saveRecord(record)
+}
+
+func authResultToToken(result public.AuthResult) Token {
+	return Token{
+		AccessToken: result.AccessToken,
+		TokenType:   "Bearer",
+		Scope:       strings.Join(normalizeScopes(result.GrantedScopes), " "),
+		ExpiresAt:   result.ExpiresOn,
 	}
 }
 
-func (c *client) refreshTokenForScopes(ctx context.Context, refreshToken string, scopes []string) (Token, error) {
+type msalCacheAccessor struct {
+	store *tokenStore
+}
+
+func (a *msalCacheAccessor) Replace(_ context.Context, cache msalcache.Unmarshaler, _ msalcache.ReplaceHints) error {
+	if a == nil || a.store == nil || cache == nil {
+		return nil
+	}
+	record, found, err := a.store.loadRecordIfExists()
+	if err != nil || !found || len(record.Cache) == 0 {
+		return err
+	}
+	return cache.Unmarshal(record.Cache)
+}
+
+func (a *msalCacheAccessor) Export(_ context.Context, cache msalcache.Marshaler, _ msalcache.ExportHints) error {
+	if a == nil || a.store == nil || cache == nil {
+		return nil
+	}
+	content, err := cache.Marshal()
+	if err != nil {
+		return err
+	}
+	record, found, err := a.store.loadRecordIfExists()
+	if err != nil {
+		return err
+	}
+	if !found {
+		record = sessionRecord{}
+	}
+	record.Format = sessionRecordFormatMSAL
+	record.Cache = append(record.Cache[:0], content...)
+	return a.store.saveRecord(record)
+}
+
+func (c *legacyClient) refreshTokenForScopes(ctx context.Context, refreshToken string, scopes []string) (Token, error) {
 	form := url.Values{}
 	form.Set("client_id", c.cfg.ClientID)
 	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", refreshToken)
-	form.Set("scope", strings.Join(scopes, " "))
+	form.Set("scope", strings.Join(normalizeScopes(scopes), " "))
 
 	payload, status, err := c.doTokenRequest(ctx, form)
 	if err != nil {
@@ -318,45 +445,10 @@ func (c *client) refreshTokenForScopes(ctx context.Context, refreshToken string,
 	if token.RefreshToken == "" {
 		token.RefreshToken = refreshToken
 	}
-
 	return token, nil
 }
 
-func (c *client) pollDeviceToken(ctx context.Context, deviceCode string) (Token, bool, time.Duration, error) {
-	form := url.Values{}
-	form.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
-	form.Set("client_id", c.cfg.ClientID)
-	form.Set("device_code", deviceCode)
-
-	payload, status, err := c.doTokenRequest(ctx, form)
-	if err != nil {
-		return Token{}, false, 0, err
-	}
-
-	if status == http.StatusOK {
-		return c.toToken(payload), false, 0, nil
-	}
-
-	switch payload.Error {
-	case "authorization_pending":
-		return Token{}, true, 0, nil
-	case "slow_down":
-		return Token{}, true, 10 * time.Second, nil
-	case "authorization_declined":
-		return Token{}, false, 0, fmt.Errorf("用户拒绝了授权请求")
-	case "expired_token":
-		return Token{}, false, 0, fmt.Errorf("device code 已过期，请重新执行 login")
-	case "bad_verification_code":
-		return Token{}, false, 0, fmt.Errorf("device code 无效，请重新执行 login")
-	default:
-		if payload.Error != "" {
-			return Token{}, false, 0, fmt.Errorf("轮询 token 失败: %s: %s", payload.Error, payload.ErrorDescription)
-		}
-		return Token{}, false, 0, fmt.Errorf("轮询 token 失败，状态码: %d", status)
-	}
-}
-
-func (c *client) doTokenRequest(ctx context.Context, form url.Values) (tokenResponse, int, error) {
+func (c *legacyClient) doTokenRequest(ctx context.Context, form url.Values) (tokenResponse, int, error) {
 	endpoint := fmt.Sprintf(
 		"%s/%s/oauth2/v2.0/token",
 		strings.TrimRight(c.cfg.AuthorityBaseURL, "/"),
@@ -385,7 +477,7 @@ func (c *client) doTokenRequest(ctx context.Context, form url.Values) (tokenResp
 	return payload, resp.StatusCode, nil
 }
 
-func (c *client) toToken(payload tokenResponse) Token {
+func (c *legacyClient) toToken(payload tokenResponse) Token {
 	return Token{
 		AccessToken:  payload.AccessToken,
 		RefreshToken: payload.RefreshToken,
@@ -413,6 +505,14 @@ func consentScopes(groups ...[]string) []string {
 	}
 	slices.Sort(scopes)
 	return scopes
+}
+
+func normalizeScopes(scopes []string) []string {
+	result := consentScopes(scopes)
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 func defaultAccessScopes(cfg appconfig.AuthConfig) []string {

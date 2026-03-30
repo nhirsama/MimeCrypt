@@ -19,15 +19,26 @@ import (
 	"mimecrypt/internal/appconfig"
 )
 
-func TestSessionLoginAndRefresh(t *testing.T) {
+func TestSessionLoginAndLoadCachedToken(t *testing.T) {
 	t.Parallel()
 
 	var (
-		pollCount      int
-		refreshInvoked bool
+		pollCount int
+		server    *httptest.Server
 	)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/organizations/v2.0/.well-known/openid-configuration" {
+			_, _ = io.WriteString(w, fmt.Sprintf(
+				`{"issuer":%q,"authorization_endpoint":%q,"token_endpoint":%q,"device_authorization_endpoint":%q}`,
+				server.URL+"/organizations/v2.0",
+				server.URL+"/organizations/oauth2/v2.0/authorize",
+				server.URL+"/organizations/oauth2/v2.0/token",
+				server.URL+"/organizations/oauth2/v2.0/devicecode",
+			))
+			return
+		}
+
 		if r.Method != http.MethodPost {
 			t.Fatalf("unexpected method: %s", r.Method)
 		}
@@ -51,17 +62,14 @@ func TestSessionLoginAndRefresh(t *testing.T) {
 		}
 
 		switch values.Get("grant_type") {
-		case "urn:ietf:params:oauth:grant-type:device_code":
+		case "urn:ietf:params:oauth:grant-type:device_code", "device_code":
 			pollCount++
 			if pollCount == 1 {
 				w.WriteHeader(http.StatusBadRequest)
 				_, _ = io.WriteString(w, `{"error":"authorization_pending","error_description":"pending"}`)
 				return
 			}
-			_, _ = io.WriteString(w, `{"access_token":"access-1","refresh_token":"refresh-1","token_type":"Bearer","scope":"scope-a","expires_in":3600}`)
-		case "refresh_token":
-			refreshInvoked = true
-			_, _ = io.WriteString(w, `{"access_token":"access-2","refresh_token":"refresh-2","token_type":"Bearer","scope":"scope-a","expires_in":3600}`)
+			_, _ = io.WriteString(w, `{"access_token":"access-1","refresh_token":"refresh-1","token_type":"Bearer","scope":"scope-a scope-ews offline_access","expires_in":3600}`)
 		default:
 			t.Fatalf("unexpected grant_type: %s", values.Get("grant_type"))
 		}
@@ -90,22 +98,16 @@ func TestSessionLoginAndRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadCachedToken() error = %v", err)
 	}
-
-	token.ExpiresAt = time.Now().Add(30 * time.Second)
-	if err := session.store.save(token); err != nil {
-		t.Fatalf("save() error = %v", err)
+	if token.AccessToken != "access-1" {
+		t.Fatalf("AccessToken = %q, want access-1", token.AccessToken)
 	}
 
 	accessToken, err := session.AccessToken(context.Background())
 	if err != nil {
 		t.Fatalf("AccessToken() error = %v", err)
 	}
-
-	if accessToken != "access-2" {
+	if accessToken != "access-1" {
 		t.Fatalf("unexpected access token: %s", accessToken)
-	}
-	if !refreshInvoked {
-		t.Fatalf("expected refresh token flow to be invoked")
 	}
 }
 
@@ -135,7 +137,7 @@ func TestSessionAccessTokenForScopesRefreshesWhenCachedScopesDoNotCoverRequest(t
 	t.Parallel()
 
 	var refreshScope string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/organizations/oauth2/v2.0/token" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -194,7 +196,7 @@ func TestSessionAccessTokenForScopesSerializesRefreshAcrossSessions(t *testing.T
 	var refreshCalls atomic.Int32
 	requestStarted := make(chan struct{}, 2)
 	allowResponse := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/organizations/oauth2/v2.0/token" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}

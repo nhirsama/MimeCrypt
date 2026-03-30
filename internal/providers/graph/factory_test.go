@@ -48,6 +48,7 @@ func TestBuildSourceClientsWithSessionUsesScopedGraphToken(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer scoped-token" {
 			t.Fatalf("Authorization = %q, want Bearer scoped-token", got)
 		}
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"u1","mail":"user@example.com","displayName":"User"}`)
 	}))
 	defer server.Close()
@@ -80,6 +81,7 @@ func TestNewWriterClientsUsesScopedGraphToken(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer scoped-token" {
 			t.Fatalf("Authorization = %q, want Bearer scoped-token", got)
 		}
+		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, `{"id":"u1","mail":"user@example.com","userPrincipalName":"user@example.com"}`)
 	}))
 	defer server.Close()

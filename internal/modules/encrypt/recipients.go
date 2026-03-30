@@ -6,6 +6,8 @@ import (
 	"net/mail"
 	"slices"
 	"strings"
+
+	message "github.com/emersion/go-message"
 )
 
 var recipientHeaderKeys = []string{"To", "Cc", "Bcc"}
@@ -13,7 +15,7 @@ var recipientHeaderKeys = []string{"To", "Cc", "Bcc"}
 func (s *Service) resolveRecipients(mimeBytes []byte) ([]string, error) {
 	recipients := collectRecipientsFromEnv(s.getenv(envPGPRecipients))
 
-	message, err := mail.ReadMessage(bytes.NewReader(mimeBytes))
+	entity, err := message.Read(bytes.NewReader(mimeBytes))
 	if err != nil {
 		if len(recipients) == 0 {
 			return nil, fmt.Errorf("解析 MIME 头失败: %w", err)
@@ -22,8 +24,7 @@ func (s *Service) resolveRecipients(mimeBytes []byte) ([]string, error) {
 	}
 
 	for _, key := range recipientHeaderKeys {
-		values := headerValues(message.Header, key)
-		for _, raw := range values {
+		for _, raw := range headerValues(entity.Header, key) {
 			recipients = append(recipients, parseAddressList(raw)...)
 		}
 	}

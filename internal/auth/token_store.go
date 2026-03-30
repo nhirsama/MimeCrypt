@@ -21,8 +21,8 @@ var errTokenNotFound = errors.New("token not found")
 var ErrLoginRequired = errors.New("未找到登录状态")
 
 type tokenBackend interface {
-	load() (Token, error)
-	save(Token) error
+	loadRecord() (sessionRecord, error)
+	saveRecord(sessionRecord) error
 	delete() error
 }
 
@@ -31,6 +31,17 @@ type tokenStore struct {
 	identity string
 	lockPath string
 }
+
+type sessionRecord struct {
+	Format string `json:"format,omitempty"`
+	Cache  []byte `json:"cache,omitempty"`
+	Token  Token  `json:"token,omitempty"`
+}
+
+const (
+	sessionRecordFormatLegacy = "legacy-token"
+	sessionRecordFormatMSAL   = "msal-v1"
+)
 
 type fileTokenBackend struct {
 	path string
@@ -115,25 +126,68 @@ func keyringTokenKey(cfg appconfig.AuthConfig) string {
 }
 
 func (s *tokenStore) load() (Token, error) {
-	if s == nil || s.backend == nil {
-		return Token{}, fmt.Errorf("token 存储未初始化")
-	}
-
-	token, err := s.backend.load()
-	if err == nil {
-		return token, nil
-	}
-	if !errors.Is(err, errTokenNotFound) {
+	record, err := s.loadRecord()
+	if err != nil {
 		return Token{}, err
 	}
-	return Token{}, fmt.Errorf("%w，请先执行 login", ErrLoginRequired)
+	return record.Token, nil
 }
 
 func (s *tokenStore) save(token Token) error {
+	record := sessionRecord{
+		Format: sessionRecordFormatLegacy,
+		Token:  token,
+	}
+	return s.saveRecord(record)
+}
+
+func (s *tokenStore) loadRecord() (sessionRecord, error) {
+	if s == nil || s.backend == nil {
+		return sessionRecord{}, fmt.Errorf("token 存储未初始化")
+	}
+	record, err := s.backend.loadRecord()
+	if err == nil {
+		if record.Format == "" {
+			if len(record.Cache) > 0 {
+				record.Format = sessionRecordFormatMSAL
+			} else {
+				record.Format = sessionRecordFormatLegacy
+			}
+		}
+		return record, nil
+	}
+	if !errors.Is(err, errTokenNotFound) {
+		return sessionRecord{}, err
+	}
+	return sessionRecord{}, fmt.Errorf("%w，请先执行 login", ErrLoginRequired)
+}
+
+func (s *tokenStore) loadRecordIfExists() (sessionRecord, bool, error) {
+	if s == nil || s.backend == nil {
+		return sessionRecord{}, false, fmt.Errorf("token 存储未初始化")
+	}
+	record, err := s.backend.loadRecord()
+	if errors.Is(err, errTokenNotFound) {
+		return sessionRecord{}, false, nil
+	}
+	if err != nil {
+		return sessionRecord{}, false, err
+	}
+	if record.Format == "" {
+		if len(record.Cache) > 0 {
+			record.Format = sessionRecordFormatMSAL
+		} else {
+			record.Format = sessionRecordFormatLegacy
+		}
+	}
+	return record, true, nil
+}
+
+func (s *tokenStore) saveRecord(record sessionRecord) error {
 	if s == nil || s.backend == nil {
 		return fmt.Errorf("token 存储未初始化")
 	}
-	return s.backend.save(token)
+	return s.backend.saveRecord(record)
 }
 
 func (s *tokenStore) delete() error {
@@ -143,33 +197,41 @@ func (s *tokenStore) delete() error {
 	return s.backend.delete()
 }
 
-func (s *fileTokenBackend) load() (Token, error) {
+func (s *fileTokenBackend) loadRecord() (sessionRecord, error) {
 	path := strings.TrimSpace(s.path)
 	if path == "" {
-		return Token{}, fmt.Errorf("token 路径不能为空")
+		return sessionRecord{}, fmt.Errorf("token 路径不能为空")
 	}
 
 	content, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return Token{}, errTokenNotFound
+			return sessionRecord{}, errTokenNotFound
 		}
-		return Token{}, fmt.Errorf("读取 token 缓存失败: %w", err)
+		return sessionRecord{}, fmt.Errorf("读取 token 缓存失败: %w", err)
+	}
+
+	var record sessionRecord
+	if err := json.Unmarshal(content, &record); err == nil && (record.Format != "" || len(record.Cache) > 0 || !tokenEmpty(record.Token)) {
+		return record, nil
 	}
 
 	var token Token
 	if err := json.Unmarshal(content, &token); err != nil {
-		return Token{}, fmt.Errorf("解析 token 缓存失败: %w", err)
+		return sessionRecord{}, fmt.Errorf("解析 token 缓存失败: %w", err)
 	}
-	return token, nil
+	return sessionRecord{
+		Format: sessionRecordFormatLegacy,
+		Token:  token,
+	}, nil
 }
 
-func (s *fileTokenBackend) save(token Token) error {
+func (s *fileTokenBackend) saveRecord(record sessionRecord) error {
 	if s.path == "" {
 		return fmt.Errorf("token 路径不能为空")
 	}
 
-	return writeJSONFile(s.path, token, 0o600)
+	return writeJSONFile(s.path, record, 0o600)
 }
 
 func (s *fileTokenBackend) delete() error {
@@ -190,31 +252,39 @@ func (s *fileTokenBackend) delete() error {
 	return nil
 }
 
-func (s *keyringTokenBackend) load() (Token, error) {
+func (s *keyringTokenBackend) loadRecord() (sessionRecord, error) {
 	if s == nil || s.ring == nil {
-		return Token{}, fmt.Errorf("keyring 未初始化")
+		return sessionRecord{}, fmt.Errorf("keyring 未初始化")
 	}
 	item, err := s.ring.Get(s.key)
 	if err != nil {
 		if errors.Is(err, keyring.ErrKeyNotFound) {
-			return Token{}, errTokenNotFound
+			return sessionRecord{}, errTokenNotFound
 		}
-		return Token{}, fmt.Errorf("读取系统 keyring 失败: %w", err)
+		return sessionRecord{}, fmt.Errorf("读取系统 keyring 失败: %w", err)
+	}
+
+	var record sessionRecord
+	if err := json.Unmarshal(item.Data, &record); err == nil && (record.Format != "" || len(record.Cache) > 0 || !tokenEmpty(record.Token)) {
+		return record, nil
 	}
 
 	var token Token
 	if err := json.Unmarshal(item.Data, &token); err != nil {
-		return Token{}, fmt.Errorf("解析系统 keyring token 失败: %w", err)
+		return sessionRecord{}, fmt.Errorf("解析系统 keyring token 失败: %w", err)
 	}
-	return token, nil
+	return sessionRecord{
+		Format: sessionRecordFormatLegacy,
+		Token:  token,
+	}, nil
 }
 
-func (s *keyringTokenBackend) save(token Token) error {
+func (s *keyringTokenBackend) saveRecord(record sessionRecord) error {
 	if s == nil || s.ring == nil {
 		return fmt.Errorf("keyring 未初始化")
 	}
 
-	content, err := json.Marshal(token)
+	content, err := json.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("序列化 token 失败: %w", err)
 	}
@@ -254,4 +324,12 @@ func writeJSONFile(path string, value any, mode os.FileMode) error {
 		return fmt.Errorf("写入状态文件失败: %w", err)
 	}
 	return nil
+}
+
+func tokenEmpty(token Token) bool {
+	return strings.TrimSpace(token.AccessToken) == "" &&
+		strings.TrimSpace(token.RefreshToken) == "" &&
+		strings.TrimSpace(token.TokenType) == "" &&
+		strings.TrimSpace(token.Scope) == "" &&
+		token.ExpiresAt.IsZero()
 }

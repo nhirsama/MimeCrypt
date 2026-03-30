@@ -17,22 +17,25 @@ func TestFileTokenBackendRoundTrip(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "token.json")
 	backend := &fileTokenBackend{path: path}
-	token := Token{
-		AccessToken:  "access",
-		RefreshToken: "refresh",
-		Scope:        "scope-graph",
+	record := sessionRecord{
+		Format: sessionRecordFormatLegacy,
+		Token: Token{
+			AccessToken:  "access",
+			RefreshToken: "refresh",
+			Scope:        "scope-graph",
+		},
 	}
 
-	if err := backend.save(token); err != nil {
-		t.Fatalf("save() error = %v", err)
+	if err := backend.saveRecord(record); err != nil {
+		t.Fatalf("saveRecord() error = %v", err)
 	}
 
-	loaded, err := backend.load()
+	loaded, err := backend.loadRecord()
 	if err != nil {
-		t.Fatalf("load() error = %v", err)
+		t.Fatalf("loadRecord() error = %v", err)
 	}
-	if loaded.AccessToken != "access" || loaded.RefreshToken != "refresh" {
-		t.Fatalf("unexpected token: %+v", loaded)
+	if loaded.Token.AccessToken != "access" || loaded.Token.RefreshToken != "refresh" {
+		t.Fatalf("unexpected token: %+v", loaded.Token)
 	}
 
 	if err := backend.delete(); err != nil {
@@ -86,27 +89,30 @@ func TestKeyringTokenBackendRoundTrip(t *testing.T) {
 
 	ring := &fakeCredentialKeyring{items: map[string]keyring.Item{}}
 	backend := &keyringTokenBackend{ring: ring, key: "token-key"}
-	token := Token{AccessToken: "access", RefreshToken: "refresh"}
-
-	if err := backend.save(token); err != nil {
-		t.Fatalf("save() error = %v", err)
+	record := sessionRecord{
+		Format: sessionRecordFormatLegacy,
+		Token:  Token{AccessToken: "access", RefreshToken: "refresh"},
 	}
 
-	loaded, err := backend.load()
+	if err := backend.saveRecord(record); err != nil {
+		t.Fatalf("saveRecord() error = %v", err)
+	}
+
+	loaded, err := backend.loadRecord()
 	if err != nil {
-		t.Fatalf("load() error = %v", err)
+		t.Fatalf("loadRecord() error = %v", err)
 	}
-	if loaded.AccessToken != "access" {
-		t.Fatalf("AccessToken = %q", loaded.AccessToken)
+	if loaded.Token.AccessToken != "access" {
+		t.Fatalf("AccessToken = %q", loaded.Token.AccessToken)
 	}
 
 	raw := ring.items["token-key"]
-	var decoded Token
+	var decoded sessionRecord
 	if err := json.Unmarshal(raw.Data, &decoded); err != nil {
 		t.Fatalf("Unmarshal() error = %v", err)
 	}
-	if decoded.RefreshToken != "refresh" {
-		t.Fatalf("RefreshToken = %q", decoded.RefreshToken)
+	if decoded.Token.RefreshToken != "refresh" {
+		t.Fatalf("RefreshToken = %q", decoded.Token.RefreshToken)
 	}
 
 	if err := backend.delete(); err != nil {

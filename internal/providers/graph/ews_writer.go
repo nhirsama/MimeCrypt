@@ -1,7 +1,6 @@
 package graph
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -10,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	abstractions "github.com/microsoft/kiota-abstractions-go"
+	users "github.com/microsoftgraph/msgraph-sdk-go/users"
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/provider"
@@ -325,51 +327,49 @@ func (c *ewsClient) newRequest(ctx context.Context, body io.Reader) (*http.Reque
 }
 
 func (w *writer) translateExchangeID(ctx context.Context, id, sourceIDType, targetIDType string) (string, error) {
-	endpoint := fmt.Sprintf("%s/me/translateExchangeIds", w.baseURL)
-	body, err := json.Marshal(struct {
-		InputIDs     []string `json:"inputIds"`
-		SourceIDType string   `json:"sourceIdType"`
-		TargetIDType string   `json:"targetIdType"`
-	}{
-		InputIDs:     []string{id},
-		SourceIDType: sourceIDType,
-		TargetIDType: targetIDType,
+	body, err := json.Marshal(map[string]any{
+		"inputIds":     []string{id},
+		"sourceIdType": sourceIDType,
+		"targetIdType": targetIDType,
 	})
 	if err != nil {
 		return "", fmt.Errorf("序列化 ID 转换请求失败: %w", err)
 	}
 
-	req, err := w.newRequest(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	requestInfo, err := w.newRequest(abstractions.POST, w.baseURL+"/me/translateExchangeIds")
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	requestInfo.Headers.Add("Accept", "application/json")
+	requestInfo.SetStreamContentAndContentType(body, "application/json")
 
-	var payload struct {
-		Value []struct {
-			SourceID     string `json:"sourceId"`
-			TargetID     string `json:"targetId"`
-			ErrorDetails struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"errorDetails"`
-		} `json:"value"`
-	}
-	if err := w.doJSON(req, &payload, http.StatusOK); err != nil {
+	parsed, err := w.doParsable(ctx, requestInfo, users.CreateItemTranslateExchangeIdsPostResponseFromDiscriminatorValue)
+	if err != nil {
 		return "", fmt.Errorf("调用 translateExchangeIds 失败: %w", err)
 	}
-	if len(payload.Value) == 0 {
+
+	payload, ok := parsed.(users.ItemTranslateExchangeIdsPostResponseable)
+	if !ok {
+		return "", fmt.Errorf("translateExchangeIds 响应类型异常: %T", parsed)
+	}
+	if len(payload.GetValue()) == 0 {
 		return "", fmt.Errorf("translateExchangeIds 响应为空")
 	}
-	result := payload.Value[0]
-	if strings.TrimSpace(result.TargetID) == "" {
-		if strings.TrimSpace(result.ErrorDetails.Code) != "" || strings.TrimSpace(result.ErrorDetails.Message) != "" {
-			return "", fmt.Errorf("%s: %s", result.ErrorDetails.Code, result.ErrorDetails.Message)
+
+	result := payload.GetValue()[0]
+	targetID := stringValue(result.GetTargetId())
+	if targetID == "" {
+		if details := result.GetErrorDetails(); details != nil {
+			code := stringValue(details.GetCode())
+			message := stringValue(details.GetMessage())
+			if code != "" || message != "" {
+				return "", fmt.Errorf("%s: %s", code, message)
+			}
 		}
 		return "", fmt.Errorf("未返回 targetId")
 	}
 
-	return result.TargetID, nil
+	return targetID, nil
 }
 
 func parseCreateItemResponse(body []byte) (string, error) {

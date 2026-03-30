@@ -6,9 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/mail"
 	"os"
 	"strings"
+
+	message "github.com/emersion/go-message"
 )
 
 const (
@@ -225,18 +226,17 @@ func (s *Service) recipients(mimeBytes []byte) ([]string, error) {
 	return s.resolveRecipients(mimeBytes)
 }
 
-func (s *Service) resolveRecipientsFromHeader(header mail.Header) ([]string, error) {
-	if header == nil {
-		return nil, ErrNoRecipients
-	}
+func (s *Service) resolveRecipientsFromHeader(header message.Header) ([]string, error) {
 	if s != nil && s.RecipientResolver != nil {
 		return s.RecipientResolver(headerToBytes(header))
 	}
 
 	recipients := collectRecipientsFromEnv(s.getenv(envPGPRecipients))
-	recipients = append(recipients, parseAddressList(header.Get("To"))...)
-	recipients = append(recipients, parseAddressList(header.Get("Cc"))...)
-	recipients = append(recipients, parseAddressList(header.Get("Bcc"))...)
+	for _, key := range recipientHeaderKeys {
+		for _, value := range headerValues(header, key) {
+			recipients = append(recipients, parseAddressList(value)...)
+		}
+	}
 	recipients = dedupeRecipients(recipients)
 	if len(recipients) == 0 {
 		return nil, ErrNoRecipients
@@ -280,18 +280,18 @@ func (s *Service) gpgHome() string {
 	return strings.TrimSpace(s.getenv(envGPGHome))
 }
 
-func readHeaderFromOpener(open MIMEOpenFunc) (mail.Header, error) {
+func readHeaderFromOpener(open MIMEOpenFunc) (message.Header, error) {
 	reader, err := open()
 	if err != nil {
-		return nil, fmt.Errorf("打开 MIME 源失败: %w", err)
+		return message.Header{}, fmt.Errorf("打开 MIME 源失败: %w", err)
 	}
 	defer reader.Close()
 
-	message, err := mail.ReadMessage(reader)
+	entity, err := message.Read(reader)
 	if err != nil {
-		return nil, fmt.Errorf("解析原始 MIME 失败: %w", err)
+		return message.Header{}, fmt.Errorf("解析原始 MIME 失败: %w", err)
 	}
-	return message.Header, nil
+	return entity.Header, nil
 }
 
 func readAllFromOpener(open MIMEOpenFunc) ([]byte, error) {

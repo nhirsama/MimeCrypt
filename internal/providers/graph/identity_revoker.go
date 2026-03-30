@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
+	abstractions "github.com/microsoft/kiota-abstractions-go"
+	users "github.com/microsoftgraph/msgraph-sdk-go/users"
+
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/provider"
 )
@@ -36,18 +39,22 @@ func (r *identityRevoker) Revoke(ctx context.Context) error {
 		return fmt.Errorf("identity revoker 未初始化")
 	}
 
-	req, err := r.client.newRequest(ctx, http.MethodPost, r.client.baseURL+"/me/revokeSignInSessions", nil)
+	requestInfo, err := r.client.newRequest(abstractions.POST, r.client.baseURL+"/me/revokeSignInSessions")
 	if err != nil {
 		return err
 	}
+	requestInfo.Headers.Add("Accept", "application/json")
 
-	var resp struct {
-		Value bool `json:"value"`
-	}
-	if err := r.client.doJSON(req, &resp, http.StatusOK); err != nil {
+	parsed, err := r.client.doParsable(ctx, requestInfo, users.CreateItemRevokeSignInSessionsPostResponseFromDiscriminatorValue)
+	if err != nil {
 		return fmt.Errorf("调用 revokeSignInSessions 失败: %w", err)
 	}
-	if !resp.Value {
+
+	resp, ok := parsed.(users.ItemRevokeSignInSessionsPostResponseable)
+	if !ok {
+		return fmt.Errorf("revokeSignInSessions 响应类型异常: %T", parsed)
+	}
+	if resp.GetValue() == nil || !*resp.GetValue() {
 		return fmt.Errorf("revokeSignInSessions 未确认吊销成功")
 	}
 	return nil

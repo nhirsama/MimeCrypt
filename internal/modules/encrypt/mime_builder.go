@@ -7,10 +7,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"net/mail"
-	"net/textproto"
 	"strings"
 	"time"
+
+	message "github.com/emersion/go-message"
 )
 
 const (
@@ -50,85 +50,112 @@ func buildPGPMIMEMessage(originalMIME, armored []byte, protectSubject ...bool) (
 
 type pgpMIMEMessageWriter struct {
 	writer          *bufio.Writer
-	boundary        string
+	partWriter      *message.Writer
+	rootWriter      *message.Writer
 	pendingNewlines int
 	prevCR          bool
 	closed          bool
 }
 
 func newPGPMIMEMessageWriter(originalMIME []byte, out io.Writer, protectSubject bool) (*pgpMIMEMessageWriter, error) {
-	message, err := mail.ReadMessage(bytes.NewReader(originalMIME))
+	entity, err := message.Read(bytes.NewReader(originalMIME))
 	if err != nil {
 		return nil, fmt.Errorf("解析原始 MIME 失败: %w", err)
 	}
-	return newPGPMIMEMessageWriterFromHeaderWithSource(message.Header, originalMIME, out, protectSubject)
+	return newPGPMIMEMessageWriterFromHeaderWithSource(entity.Header, originalMIME, out, protectSubject)
 }
 
-func newPGPMIMEMessageWriterFromHeader(header mail.Header, out io.Writer, protectSubject bool) (*pgpMIMEMessageWriter, error) {
+func newPGPMIMEMessageWriterFromHeader(header message.Header, out io.Writer, protectSubject bool) (*pgpMIMEMessageWriter, error) {
 	return newPGPMIMEMessageWriterFromHeaderWithSource(header, nil, out, protectSubject)
 }
 
-func newPGPMIMEMessageWriterFromHeaderWithSource(header mail.Header, originalMIME []byte, out io.Writer, protectSubject bool) (*pgpMIMEMessageWriter, error) {
+func newPGPMIMEMessageWriterFromHeaderWithSource(header message.Header, originalMIME []byte, out io.Writer, protectSubject bool) (*pgpMIMEMessageWriter, error) {
 	boundary, err := newBoundary(originalMIME)
 	if err != nil {
 		return nil, err
 	}
 
-	buffered := bufio.NewWriter(out)
-	if err := writePGPMIMEPreamble(buffered, header, boundary, protectSubject); err != nil {
+	outerHeader := buildPGPMIMEHeader(header, boundary, protectSubject)
+	rootWriter, err := message.CreateWriter(out, outerHeader)
+	if err != nil {
+		return nil, fmt.Errorf("创建外层 MIME 失败: %w", err)
+	}
+
+	if _, err := io.WriteString(rootWriter, "This is an OpenPGP/MIME encrypted message (RFC 4880 and 3156)\r\n"); err != nil {
+		_ = rootWriter.Close()
 		return nil, err
 	}
 
+	versionHeader := message.Header{}
+	versionHeader.SetContentType("application/pgp-encrypted", nil)
+	versionHeader.Set("Content-Description", "PGP/MIME version identification")
+	versionHeader.Set("Content-Disposition", "attachment")
+	versionHeader.Set("Content-Transfer-Encoding", "7bit")
+
+	versionWriter, err := rootWriter.CreatePart(versionHeader)
+	if err != nil {
+		_ = rootWriter.Close()
+		return nil, fmt.Errorf("创建 PGP 版本 part 失败: %w", err)
+	}
+	if _, err := io.WriteString(versionWriter, "Version: 1\r\n"); err != nil {
+		_ = versionWriter.Close()
+		_ = rootWriter.Close()
+		return nil, err
+	}
+	if err := versionWriter.Close(); err != nil {
+		_ = rootWriter.Close()
+		return nil, err
+	}
+
+	encryptedHeader := message.Header{}
+	encryptedHeader.SetContentType("application/octet-stream", map[string]string{"name": "encrypted.asc"})
+	encryptedHeader.Set("Content-Description", "OpenPGP encrypted message")
+	encryptedHeader.Set("Content-Disposition", `inline; filename="encrypted.asc"`)
+	encryptedHeader.Set("Content-Transfer-Encoding", "7bit")
+
+	partWriter, err := rootWriter.CreatePart(encryptedHeader)
+	if err != nil {
+		_ = rootWriter.Close()
+		return nil, fmt.Errorf("创建加密内容 part 失败: %w", err)
+	}
+
 	return &pgpMIMEMessageWriter{
-		writer:   buffered,
-		boundary: boundary,
+		writer:     bufio.NewWriter(partWriter),
+		partWriter: partWriter,
+		rootWriter: rootWriter,
 	}, nil
 }
 
-func writePGPMIMEPreamble(out io.Writer, header mail.Header, boundary string, protectSubject bool) error {
-	if err := writeHeaders(out, header, boundary, protectSubject); err != nil {
-		return err
+func buildPGPMIMEHeader(header message.Header, boundary string, protectSubject bool) message.Header {
+	result := message.Header{}
+	for _, key := range passThroughHeaderKeys {
+		if protectSubject && strings.EqualFold(key, "Subject") {
+			if hasNonEmptyHeaderValue(header, key) {
+				result.Add("Subject", "...")
+			}
+			continue
+		}
+		for _, value := range headerValues(header, key) {
+			trimmed := strings.TrimSpace(value)
+			if trimmed == "" {
+				continue
+			}
+			result.Add(key, trimmed)
+		}
 	}
-	if _, err := io.WriteString(out, "\r\n"); err != nil {
-		return err
+
+	if len(headerValues(header, "Date")) == 0 {
+		result.Add("Date", time.Now().UTC().Format(time.RFC1123Z))
 	}
-	if _, err := io.WriteString(out, "This is an OpenPGP/MIME encrypted message (RFC 4880 and 3156)\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "--"+boundary+"\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Type: application/pgp-encrypted\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Description: PGP/MIME version identification\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Disposition: attachment\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Transfer-Encoding: 7bit\r\n\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Version: 1\r\n\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "--"+boundary+"\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Type: application/octet-stream; name=\"encrypted.asc\"\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Description: OpenPGP encrypted message\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Disposition: inline; filename=\"encrypted.asc\"\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Transfer-Encoding: 7bit\r\n\r\n"); err != nil {
-		return err
-	}
-	return nil
+	result.Set("MIME-Version", "1.0")
+	result.Set("Content-Transfer-Encoding", "7bit")
+	result.AddRaw([]byte(processedHeaderKey + ": " + processedHeaderValue + "\r\n"))
+	result.AddRaw([]byte(fmt.Sprintf(
+		"Content-Type: multipart/encrypted; protocol=%q;\r\n boundary=%q\r\n",
+		"application/pgp-encrypted",
+		boundary,
+	)))
+	return result
 }
 
 func (w *pgpMIMEMessageWriter) Write(p []byte) (int, error) {
@@ -175,12 +202,16 @@ func (w *pgpMIMEMessageWriter) Close() error {
 		w.queueNewline()
 		w.prevCR = false
 	}
-	w.pendingNewlines = 0
-
-	if _, err := io.WriteString(w.writer, "\r\n--"+w.boundary+"--\r\n"); err != nil {
+	if err := w.flushPendingNewlines(); err != nil {
 		return err
 	}
-	return w.writer.Flush()
+	if err := w.writer.Flush(); err != nil {
+		return err
+	}
+	if err := w.partWriter.Close(); err != nil {
+		return err
+	}
+	return w.rootWriter.Close()
 }
 
 func (w *pgpMIMEMessageWriter) queueNewline() {
@@ -194,47 +225,6 @@ func (w *pgpMIMEMessageWriter) flushPendingNewlines() error {
 		}
 	}
 	w.pendingNewlines = 0
-	return nil
-}
-
-func writeHeaders(out io.Writer, header mail.Header, boundary string, protectSubject bool) error {
-	for _, key := range passThroughHeaderKeys {
-		if protectSubject && strings.EqualFold(key, "Subject") {
-			if hasNonEmptyHeaderValue(header, key) {
-				if _, err := io.WriteString(out, "Subject: ...\r\n"); err != nil {
-					return err
-				}
-			}
-			continue
-		}
-		for _, value := range headerValues(header, key) {
-			trimmed := strings.TrimSpace(value)
-			if trimmed == "" {
-				continue
-			}
-			if _, err := io.WriteString(out, key+": "+trimmed+"\r\n"); err != nil {
-				return err
-			}
-		}
-	}
-
-	if len(headerValues(header, "Date")) == 0 {
-		if _, err := io.WriteString(out, "Date: "+time.Now().UTC().Format(time.RFC1123Z)+"\r\n"); err != nil {
-			return err
-		}
-	}
-	if _, err := io.WriteString(out, "MIME-Version: 1.0\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Transfer-Encoding: 7bit\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, processedHeaderKey+": "+processedHeaderValue+"\r\n"); err != nil {
-		return err
-	}
-	if _, err := io.WriteString(out, "Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\""+boundary+"\"\r\n"); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -266,20 +256,14 @@ func randomBoundary() (string, error) {
 	if _, err := rand.Read(token); err != nil {
 		return "", fmt.Errorf("生成 MIME boundary 失败: %w", err)
 	}
-
 	return "mimecrypt-" + hex.EncodeToString(token), nil
 }
 
-func headerValues(header mail.Header, key string) []string {
-	if header == nil {
-		return nil
-	}
-
-	canonical := textproto.CanonicalMIMEHeaderKey(key)
-	return append([]string(nil), header[canonical]...)
+func headerValues(header message.Header, key string) []string {
+	return append([]string(nil), header.Values(key)...)
 }
 
-func hasNonEmptyHeaderValue(header mail.Header, key string) bool {
+func hasNonEmptyHeaderValue(header message.Header, key string) bool {
 	for _, value := range headerValues(header, key) {
 		if strings.TrimSpace(value) != "" {
 			return true

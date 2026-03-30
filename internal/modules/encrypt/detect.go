@@ -1,28 +1,34 @@
 package encrypt
 
 import (
-	"bufio"
 	"bytes"
 	"io"
-	"net/mail"
 	"strings"
+
+	message "github.com/emersion/go-message"
 )
 
 func detectFormat(mimeBytes []byte) (string, bool) {
-	lowerAll := strings.ToLower(string(mimeBytes))
-	lowerHeader := strings.ToLower(string(extractHeaderBlock(mimeBytes)))
-
-	if strings.Contains(lowerHeader, "content-type: multipart/encrypted") &&
-		strings.Contains(lowerHeader, "application/pgp-encrypted") {
-		return "pgp-mime", true
+	if entity, err := message.Read(bytes.NewReader(mimeBytes)); err == nil {
+		switch {
+		case isPGPMIMEHeader(entity.Header):
+			return "pgp-mime", true
+		case isSMIMEEncryptedHeader(entity.Header):
+			return "smime-enveloped", true
+		}
+	} else {
+		lowerHeader := strings.ToLower(string(extractHeaderBlock(mimeBytes)))
+		if isPGPMIMEHeaderText(lowerHeader) {
+			return "pgp-mime", true
+		}
+		if isSMIMEEncrypted(lowerHeader) {
+			return "smime-enveloped", true
+		}
 	}
-	if strings.Contains(lowerAll, "-----begin pgp message-----") {
+
+	if bytes.Contains(bytes.ToLower(mimeBytes), []byte("-----begin pgp message-----")) {
 		return "inline-pgp", true
 	}
-	if isSMIMEEncrypted(lowerHeader) {
-		return "smime-enveloped", true
-	}
-
 	return "plain", false
 }
 
@@ -32,61 +38,53 @@ func detectFormatFromOpener(open mimeOpenFunc) (string, bool, error) {
 	if open == nil {
 		return "plain", false, nil
 	}
+
 	reader, err := open()
 	if err != nil {
 		return "", false, err
 	}
 	defer reader.Close()
 
-	message, err := mail.ReadMessage(bufio.NewReader(reader))
+	entity, err := message.Read(reader)
 	if err != nil {
 		return "", false, err
 	}
 
-	lowerHeader := strings.ToLower(string(headerToBytes(message.Header)))
-	if strings.Contains(lowerHeader, "content-type: multipart/encrypted") &&
-		strings.Contains(lowerHeader, "application/pgp-encrypted") {
+	switch {
+	case isPGPMIMEHeader(entity.Header):
 		return "pgp-mime", true, nil
-	}
-	if isSMIMEEncrypted(lowerHeader) {
+	case isSMIMEEncryptedHeader(entity.Header):
 		return "smime-enveloped", true, nil
 	}
 
-	found, err := streamContainsFold(message.Body, []byte("-----BEGIN PGP MESSAGE-----"))
+	found, err := streamContainsFold(entity.Body, []byte("-----BEGIN PGP MESSAGE-----"))
 	if err != nil {
 		return "", false, err
 	}
 	if found {
 		return "inline-pgp", true, nil
 	}
-
 	return "plain", false, nil
 }
 
 func extractHeaderBlock(mimeBytes []byte) []byte {
-	headerBytes := mimeBytes
 	if idx := bytes.Index(mimeBytes, []byte("\r\n\r\n")); idx >= 0 {
-		return headerBytes[:idx]
+		return mimeBytes[:idx]
 	}
 	if idx := bytes.Index(mimeBytes, []byte("\n\n")); idx >= 0 {
-		return headerBytes[:idx]
+		return mimeBytes[:idx]
 	}
-
-	return headerBytes
+	return mimeBytes
 }
 
-func headerToBytes(header mail.Header) []byte {
-	if header == nil {
-		return nil
-	}
+func headerToBytes(header message.Header) []byte {
 	var out bytes.Buffer
-	for key, values := range header {
-		for _, value := range values {
-			out.WriteString(key)
-			out.WriteString(": ")
-			out.WriteString(value)
-			out.WriteString("\r\n")
-		}
+	fields := header.Fields()
+	for fields.Next() {
+		out.WriteString(fields.Key())
+		out.WriteString(": ")
+		out.WriteString(fields.Value())
+		out.WriteString("\r\n")
 	}
 	return out.Bytes()
 }
@@ -96,9 +94,9 @@ func streamContainsFold(r io.Reader, needle []byte) (bool, error) {
 	if len(needle) == 0 {
 		return true, nil
 	}
+
 	buffer := make([]byte, 32*1024)
 	carry := make([]byte, 0, len(needle)-1)
-
 	for {
 		n, err := r.Read(buffer)
 		if n > 0 {
@@ -122,12 +120,39 @@ func streamContainsFold(r io.Reader, needle []byte) (bool, error) {
 	}
 }
 
+func isPGPMIMEHeader(header message.Header) bool {
+	mediaType, params, _ := header.ContentType()
+	return strings.EqualFold(strings.TrimSpace(mediaType), "multipart/encrypted") &&
+		strings.EqualFold(strings.TrimSpace(params["protocol"]), "application/pgp-encrypted")
+}
+
+func isPGPMIMEHeaderText(lowerHeader string) bool {
+	return strings.Contains(lowerHeader, "content-type: multipart/encrypted") &&
+		strings.Contains(lowerHeader, "application/pgp-encrypted")
+}
+
+func isSMIMEEncryptedHeader(header message.Header) bool {
+	mediaType, params, _ := header.ContentType()
+	lowerType := strings.ToLower(strings.TrimSpace(mediaType))
+	if lowerType != "application/pkcs7-mime" && lowerType != "application/x-pkcs7-mime" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(params["smime-type"]), "enveloped-data") {
+		return true
+	}
+	if strings.EqualFold(strings.TrimSpace(params["name"]), "smime.p7m") {
+		return true
+	}
+
+	_, dispParams, _ := header.ContentDisposition()
+	return strings.EqualFold(strings.TrimSpace(dispParams["filename"]), "smime.p7m")
+}
+
 func isSMIMEEncrypted(lowerHeader string) bool {
 	if !(strings.Contains(lowerHeader, "content-type: application/pkcs7-mime") ||
 		strings.Contains(lowerHeader, "content-type: application/x-pkcs7-mime")) {
 		return false
 	}
-
 	if strings.Contains(lowerHeader, "smime-type=enveloped-data") {
 		return true
 	}
@@ -137,6 +162,5 @@ func isSMIMEEncrypted(lowerHeader string) bool {
 	if strings.Contains(lowerHeader, "filename=\"smime.p7m\"") {
 		return true
 	}
-
 	return false
 }

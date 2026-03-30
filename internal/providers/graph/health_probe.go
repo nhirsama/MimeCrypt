@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 
+	abstractions "github.com/microsoft/kiota-abstractions-go"
+	models "github.com/microsoftgraph/msgraph-sdk-go/models"
+
 	"mimecrypt/internal/provider"
 )
 
@@ -40,16 +43,21 @@ func (w *ewsWriter) HealthCheck(ctx context.Context) (string, error) {
 func (w *writer) currentUser(ctx context.Context) (provider.User, error) {
 	endpoint := fmt.Sprintf("%s/me?$select=id,mail,userPrincipalName", w.baseURL)
 
-	req, err := w.newRequest(ctx, http.MethodGet, endpoint, nil)
+	requestInfo, err := w.newRequest(abstractions.GET, endpoint)
 	if err != nil {
 		return provider.User{}, err
 	}
+	requestInfo.Headers.Add("Accept", "application/json")
 
-	var user provider.User
-	if err := w.doJSON(req, &user, http.StatusOK); err != nil {
+	parsed, err := w.doParsable(ctx, requestInfo, models.CreateUserFromDiscriminatorValue)
+	if err != nil {
 		return provider.User{}, fmt.Errorf("Graph 健康探测失败: %w", err)
 	}
-	return user, nil
+	user, ok := parsed.(models.Userable)
+	if !ok {
+		return provider.User{}, fmt.Errorf("Graph 健康探测响应类型异常: %T", parsed)
+	}
+	return providerUserFromModel(user), nil
 }
 
 type ewsGetFolderEnvelope struct {
