@@ -96,6 +96,70 @@ func TestPushSpoolRejectsFreshDuplicateAndAllowsReplayAfterRetention(t *testing.
 	}
 }
 
+func TestPushSpoolWritesSeenMarkerOnlyAfterAck(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 3, 30, 4, 5, 6, 0, time.UTC)
+	spool := &PushSpool{
+		Dir:             t.TempDir(),
+		ReplayRetention: time.Hour,
+		Now:             func() time.Time { return now },
+	}
+
+	duplicate, err := spool.Enqueue(PushMessage{DeliveryID: "delivery-4", MIME: []byte("mime")})
+	if err != nil || duplicate {
+		t.Fatalf("Enqueue() = (%t, %v), want (false, nil)", duplicate, err)
+	}
+
+	key := spool.messageKey("delivery-4")
+	if _, err := os.Stat(spool.seenPath(key)); !os.IsNotExist(err) {
+		t.Fatalf("seen marker exists before Ack(): err=%v", err)
+	}
+
+	claimed, found, err := spool.ClaimNext()
+	if err != nil || !found {
+		t.Fatalf("ClaimNext() = (%+v, %t, %v), want found message", claimed, found, err)
+	}
+	if duplicate, err := spool.Enqueue(PushMessage{DeliveryID: "delivery-4", MIME: []byte("mime")}); err != nil || !duplicate {
+		t.Fatalf("duplicate Enqueue() before Ack = (%t, %v), want (true, nil)", duplicate, err)
+	}
+
+	if err := spool.Ack(claimed.Key); err != nil {
+		t.Fatalf("Ack() error = %v", err)
+	}
+	if _, err := os.Stat(spool.seenPath(key)); err != nil {
+		t.Fatalf("seen marker missing after Ack(): %v", err)
+	}
+}
+
+func TestPushSpoolRetryAfterPendingLossIsAccepted(t *testing.T) {
+	t.Parallel()
+
+	spool := &PushSpool{
+		Dir:             t.TempDir(),
+		ReplayRetention: time.Hour,
+		Now:             func() time.Time { return time.Now().UTC() },
+	}
+
+	duplicate, err := spool.Enqueue(PushMessage{DeliveryID: "delivery-5", MIME: []byte("mime")})
+	if err != nil || duplicate {
+		t.Fatalf("first Enqueue() = (%t, %v), want (false, nil)", duplicate, err)
+	}
+
+	key := spool.messageKey("delivery-5")
+	if err := os.RemoveAll(spool.pendingPath(key)); err != nil {
+		t.Fatalf("RemoveAll() error = %v", err)
+	}
+
+	duplicate, err = spool.Enqueue(PushMessage{DeliveryID: "delivery-5", MIME: []byte("mime")})
+	if err != nil {
+		t.Fatalf("second Enqueue() error = %v", err)
+	}
+	if duplicate {
+		t.Fatalf("second Enqueue() duplicate = true, want false after queued message loss")
+	}
+}
+
 func TestPushSpoolRequeueProcessingReturnsMessageToPending(t *testing.T) {
 	t.Parallel()
 

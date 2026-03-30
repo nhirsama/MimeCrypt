@@ -3,6 +3,7 @@ package flowruntime
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/provider"
@@ -28,6 +29,18 @@ type envelopeBuilder interface {
 }
 
 func BuildSingleMessageRunner(ctx context.Context, run SourceRun, mode TransactionMode) (*SingleMessageRunner, error) {
+	sourceSpec, ok := provider.LookupSourceSpec(run.Source.Driver)
+	if !ok {
+		return nil, fmt.Errorf("single message runner 不支持 source driver=%s", run.Source.Driver)
+	}
+	sourceMode := strings.TrimSpace(run.Source.Mode)
+	if _, ok := sourceSpec.ModeSpec(sourceMode); !ok {
+		return nil, fmt.Errorf("single message runner 不支持 source=%s driver=%s mode=%s", run.Source.Name, run.Source.Driver, sourceMode)
+	}
+	if !strings.EqualFold(sourceMode, "poll") {
+		return nil, fmt.Errorf("single message runner 仅支持 mode=poll，当前 source=%s mode=%s", run.Source.Name, run.Source.Mode)
+	}
+
 	source, err := buildSourceBundle(SourcePlan{
 		Source: run.Source,
 		Config: run.Config,

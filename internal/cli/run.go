@@ -294,6 +294,10 @@ func releaseRouteLocks(locks []*runLock) {
 }
 
 func runDebugSaveFirst(ctx context.Context, run flowruntime.SourceRun) error {
+	if !strings.EqualFold(strings.TrimSpace(run.Source.Mode), "poll") {
+		return fmt.Errorf("--debug-save-first 仅支持 mode=poll 的 source，当前 source=%s mode=%s", run.Source.Name, run.Source.Mode)
+	}
+
 	cycleCtx, cancel := context.WithTimeout(ctx, run.Source.CycleTimeout)
 	defer cancel()
 

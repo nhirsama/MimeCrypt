@@ -84,19 +84,8 @@ func (s *PushSpool) Enqueue(message PushMessage) (bool, error) {
 		return true, nil
 	}
 
-	if err := s.writeSeenMarker(key, pushSeenMarker{
-		DeliveryID: message.DeliveryID,
-		SeenAt:     message.ReceivedAt,
-	}); err != nil {
-		if os.IsExist(err) {
-			return true, nil
-		}
-		return false, err
-	}
-
 	stagingDir, err := os.MkdirTemp(s.stagingDir(), key+"-*")
 	if err != nil {
-		_ = s.removeSeenMarker(key)
 		return false, fmt.Errorf("创建 push staging 目录失败: %w", err)
 	}
 
@@ -104,7 +93,6 @@ func (s *PushSpool) Enqueue(message PushMessage) (bool, error) {
 	defer func() {
 		if cleanup {
 			_ = os.RemoveAll(stagingDir)
-			_ = s.removeSeenMarker(key)
 		}
 	}()
 
@@ -199,7 +187,31 @@ func (s *PushSpool) Ack(key string) error {
 	if key == "" {
 		return fmt.Errorf("push key 不能为空")
 	}
-	if err := os.RemoveAll(s.processingPath(key)); err != nil {
+
+	if err := s.ensureDirs(); err != nil {
+		return err
+	}
+
+	processingPath := s.processingPath(key)
+	if _, err := os.Stat(processingPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("读取 push processing 消息失败: %w", err)
+	}
+
+	meta, err := s.readMeta(processingPath)
+	if err != nil {
+		return err
+	}
+	if err := s.writeSeenMarker(key, pushSeenMarker{
+		DeliveryID: meta.DeliveryID,
+		SeenAt:     s.now().UTC(),
+	}); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("写入 push seen marker 失败: %w", err)
+	}
+
+	if err := os.RemoveAll(processingPath); err != nil {
 		return fmt.Errorf("删除 push processing 消息失败: %w", err)
 	}
 	return nil
@@ -319,13 +331,6 @@ func (s *PushSpool) writeSeenMarker(key string, marker pushSeenMarker) error {
 	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("关闭 push seen marker 失败: %w", err)
-	}
-	return nil
-}
-
-func (s *PushSpool) removeSeenMarker(key string) error {
-	if err := os.Remove(s.seenPath(key)); err != nil && !os.IsNotExist(err) {
-		return err
 	}
 	return nil
 }

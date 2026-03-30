@@ -68,6 +68,21 @@ func TestBuildCoordinatorForModeBindsSelectedStoreType(t *testing.T) {
 	}
 }
 
+func TestBuildSingleMessageRunnerRejectsPushMode(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildSingleMessageRunner(context.Background(), SourceRun{
+		Source: appconfig.Source{
+			Name:   "incoming",
+			Driver: "webhook",
+			Mode:   "push",
+		},
+	}, TransactionModePersistent)
+	if err == nil || !strings.Contains(err.Error(), "mode=poll") {
+		t.Fatalf("BuildSingleMessageRunner() error = %v, want poll-only rejection", err)
+	}
+}
+
 func testSingleSourceRun(t *testing.T) SourceRun {
 	t.Helper()
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,7 +31,7 @@ func BuildPushRuntime(ctx context.Context, run SourceRun) (*PushRuntime, error) 
 	}
 
 	spool := &adapters.PushSpool{
-		Dir:             filepath.Join(run.Route.StateDir, "push-spool"),
+		Dir:             pushSpoolDirForSource(run.Route.StateDir, run.Source),
 		ReplayRetention: replayRetentionForSource(run.Source),
 	}
 	builder, ok := lookupPushIngressBuilder(run.Source.Driver)

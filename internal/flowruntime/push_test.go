@@ -69,7 +69,7 @@ func TestBuildPushRuntimeBuildsWebhookIngressAndProducer(t *testing.T) {
 	if producer.Spool == nil {
 		t.Fatalf("PushProducer.Spool = nil")
 	}
-	if got, want := producer.Spool.Dir, filepath.Join(run.Route.StateDir, "push-spool"); got != want {
+	if got, want := producer.Spool.Dir, pushSpoolDirForSource(run.Route.StateDir, run.Source); got != want {
 		t.Fatalf("PushProducer.Spool.Dir = %q, want %q", got, want)
 	}
 	if got, want := producer.Store.Driver, "webhook"; got != want {
@@ -92,5 +92,57 @@ func TestBuildPushRuntimeRejectsNonPushMode(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "mode=push") {
 		t.Fatalf("BuildPushRuntime() error = %v, want push mode rejection", err)
+	}
+}
+
+func TestBuildPushRuntimeUsesSourceScopedSpoolDirWhenStateDirShared(t *testing.T) {
+	t.Setenv("MIMECRYPT_WEBHOOK_SECRET", "top-secret")
+
+	sharedStateDir := t.TempDir()
+	newRun := func(sourceName string) SourceRun {
+		return SourceRun{
+			Source: appconfig.Source{
+				Name:   sourceName,
+				Driver: "webhook",
+				Mode:   "push",
+				Webhook: &appconfig.WebhookSource{
+					ListenAddr: "127.0.0.1:0",
+					Path:       "/mail/incoming",
+					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+				},
+			},
+			Route: appconfig.Route{
+				Name:     "default",
+				StateDir: sharedStateDir,
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Required: true},
+				},
+			},
+			Config: appconfig.Config{
+				Mail: appconfig.MailConfig{
+					Pipeline: appconfig.MailPipelineConfig{
+						AuditLogPath: filepath.Join(t.TempDir(), sourceName+".jsonl"),
+					},
+				},
+			},
+			Sinks: map[string]SinkPlan{
+				"discard": {Sink: appconfig.Sink{Name: "discard", Driver: "discard"}},
+			},
+		}
+	}
+
+	runtimeA, err := BuildPushRuntime(context.Background(), newRun("incoming-a"))
+	if err != nil {
+		t.Fatalf("BuildPushRuntime(incoming-a) error = %v", err)
+	}
+	runtimeB, err := BuildPushRuntime(context.Background(), newRun("incoming-b"))
+	if err != nil {
+		t.Fatalf("BuildPushRuntime(incoming-b) error = %v", err)
+	}
+
+	producerA := runtimeA.Runner.Producer.(*adapters.PushProducer)
+	producerB := runtimeB.Runner.Producer.(*adapters.PushProducer)
+	if producerA.Spool.Dir == producerB.Spool.Dir {
+		t.Fatalf("shared spool dir = %q, want isolated dirs", producerA.Spool.Dir)
 	}
 }

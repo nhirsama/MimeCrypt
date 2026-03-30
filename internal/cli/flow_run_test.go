@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mimecrypt/internal/appconfig"
+	"mimecrypt/internal/flowruntime"
 	"mimecrypt/internal/mailflow"
 )
 
@@ -209,6 +210,21 @@ func TestRunMailflowCycleSeparatesSkippedMessages(t *testing.T) {
 	}
 	if processed != 1 || skipped != 1 || deleted != 0 {
 		t.Fatalf("unexpected counts: processed=%d skipped=%d deleted=%d", processed, skipped, deleted)
+	}
+}
+
+func TestRunDebugSaveFirstRejectsPushSource(t *testing.T) {
+	t.Parallel()
+
+	err := runDebugSaveFirst(context.Background(), flowruntime.SourceRun{
+		Source: appconfig.Source{
+			Name:   "incoming",
+			Driver: "webhook",
+			Mode:   "push",
+		},
+	})
+	if err == nil || err.Error() != "--debug-save-first 仅支持 mode=poll 的 source，当前 source=incoming mode=push" {
+		t.Fatalf("runDebugSaveFirst() error = %v, want explicit push rejection", err)
 	}
 }
 
