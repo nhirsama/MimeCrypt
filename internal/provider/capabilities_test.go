@@ -55,3 +55,27 @@ func TestSourceSpecModeSpecNormalizesMode(t *testing.T) {
 		t.Fatalf("mode spec = %+v, want polling requirements", mode)
 	}
 }
+
+func TestLookupDriverSpecReturnsWebhookPushSourceOnly(t *testing.T) {
+	t.Parallel()
+
+	webhook, ok := LookupDriverSpec("webhook")
+	if !ok {
+		t.Fatalf("LookupDriverSpec(webhook) = missing")
+	}
+	if webhook.Sink != nil {
+		t.Fatalf("webhook sink spec = %+v, want nil", webhook.Sink)
+	}
+	if webhook.Source == nil {
+		t.Fatalf("webhook source spec = nil")
+	}
+	if webhook.Source.RequiresCredential {
+		t.Fatalf("webhook source requires credential unexpectedly")
+	}
+	if _, ok := webhook.Source.ModeSpec("push"); !ok {
+		t.Fatalf("webhook ModeSpec(push) = missing")
+	}
+	if _, ok := webhook.Source.ModeSpec("poll"); ok {
+		t.Fatalf("webhook ModeSpec(poll) should be unsupported")
+	}
+}

@@ -320,3 +320,28 @@ func TestServiceRunReportsMultipleFailedChecks(t *testing.T) {
 		t.Fatalf("FormatText() returned empty string")
 	}
 }
+
+func TestServiceRunSupportsLocalSourceWithoutSessionOrReader(t *testing.T) {
+	t.Parallel()
+
+	service := Service{
+		StateDir:          t.TempDir(),
+		Deep:              true,
+		SkipCachedToken:   true,
+		SkipProviderProbe: true,
+		LookPath: func(string) (string, error) {
+			return "/usr/bin/gpg", nil
+		},
+	}
+
+	result, err := service.Run(context.Background())
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !result.OK() {
+		t.Fatalf("Run() = %+v, want all checks OK", result)
+	}
+	if len(result.Checks) != 3 {
+		t.Fatalf("checks = %d, want 3", len(result.Checks))
+	}
+}

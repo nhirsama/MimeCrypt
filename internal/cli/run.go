@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -65,11 +66,15 @@ func newRunCmd() *cobra.Command {
 				return fmt.Errorf("run 失败: %w", err)
 			}
 
-			if err := runAllSourcesOnce(cmd.Context(), configuredRuns); err != nil {
-				return fmt.Errorf("run 失败: %w", err)
-			}
 			if once {
+				if err := runAllSourcesOnce(cmd.Context(), configuredRuns); err != nil {
+					return fmt.Errorf("run 失败: %w", err)
+				}
 				return nil
+			}
+
+			if err := runStartupSources(cmd.Context(), configuredRuns); err != nil {
+				return fmt.Errorf("run 失败: %w", err)
 			}
 
 			return runRouteLoops(cmd.Context(), configuredRuns)
@@ -89,12 +94,19 @@ type configuredSourceRun struct {
 	Runner interface {
 		RunOnce(context.Context) (mailflow.Result, bool, error)
 	}
+	Push *flowruntime.PushRuntime
 }
 
 func runMailflowCycle(ctx context.Context, cycleTimeout time.Duration, runner interface {
 	RunOnce(context.Context) (mailflow.Result, bool, error)
 }) (int, int, int, error) {
-	cycleCtx, cancel := context.WithTimeout(ctx, cycleTimeout)
+	cycleCtx := ctx
+	cancel := func() {}
+	if cycleTimeout > 0 {
+		cycleCtx, cancel = context.WithTimeout(ctx, cycleTimeout)
+	} else {
+		cycleCtx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 
 	processedCount := 0
@@ -122,6 +134,19 @@ func runMailflowCycle(ctx context.Context, cycleTimeout time.Duration, runner in
 func buildConfiguredRuns(ctx context.Context, runs []flowruntime.SourceRun) ([]configuredSourceRun, error) {
 	configured := make([]configuredSourceRun, 0, len(runs))
 	for _, run := range runs {
+		if strings.EqualFold(strings.TrimSpace(run.Source.Mode), "push") {
+			pushRuntime, err := flowruntime.BuildPushRuntime(ctx, run)
+			if err != nil {
+				return nil, err
+			}
+			configured = append(configured, configuredSourceRun{
+				Run:    run,
+				Runner: pushRuntime.Runner,
+				Push:   pushRuntime,
+			})
+			continue
+		}
+
 		runner, err := flowruntime.BuildRunner(ctx, run)
 		if err != nil {
 			return nil, err
@@ -144,8 +169,25 @@ func runAllSourcesOnce(ctx context.Context, runs []configuredSourceRun) error {
 	return nil
 }
 
+func runStartupSources(ctx context.Context, runs []configuredSourceRun) error {
+	includeSourcePrefix := len(runs) > 1
+	for _, run := range runs {
+		if run.Push != nil {
+			continue
+		}
+		if err := runConfiguredSourceOnce(ctx, run, includeSourcePrefix); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runRouteLoops(ctx context.Context, runs []configuredSourceRun) error {
 	includeSourcePrefix := len(runs) > 1
+	loopCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
 	for _, run := range runs {
 		run := run
@@ -153,15 +195,26 @@ func runRouteLoops(ctx context.Context, runs []configuredSourceRun) error {
 		go func() {
 			defer wg.Done()
 
+			if run.Push != nil {
+				if err := run.Push.Run(loopCtx); err != nil && !errors.Is(err, context.Canceled) {
+					select {
+					case errCh <- fmt.Errorf("source=%s: %w", run.Run.Source.Name, err):
+					default:
+					}
+					cancel()
+				}
+				return
+			}
+
 			ticker := time.NewTicker(run.Run.Source.PollInterval)
 			defer ticker.Stop()
 
 			for {
 				select {
-				case <-ctx.Done():
+				case <-loopCtx.Done():
 					return
 				case <-ticker.C:
-					if err := runConfiguredSourceOnce(ctx, run, includeSourcePrefix); err != nil {
+					if err := runConfiguredSourceOnce(loopCtx, run, includeSourcePrefix); err != nil {
 						fmt.Printf("source=%s 本轮同步失败，下个周期继续重试: %v\n", run.Run.Source.Name, err)
 					}
 				}
@@ -169,9 +222,27 @@ func runRouteLoops(ctx context.Context, runs []configuredSourceRun) error {
 		}()
 	}
 
-	<-ctx.Done()
-	wg.Wait()
-	return ctx.Err()
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-ctx.Done():
+		cancel()
+		<-done
+		return ctx.Err()
+	case err := <-errCh:
+		cancel()
+		<-done
+		return err
+	case <-done:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return nil
+	}
 }
 
 func runConfiguredSourceOnce(ctx context.Context, run configuredSourceRun, includeSourcePrefix bool) error {

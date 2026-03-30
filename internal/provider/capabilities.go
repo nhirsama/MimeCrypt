@@ -141,6 +141,17 @@ var builtinDriverSpecs = map[string]DriverSpec{
 			SupportsHealth:     true,
 		},
 	},
+	"webhook": {
+		Name: "webhook",
+		Source: &SourceSpec{
+			RequiresCredential: false,
+			SupportsDelete:     false,
+			DeleteSemantics:    DeleteSemanticsUnknown,
+			Modes: map[string]SourceModeSpec{
+				"push": {},
+			},
+		},
+	},
 }
 
 func LookupDriverSpec(driver string) (DriverSpec, bool) {

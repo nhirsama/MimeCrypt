@@ -47,23 +47,30 @@ func BuildListService(plan SourcePlan) (*list.Service, error) {
 }
 
 func BuildHealthService(ctx context.Context, run SourceRun) (*health.Service, error) {
-	source, err := buildSourceBundle(SourcePlan{
-		Source: run.Source,
-		Config: run.Config,
-	})
-	if err != nil {
-		return nil, err
+	sourceSpec, ok := provider.LookupSourceSpec(run.Source.Driver)
+	if !ok {
+		return nil, fmt.Errorf("run 不支持 source driver=%s", run.Source.Driver)
 	}
 
 	service := &health.Service{
-		StateDir: run.Config.Auth.StateDir,
-		Folder:   run.Source.Folder,
-		Provider: normalizeDriver(run.Source.Driver, "imap"),
-		Session:  source.Clients.Session,
-		Reader:   source.Clients.Reader,
+		StateDir:          run.Config.Auth.StateDir,
+		Folder:            run.Source.Folder,
+		Provider:          normalizeDriver(run.Source.Driver, "imap"),
+		ProviderProbeKind: sourceSpec.ProbeKind,
 	}
-	if sourceSpec, ok := provider.LookupSourceSpec(run.Source.Driver); ok {
-		service.ProviderProbeKind = sourceSpec.ProbeKind
+	service.SkipCachedToken = !sourceSpec.RequiresCredential
+	service.SkipProviderProbe = sourceSpec.ProbeKind == ""
+
+	if !service.SkipCachedToken || !service.SkipProviderProbe {
+		source, err := buildSourceBundle(SourcePlan{
+			Source: run.Source,
+			Config: run.Config,
+		})
+		if err != nil {
+			return nil, err
+		}
+		service.Session = source.Clients.Session
+		service.Reader = source.Clients.Reader
 	}
 
 	probes := make([]health.WriteBackProbe, 0, len(run.Route.Targets))

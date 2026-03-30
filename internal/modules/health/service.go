@@ -43,6 +43,8 @@ type Service struct {
 	Reader            provider.Reader
 	WriteBack         provider.HealthProber
 	WriteBacks        []WriteBackProbe
+	SkipCachedToken   bool
+	SkipProviderProbe bool
 	LookPath          func(string) (string, error)
 	Getenv            func(string) string
 }
@@ -57,26 +59,28 @@ func (s *Service) Run(ctx context.Context) (Result, error) {
 	if s == nil {
 		return Result{}, fmt.Errorf("health service 不能为空")
 	}
-	if s.Session == nil {
+	if !s.SkipCachedToken && s.Session == nil {
 		return Result{}, fmt.Errorf("health session 不能为空")
 	}
 	if strings.TrimSpace(s.StateDir) == "" {
 		return Result{}, fmt.Errorf("health state dir 不能为空")
 	}
-	if s.Deep && s.Reader == nil {
+	if s.Deep && !s.SkipProviderProbe && s.Reader == nil {
 		return Result{}, fmt.Errorf("deep health reader 不能为空")
 	}
 
 	checks := []Check{
 		s.checkStateDir(),
 		s.checkGPG(),
-		s.checkCachedToken(),
+	}
+	if !s.SkipCachedToken {
+		checks = append(checks, s.checkCachedToken())
 	}
 	if s.Deep {
-		checks = append(checks,
-			s.checkStateDirWritable(),
-			s.checkProvider(ctx),
-		)
+		checks = append(checks, s.checkStateDirWritable())
+		if !s.SkipProviderProbe {
+			checks = append(checks, s.checkProvider(ctx))
+		}
 		checks = append(checks, s.checkWriteBacks(ctx)...)
 	}
 	return Result{Checks: checks}, nil

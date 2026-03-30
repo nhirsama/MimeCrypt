@@ -137,3 +137,43 @@ func TestBuildLocalConsumerUsesCapabilityKind(t *testing.T) {
 		t.Fatalf("OutputDir = %q, want /tmp/out", fileConsumer.OutputDir)
 	}
 }
+
+func TestBuildHealthServiceAllowsWebhookSourceWithoutProviderClients(t *testing.T) {
+	t.Parallel()
+
+	run := SourceRun{
+		Source: appconfig.Source{
+			Name:   "incoming",
+			Driver: "webhook",
+			Mode:   "push",
+			Webhook: &appconfig.WebhookSource{
+				ListenAddr: "127.0.0.1:8080",
+				Path:       "/mail/incoming",
+				SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+			},
+		},
+		Route: appconfig.Route{
+			Name: "default",
+			Targets: []appconfig.RouteTarget{
+				{Name: "discard", SinkRef: "discard", Required: true},
+			},
+		},
+		Config: appconfig.Config{
+			Auth: appconfig.AuthConfig{StateDir: t.TempDir()},
+		},
+		Sinks: map[string]SinkPlan{
+			"discard": {Sink: appconfig.Sink{Name: "discard", Driver: "discard"}},
+		},
+	}
+
+	service, err := BuildHealthService(context.Background(), run)
+	if err != nil {
+		t.Fatalf("BuildHealthService() error = %v", err)
+	}
+	if !service.SkipCachedToken || !service.SkipProviderProbe {
+		t.Fatalf("unexpected health service flags: %+v", service)
+	}
+	if service.Session != nil || service.Reader != nil {
+		t.Fatalf("webhook health should not require session/reader: %+v", service)
+	}
+}

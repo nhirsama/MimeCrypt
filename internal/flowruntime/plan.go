@@ -156,6 +156,17 @@ func populateSourceStatePaths(cfg appconfig.Config, topology *appconfig.Topology
 		if strings.TrimSpace(source.StatePath) != "" {
 			continue
 		}
+		sourceSpec, ok := provider.LookupSourceSpec(source.Driver)
+		if !ok {
+			return fmt.Errorf("source %s 不支持 driver: %s", source.Name, source.Driver)
+		}
+		modeSpec, ok := sourceSpec.ModeSpec(source.Mode)
+		if !ok {
+			return fmt.Errorf("source %s 的 driver %s 不支持 mode: %s", source.Name, source.Driver, source.Mode)
+		}
+		if !modeSpec.RequiresStatePath {
+			continue
+		}
 		sourceCfg, err := configForSource(cfg, *topology, source)
 		if err != nil {
 			return err

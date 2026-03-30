@@ -1,6 +1,9 @@
 package appconfig
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestTopologyValidateStructureAllowsMissingDefaultSelections(t *testing.T) {
 	t.Parallel()
@@ -216,5 +219,117 @@ func TestTopologyValidateStructureRejectsDeleteSourceForSoftDeleteSource(t *test
 	err := topology.ValidateStructure()
 	if err == nil || err.Error() != "route default 启用 delete source 时，source archive 的 driver graph 仅支持 soft delete" {
 		t.Fatalf("ValidateStructure() error = %v, want soft delete rejection", err)
+	}
+}
+
+func TestTopologyValidateStructureAllowsWebhookPushSource(t *testing.T) {
+	t.Parallel()
+
+	topology := Topology{
+		Sources: map[string]Source{
+			"incoming": {
+				Name:   "incoming",
+				Driver: "webhook",
+				Mode:   "push",
+				Webhook: &WebhookSource{
+					ListenAddr: "127.0.0.1:8080",
+					Path:       "/mail/incoming",
+					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+				},
+			},
+		},
+		Sinks: map[string]Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"incoming"},
+				Targets: []RouteTarget{
+					{Name: "discard", SinkRef: "discard", Required: true},
+				},
+			},
+		},
+	}
+
+	if err := topology.ValidateStructure(); err != nil {
+		t.Fatalf("ValidateStructure() error = %v", err)
+	}
+}
+
+func TestTopologyValidateStructureRejectsWebhookNonPushMode(t *testing.T) {
+	t.Parallel()
+
+	topology := Topology{
+		Sources: map[string]Source{
+			"incoming": {
+				Name:   "incoming",
+				Driver: "webhook",
+				Mode:   "poll",
+				Webhook: &WebhookSource{
+					ListenAddr: "127.0.0.1:8080",
+					Path:       "/mail/incoming",
+					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+				},
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"incoming"},
+				Targets: []RouteTarget{
+					{Name: "discard", SinkRef: "discard", Required: true},
+				},
+			},
+		},
+	}
+
+	err := topology.ValidateStructure()
+	if err == nil || err.Error() != "source incoming 的 driver webhook 不支持 mode: poll" {
+		t.Fatalf("ValidateStructure() error = %v, want webhook push mode rejection", err)
+	}
+}
+
+func TestTopologyValidateStructureRejectsWebhookConfigOnNonWebhookDriver(t *testing.T) {
+	t.Parallel()
+
+	topology := Topology{
+		Sources: map[string]Source{
+			"archive": {
+				Name:         "archive",
+				Driver:       "imap",
+				Mode:         "poll",
+				StatePath:    "/state/flow-sync-archive.json",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+				Webhook: &WebhookSource{
+					ListenAddr: "127.0.0.1:8080",
+					Path:       "/mail/incoming",
+					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+				},
+			},
+		},
+		Sinks: map[string]Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"archive"},
+				Targets: []RouteTarget{
+					{Name: "discard", SinkRef: "discard", Required: true},
+				},
+			},
+		},
+	}
+
+	err := topology.ValidateStructure()
+	if err == nil || err.Error() != "source archive 的 driver imap 不接受 webhook 配置" {
+		t.Fatalf("ValidateStructure() error = %v, want webhook config rejection", err)
 	}
 }

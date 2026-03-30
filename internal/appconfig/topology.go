@@ -44,15 +44,24 @@ type Credential struct {
 }
 
 type Source struct {
-	Name            string        `json:"name,omitempty"`
-	Driver          string        `json:"driver,omitempty"`
-	Mode            string        `json:"mode,omitempty"`
-	CredentialRef   string        `json:"credential_ref,omitempty"`
-	Folder          string        `json:"folder,omitempty"`
-	StatePath       string        `json:"state_path,omitempty"`
-	IncludeExisting bool          `json:"include_existing,omitempty"`
-	PollInterval    time.Duration `json:"poll_interval,omitempty"`
-	CycleTimeout    time.Duration `json:"cycle_timeout,omitempty"`
+	Name            string         `json:"name,omitempty"`
+	Driver          string         `json:"driver,omitempty"`
+	Mode            string         `json:"mode,omitempty"`
+	CredentialRef   string         `json:"credential_ref,omitempty"`
+	Folder          string         `json:"folder,omitempty"`
+	StatePath       string         `json:"state_path,omitempty"`
+	IncludeExisting bool           `json:"include_existing,omitempty"`
+	PollInterval    time.Duration  `json:"poll_interval,omitempty"`
+	CycleTimeout    time.Duration  `json:"cycle_timeout,omitempty"`
+	Webhook         *WebhookSource `json:"webhook,omitempty"`
+}
+
+type WebhookSource struct {
+	ListenAddr         string        `json:"listen_addr,omitempty"`
+	Path               string        `json:"path,omitempty"`
+	SecretEnv          string        `json:"secret_env,omitempty"`
+	MaxBodyBytes       int64         `json:"max_body_bytes,omitempty"`
+	TimestampTolerance time.Duration `json:"timestamp_tolerance,omitempty"`
 }
 
 type Sink struct {
@@ -326,6 +335,36 @@ func (s Source) Validate(name string, credentials map[string]Credential) error {
 	}
 	if modeSpec.RequiresCycleTimeout && s.CycleTimeout <= 0 {
 		return fmt.Errorf("source %s cycle timeout 必须大于 0", name)
+	}
+	if err := s.validateDriverConfig(name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s Source) validateDriverConfig(name string) error {
+	driver := strings.ToLower(strings.TrimSpace(s.Driver))
+	switch driver {
+	case "webhook":
+		if !strings.EqualFold(strings.TrimSpace(s.Mode), "push") {
+			return fmt.Errorf("source %s 的 driver webhook 仅支持 mode push", name)
+		}
+		if s.Webhook == nil {
+			return fmt.Errorf("source %s 缺少 webhook 配置", name)
+		}
+		if strings.TrimSpace(s.Webhook.ListenAddr) == "" {
+			return fmt.Errorf("source %s webhook listen addr 不能为空", name)
+		}
+		if path := strings.TrimSpace(s.Webhook.Path); path == "" || !strings.HasPrefix(path, "/") {
+			return fmt.Errorf("source %s webhook path 必须以 / 开头", name)
+		}
+		if strings.TrimSpace(s.Webhook.SecretEnv) == "" {
+			return fmt.Errorf("source %s webhook secret_env 不能为空", name)
+		}
+	default:
+		if s.Webhook != nil {
+			return fmt.Errorf("source %s 的 driver %s 不接受 webhook 配置", name, s.Driver)
+		}
 	}
 	return nil
 }

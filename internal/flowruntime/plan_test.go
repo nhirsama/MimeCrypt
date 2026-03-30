@@ -460,6 +460,57 @@ func TestResolveRoutePlanAllowsLocalSinkWithoutCredentialResolution(t *testing.T
 	}
 }
 
+func TestResolveRoutePlanDoesNotPopulateStatePathForPushWebhookSource(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		DefaultRoute: "default",
+		Sources: map[string]appconfig.Source{
+			"incoming": {
+				Name:   "incoming",
+				Driver: "webhook",
+				Mode:   "push",
+				Webhook: &appconfig.WebhookSource{
+					ListenAddr: "127.0.0.1:8080",
+					Path:       "/mail/incoming",
+					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+				},
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"incoming"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Required: true},
+				},
+			},
+		},
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{}, RoutePlanSingleSource)
+	if err != nil {
+		t.Fatalf("ResolveRoutePlan() error = %v", err)
+	}
+	if len(plan.Runs) != 1 {
+		t.Fatalf("len(Runs) = %d, want 1", len(plan.Runs))
+	}
+
+	run := plan.Runs[0]
+	if run.Source.StatePath != "" {
+		t.Fatalf("Source.StatePath = %q, want empty", run.Source.StatePath)
+	}
+	if got, want := run.Route.StateDir, filepath.Join(stateDir, "flow-state", "default-incoming-webhook"); got != want {
+		t.Fatalf("Route.StateDir = %q, want %q", got, want)
+	}
+}
+
 func testRuntimeConfig(stateDir, topologyPath string) appconfig.Config {
 	return appconfig.Config{
 		TopologyPath: topologyPath,
