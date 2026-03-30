@@ -23,7 +23,7 @@ func newLoginCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "login",
-		Short: "交互式配置 credential 并写入本地登录状态",
+		Short: "交互式配置 credential 运行时并建立设备凭据",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := bootstrap.Error(); err != nil {
@@ -37,13 +37,17 @@ func newLoginCmd() *cobra.Command {
 			}
 			cfg = resolved.Config
 
-			localCfg, err := appconfig.LoadLocalConfig(cfg.Auth.StateDir)
-			if err != nil {
-				return fmt.Errorf("login 失败: %w", err)
-			}
+			localCfg := resolved.LocalConfig
 			out := cmd.OutOrStdout()
 			configureDrivers := loginDriversForConfig(resolved)
-			localCfg, cfg, resolvedDrivers, err := providers.ConfigureLoginLocalConfig(cfg, localCfg, cmd.InOrStdin(), out, configureDrivers...)
+			localCfg, cfg, resolvedDrivers, err := providers.ConfigureLoginLocalConfig(
+				resolved.EffectiveCredentialKind(),
+				cfg,
+				localCfg,
+				cmd.InOrStdin(),
+				out,
+				configureDrivers...,
+			)
 			if err != nil {
 				if errors.Is(err, interact.ErrAbort) {
 					_, _ = fmt.Fprintln(out, "已取消 credential 登录配置")
@@ -52,9 +56,10 @@ func newLoginCmd() *cobra.Command {
 				return fmt.Errorf("login 失败: %w", err)
 			}
 			if err := appconfig.SaveLocalConfig(cfg.Auth.StateDir, localCfg); err != nil {
-				return fmt.Errorf("login 失败: 保存本地驱动配置失败: %w", err)
+				return fmt.Errorf("login 失败: 保存 credential 本地配置失败: %w", err)
 			}
 			resolved.Config = cfg
+			resolved.LocalConfig = localCfg
 			resolved.AuthDrivers = resolvedDrivers
 
 			loginCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
@@ -69,9 +74,20 @@ func newLoginCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("login 失败: %w", err)
 			}
-			_, _ = fmt.Fprintf(out, "登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
-			if strings.TrimSpace(resolved.CredentialName) != "" {
-				_, _ = fmt.Fprintf(out, "credential=%s\n", resolved.CredentialName)
+			credentialName := firstNonEmpty(strings.TrimSpace(result.Credential), strings.TrimSpace(resolved.CredentialName))
+			if credentialName != "" {
+				_, _ = fmt.Fprintf(out, "credential=%s\n", credentialName)
+			}
+			if result.Kind != "" {
+				_, _ = fmt.Fprintf(out, "kind=%s\n", result.Kind)
+			}
+			if result.Runtime != "" {
+				_, _ = fmt.Fprintf(out, "runtime=%s\n", result.Runtime)
+			}
+			if result.Account != "" || result.DisplayName != "" {
+				_, _ = fmt.Fprintf(out, "登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
+			} else {
+				_, _ = fmt.Fprintln(out, "登录成功")
 			}
 			printCredentialBindingSummary(out, resolved)
 			_, _ = fmt.Fprintf(out, "token 已缓存到 %s\n", result.StateDir)

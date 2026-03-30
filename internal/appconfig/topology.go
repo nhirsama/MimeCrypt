@@ -1,6 +1,7 @@
 package appconfig
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,8 +12,8 @@ const (
 	defaultTopologyCredentialName = "default"
 )
 
-// Topology 表示命名 source / sink / route / credential 的配置拓扑。
-// 当前运行时完全基于该显式模型进行解析与装配。
+// Topology 表示命名 configured instance 组成的声明式拓扑。
+// 这些实例只描述 source / sink / credential / route 的配置，不持有运行时资源。
 type Topology struct {
 	Credentials       map[string]Credential `json:"credentials,omitempty"`
 	Sources           map[string]Source     `json:"sources,omitempty"`
@@ -23,6 +24,10 @@ type Topology struct {
 	DefaultRoute      string                `json:"default_route,omitempty"`
 }
 
+// Credential 是 topology 中的命名配置实例。
+// 它只描述声明式 credential 配置，不承载运行时 session 或 token handle。
+// Credential 表示命名 credential 配置实例。
+// 它负责声明认证材料覆盖和会话持久化策略。
 type Credential struct {
 	Name             string   `json:"name,omitempty"`
 	Kind             string   `json:"kind,omitempty"`
@@ -41,13 +46,18 @@ type Credential struct {
 	IMAPScopesSet    bool     `json:"-"`
 }
 
+// Source 是 topology 中的命名 source device 配置实例。
+// 它声明 source driver、接入模式和驱动配置；运行时对象由 compiled plan 打开。
+// Source 表示命名 source device 配置实例。
+// 它描述 source driver、接入 mode、credential 绑定和驱动私有配置。
 type Source struct {
-	Name            string         `json:"name,omitempty"`
-	Driver          string         `json:"driver,omitempty"`
-	Mode            string         `json:"mode,omitempty"`
-	CredentialRef   string         `json:"credential_ref,omitempty"`
-	Folder          string         `json:"folder,omitempty"`
-	StatePath       string         `json:"state_path,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Driver        string `json:"driver,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+	CredentialRef string `json:"credential_ref,omitempty"`
+	Folder        string `json:"folder,omitempty"`
+	// StatePath 是 compiled runtime 注入的派生值，不属于 topology 配置持久化。
+	StatePath       string         `json:"-"`
 	IncludeExisting bool           `json:"include_existing,omitempty"`
 	PollInterval    time.Duration  `json:"poll_interval,omitempty"`
 	CycleTimeout    time.Duration  `json:"cycle_timeout,omitempty"`
@@ -62,6 +72,10 @@ type WebhookSource struct {
 	TimestampTolerance time.Duration `json:"timestamp_tolerance,omitempty"`
 }
 
+// Sink 是 topology 中的命名 sink device 配置实例。
+// 它声明 sink driver 和目标配置；运行时 consumer 由 compiled plan 打开。
+// Sink 表示命名 sink device 配置实例。
+// 它描述 sink driver、credential 绑定和输出位置。
 type Sink struct {
 	Name          string `json:"name,omitempty"`
 	Driver        string `json:"driver,omitempty"`
@@ -71,17 +85,22 @@ type Sink struct {
 	Verify        bool   `json:"verify,omitempty"`
 }
 
+// Route 是 topology 中的命名编排实例，用于把 source 与 sink 连接为邮件事务链路。
+// Route 表示命名 route 配置实例。
+// 它只描述 source 与 sink 的声明式关系，运行时派生值在 compiled plan 中展开。
 type Route struct {
-	Name         string             `json:"name,omitempty"`
-	SourceRefs   []string           `json:"source_refs,omitempty"`
-	StateDir     string             `json:"state_dir,omitempty"`
+	Name       string   `json:"name,omitempty"`
+	SourceRefs []string `json:"source_refs,omitempty"`
+	// StateDir 是 compiled runtime 注入的派生值，不属于 topology 配置持久化。
+	StateDir     string             `json:"-"`
 	Targets      []RouteTarget      `json:"targets,omitempty"`
 	DeleteSource DeleteSourcePolicy `json:"delete_source,omitempty"`
 }
 
 type RouteTarget struct {
-	Name     string `json:"name,omitempty"`
-	SinkRef  string `json:"sink_ref,omitempty"`
+	Name    string `json:"name,omitempty"`
+	SinkRef string `json:"sink_ref,omitempty"`
+	// Artifact 作为路由角色标签保留，当前所有 sink 都消费统一邮件对象。
 	Artifact string `json:"artifact,omitempty"`
 	Required bool   `json:"required,omitempty"`
 }
@@ -103,10 +122,11 @@ func (t Topology) Normalize() Topology {
 	}
 	if t.Sources != nil {
 		for name, source := range t.Sources {
+			source.StatePath = ""
 			if strings.TrimSpace(source.Name) == "" {
 				source.Name = strings.TrimSpace(name)
-				t.Sources[name] = source
 			}
+			t.Sources[name] = source
 		}
 	}
 	if t.Sinks != nil {
@@ -119,10 +139,11 @@ func (t Topology) Normalize() Topology {
 	}
 	if t.Routes != nil {
 		for name, route := range t.Routes {
+			route.StateDir = ""
 			if strings.TrimSpace(route.Name) == "" {
 				route.Name = strings.TrimSpace(name)
-				t.Routes[name] = route
 			}
+			t.Routes[name] = route
 		}
 	}
 	return t
@@ -145,6 +166,66 @@ func (c *Credential) UnmarshalJSON(data []byte) error {
 	_, c.GraphScopesSet = raw["graph_scopes"]
 	_, c.EWSScopesSet = raw["ews_scopes"]
 	_, c.IMAPScopesSet = raw["imap_scopes"]
+	return nil
+}
+
+func (s *Source) UnmarshalJSON(data []byte) error {
+	type sourceJSON struct {
+		Name            string         `json:"name,omitempty"`
+		Driver          string         `json:"driver,omitempty"`
+		Mode            string         `json:"mode,omitempty"`
+		CredentialRef   string         `json:"credential_ref,omitempty"`
+		Folder          string         `json:"folder,omitempty"`
+		StatePath       string         `json:"state_path,omitempty"`
+		IncludeExisting bool           `json:"include_existing,omitempty"`
+		PollInterval    time.Duration  `json:"poll_interval,omitempty"`
+		CycleTimeout    time.Duration  `json:"cycle_timeout,omitempty"`
+		Webhook         *WebhookSource `json:"webhook,omitempty"`
+	}
+
+	var decoded sourceJSON
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+
+	*s = Source{
+		Name:            decoded.Name,
+		Driver:          decoded.Driver,
+		Mode:            decoded.Mode,
+		CredentialRef:   decoded.CredentialRef,
+		Folder:          decoded.Folder,
+		IncludeExisting: decoded.IncludeExisting,
+		PollInterval:    decoded.PollInterval,
+		CycleTimeout:    decoded.CycleTimeout,
+		Webhook:         decoded.Webhook,
+	}
+	return nil
+}
+
+func (r *Route) UnmarshalJSON(data []byte) error {
+	type routeJSON struct {
+		Name         string             `json:"name,omitempty"`
+		SourceRefs   []string           `json:"source_refs,omitempty"`
+		StateDir     string             `json:"state_dir,omitempty"`
+		Targets      []RouteTarget      `json:"targets,omitempty"`
+		DeleteSource DeleteSourcePolicy `json:"delete_source,omitempty"`
+	}
+
+	var decoded routeJSON
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&decoded); err != nil {
+		return err
+	}
+
+	*r = Route{
+		Name:         decoded.Name,
+		SourceRefs:   append([]string(nil), decoded.SourceRefs...),
+		Targets:      append([]RouteTarget(nil), decoded.Targets...),
+		DeleteSource: decoded.DeleteSource,
+	}
 	return nil
 }
 
@@ -258,8 +339,8 @@ func (t Topology) DefaultSourceConfig() (Source, error) {
 	if name == "" {
 		return Source{}, fmt.Errorf("default source 未配置")
 	}
-	source, ok := t.Sources[name]
-	if !ok {
+	source, err := t.SourceInstance(name)
+	if err != nil {
 		return Source{}, fmt.Errorf("default source 不存在: %s", name)
 	}
 	return source, nil
@@ -270,8 +351,8 @@ func (t Topology) DefaultRouteConfig() (Route, error) {
 	if name == "" {
 		return Route{}, fmt.Errorf("default route 未配置")
 	}
-	route, ok := t.Routes[name]
-	if !ok {
+	route, err := t.RouteInstance(name)
+	if err != nil {
 		return Route{}, fmt.Errorf("default route 不存在: %s", name)
 	}
 	return route, nil

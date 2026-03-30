@@ -30,7 +30,9 @@ type SourceModeSpec struct {
 	RequiresCycleTimeout bool
 }
 
-type SourceSpec struct {
+type SourceModeCapabilities = SourceModeSpec
+
+type SourceCapabilities struct {
 	RequiresCredential bool
 	SupportsDelete     bool
 	DeleteSemantics    DeleteSemantics
@@ -38,7 +40,7 @@ type SourceSpec struct {
 	Modes              map[string]SourceModeSpec
 }
 
-func (s SourceSpec) ModeSpec(mode string) (SourceModeSpec, bool) {
+func (s SourceCapabilities) ModeSpec(mode string) (SourceModeSpec, bool) {
 	if s.Modes == nil {
 		return SourceModeSpec{}, false
 	}
@@ -46,7 +48,9 @@ func (s SourceSpec) ModeSpec(mode string) (SourceModeSpec, bool) {
 	return modeSpec, ok
 }
 
-type SinkSpec struct {
+type SourceSpec = SourceCapabilities
+
+type SinkCapabilities struct {
 	RequiresCredential bool
 	RequiresOutputDir  bool
 	SupportsVerify     bool
@@ -56,9 +60,13 @@ type SinkSpec struct {
 	LocalConsumerKind  LocalConsumerKind
 }
 
-type DriverSpec struct {
+type SinkSpec = SinkCapabilities
+
+type DriverInfo struct {
 	Name   string
 	Auth   AuthRequirement
-	Source *SourceSpec
-	Sink   *SinkSpec
+	Source *SourceCapabilities
+	Sink   *SinkCapabilities
 }
+
+type DriverSpec = DriverInfo

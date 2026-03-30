@@ -58,12 +58,14 @@ func (p *fakeProcessor) Process(context.Context, MailEnvelope) (ProcessedMail, e
 
 type fakeConsumer struct {
 	calls   int
+	request ConsumeRequest
 	receipt DeliveryReceipt
 	err     error
 }
 
-func (c *fakeConsumer) Consume(context.Context, ConsumeRequest) (DeliveryReceipt, error) {
+func (c *fakeConsumer) Consume(_ context.Context, req ConsumeRequest) (DeliveryReceipt, error) {
 	c.calls++
+	c.request = req
 	if c.err != nil {
 		return DeliveryReceipt{}, c.err
 	}
@@ -154,9 +156,7 @@ func TestCoordinatorDeletesSourceWhenSameStoreReceiptCommitted(t *testing.T) {
 					RequireSameStore: true,
 				},
 			},
-			Artifacts: map[string]MailArtifact{
-				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 		},
 	}
 
@@ -201,6 +201,184 @@ func TestCoordinatorDeletesSourceWhenSameStoreReceiptCommitted(t *testing.T) {
 	}
 }
 
+func TestCoordinatorDeliversNoOpStyleProcessorOutput(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{}
+	source := &fakeSource{}
+	consumer := &fakeConsumer{
+		receipt: DeliveryReceipt{
+			ID:       "msg-noop",
+			Consumer: "archive",
+			Verified: true,
+		},
+	}
+	processor := &fakeProcessor{
+		result: ProcessedMail{
+			Trace: MailTrace{
+				TransactionKey: "tx-noop",
+				Attributes: map[string]string{
+					"format": "noop",
+				},
+			},
+			Plan: ExecutionPlan{
+				Targets: []DeliveryTarget{{
+					Name:     "archive-main",
+					Consumer: "archive",
+					Artifact: "primary",
+					Required: true,
+				}},
+			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("original-mime")},
+		},
+	}
+
+	coordinator := &Coordinator{
+		Processor: processor,
+		Store:     store,
+		Consumers: map[string]Consumer{"archive": consumer},
+	}
+
+	result, err := coordinator.Run(context.Background(), MailEnvelope{
+		MIME: bytesOpener("source"),
+		Trace: MailTrace{
+			TransactionKey: "tx-noop",
+		},
+		Source: source,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !result.Completed || result.Skipped {
+		t.Fatalf("result = %+v, want completed non-skipped flow", result)
+	}
+	if consumer.calls != 1 {
+		t.Fatalf("consumer calls = %d, want 1", consumer.calls)
+	}
+	if consumer.request.Trace.Attributes["format"] != "noop" {
+		t.Fatalf("trace format = %q, want noop", consumer.request.Trace.Attributes["format"])
+	}
+	reader, err := consumer.request.Mail.MIME()
+	if err != nil {
+		t.Fatalf("Mail.MIME() error = %v", err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	_ = reader.Close()
+	if string(data) != "original-mime" {
+		t.Fatalf("mail data = %q, want original-mime", string(data))
+	}
+}
+
+func TestCoordinatorDeliversBackupTargetFromSameUnifiedMailObject(t *testing.T) {
+	t.Parallel()
+
+	store := &memoryStore{}
+	primary := &fakeConsumer{
+		receipt: DeliveryReceipt{
+			ID:       "msg-primary",
+			Consumer: "archive",
+			Verified: true,
+		},
+	}
+	backup := &fakeConsumer{
+		receipt: DeliveryReceipt{
+			ID:       "/backup/msg-primary.pgp",
+			Consumer: "archive-backup",
+			Store: StoreRef{
+				Driver:  "backup",
+				Account: "/backup",
+			},
+			Verified: true,
+		},
+	}
+	processor := &fakeProcessor{
+		result: ProcessedMail{
+			Trace: MailTrace{
+				TransactionKey: "tx-backup-artifact",
+				Attributes: map[string]string{
+					"format": "pgp-mime",
+				},
+			},
+			Plan: ExecutionPlan{
+				Targets: []DeliveryTarget{
+					{
+						Name:     "archive-main",
+						Consumer: "archive",
+						Artifact: "primary",
+						Required: true,
+					},
+					{
+						Name:     "archive-backup",
+						Consumer: "archive-backup",
+						Artifact: "backup",
+						Required: false,
+					},
+				},
+			},
+			Mail: MailObject{
+				Name: "mail",
+				MIME: bytesOpener("processed-mime"),
+				Attributes: map[string]string{
+					"format": "pgp-mime",
+				},
+			},
+		},
+	}
+
+	coordinator := &Coordinator{
+		Processor: processor,
+		Store:     store,
+		Consumers: map[string]Consumer{
+			"archive":        primary,
+			"archive-backup": backup,
+		},
+	}
+
+	result, err := coordinator.Run(context.Background(), MailEnvelope{
+		MIME: bytesOpener("source"),
+		Trace: MailTrace{
+			TransactionKey: "tx-backup-artifact",
+		},
+		Source: &fakeSource{},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !result.Completed {
+		t.Fatalf("Completed = false, want true")
+	}
+	if got := result.Trace.Attributes["backup_path"]; got != "/backup/msg-primary.pgp" {
+		t.Fatalf("backup_path = %q, want /backup/msg-primary.pgp", got)
+	}
+	if primary.calls != 1 || backup.calls != 1 {
+		t.Fatalf("consumer calls = primary:%d backup:%d, want 1 each", primary.calls, backup.calls)
+	}
+	if backup.request.Target.Artifact != "backup" {
+		t.Fatalf("backup target artifact = %q, want backup", backup.request.Target.Artifact)
+	}
+
+	for name, request := range map[string]ConsumeRequest{
+		"primary": primary.request,
+		"backup":  backup.request,
+	} {
+		reader, err := request.Mail.MIME()
+		if err != nil {
+			t.Fatalf("%s Mail.MIME() error = %v", name, err)
+		}
+		data, err := io.ReadAll(reader)
+		_ = reader.Close()
+		if err != nil {
+			t.Fatalf("%s ReadAll() error = %v", name, err)
+		}
+		if string(data) != "processed-mime" {
+			t.Fatalf("%s mail data = %q, want processed-mime", name, string(data))
+		}
+	}
+}
+
 func TestCoordinatorKeepsSourceWhenStoreDiffers(t *testing.T) {
 	t.Parallel()
 
@@ -239,9 +417,7 @@ func TestCoordinatorKeepsSourceWhenStoreDiffers(t *testing.T) {
 					RequireSameStore: true,
 				},
 			},
-			Artifacts: map[string]MailArtifact{
-				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 		},
 	}
 
@@ -311,9 +487,7 @@ func TestCoordinatorRejectsSoftDeleteSourceBeforeDelivery(t *testing.T) {
 					RequireSameStore: true,
 				},
 			},
-			Artifacts: map[string]MailArtifact{
-				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 		},
 	}
 
@@ -419,9 +593,7 @@ func TestCoordinatorSkipsCommittedDeliveriesOnRetry(t *testing.T) {
 					RequireSameStore: true,
 				},
 			},
-			Artifacts: map[string]MailArtifact{
-				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 		},
 	}
 
@@ -474,9 +646,7 @@ func TestCoordinatorReturnsErrorWhenRequiredDeliveryFails(t *testing.T) {
 					Required: true,
 				}},
 			},
-			Artifacts: map[string]MailArtifact{
-				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 		},
 	}
 
@@ -518,9 +688,7 @@ func TestCoordinatorFailsWhenSourceAcknowledgeFails(t *testing.T) {
 					Required: true,
 				}},
 			},
-			Artifacts: map[string]MailArtifact{
-				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 		},
 	}
 	coordinator := &Coordinator{
@@ -627,9 +795,7 @@ func TestCoordinatorRecoversWhenAckStateSaveFailsAfterPrepare(t *testing.T) {
 					Required: true,
 				}},
 			},
-			Artifacts: map[string]MailArtifact{
-				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 		},
 	}
 	coordinator := &Coordinator{
@@ -775,9 +941,7 @@ func TestCoordinatorRejectsPlanDriftOnRetry(t *testing.T) {
 					Required: true,
 				}},
 			},
-			Artifacts: map[string]MailArtifact{
-				"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-			},
+			Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 		},
 	}
 
@@ -798,7 +962,7 @@ func TestCoordinatorRejectsPlanDriftOnRetry(t *testing.T) {
 	}
 }
 
-func TestProcessedMailValidateRequiresTargetArtifacts(t *testing.T) {
+func TestProcessedMailValidateRequiresMailObject(t *testing.T) {
 	t.Parallel()
 
 	err := (ProcessedMail{
@@ -809,16 +973,13 @@ func TestProcessedMailValidateRequiresTargetArtifacts(t *testing.T) {
 			Targets: []DeliveryTarget{{
 				Name:     "archive-main",
 				Consumer: "archive",
-				Artifact: "missing",
+				Artifact: "primary",
 				Required: true,
 			}},
 		},
-		Artifacts: map[string]MailArtifact{
-			"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-		},
 	}).Validate()
-	if err == nil || !strings.Contains(err.Error(), "missing") {
-		t.Fatalf("Validate() error = %v, want missing artifact", err)
+	if err == nil || !strings.Contains(err.Error(), "邮件对象") {
+		t.Fatalf("Validate() error = %v, want missing mail object", err)
 	}
 }
 

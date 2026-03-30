@@ -30,8 +30,12 @@ func TestServiceRunReturnsIdentityProbeResult(t *testing.T) {
 
 	session := &fakeSession{loginToken: provider.Token{AccessToken: "token"}}
 	service := &Service{
-		Session:  session,
-		StateDir: "/state",
+		Session:    session,
+		Credential: "office-auth",
+		Kind:       "oauth",
+		Runtime:    "oauth-device",
+		Drivers:    []string{"imap"},
+		StateDir:   "/state",
 		IdentityProbe: func(context.Context) (provider.User, error) {
 			return provider.User{
 				Mail:        "user@example.com",
@@ -49,6 +53,9 @@ func TestServiceRunReturnsIdentityProbeResult(t *testing.T) {
 	}
 	if result.Account != "user@example.com" || result.DisplayName != "User" {
 		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.Credential != "office-auth" || result.Kind != "oauth" || result.Runtime != "oauth-device" {
+		t.Fatalf("unexpected credential metadata: %+v", result)
 	}
 	if result.StateDir != "/state" {
 		t.Fatalf("StateDir = %q, want /state", result.StateDir)

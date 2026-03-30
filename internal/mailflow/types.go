@@ -52,7 +52,7 @@ func NewSkipError(trace MailTrace, err error) error {
 	return &SkipError{Trace: trace, Err: err}
 }
 
-// MIMEOpener 以流的形式提供一封邮件或产物的 MIME 内容。
+// MIMEOpener 以流的形式提供一封邮件的 MIME 内容。
 type MIMEOpener func() (io.ReadCloser, error)
 
 // StoreRef 表示某个邮件来源或去处背后的逻辑邮箱存储。
@@ -122,24 +122,30 @@ func (e MailEnvelope) Validate() error {
 	return e.Trace.Validate()
 }
 
-// MailArtifact 表示处理阶段产出的一个可投递对象。
-type MailArtifact struct {
+// MailObject 表示在 source / process / sink 间稳定流转的统一邮件对象。
+// 该对象始终承载 MIME 数据及其附加属性，不再区分“主产物”和“备份产物”。
+type MailObject struct {
 	Name       string            `json:"name,omitempty"`
 	MIME       MIMEOpener        `json:"-"`
 	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
-func (a MailArtifact) Validate() error {
+func (a MailObject) Validate() error {
 	if a.MIME == nil {
-		return fmt.Errorf("产物 MIME 打开器不能为空")
+		return fmt.Errorf("邮件对象 MIME 打开器不能为空")
 	}
 	return nil
 }
+
+// MailArtifact 作为兼容别名保留，实际语义等同于统一邮件对象。
+type MailArtifact = MailObject
 
 // DeliveryTarget 表示一个邮件级别的消费目标。
 type DeliveryTarget struct {
 	Name     string `json:"name,omitempty"`
 	Consumer string `json:"consumer,omitempty"`
+	// Artifact 作为路由角色标签保留，当前所有 target 都消费同一个统一邮件对象。
+	// backup target 依靠 sink driver 自身执行备份加密，不再要求处理层额外生成 backup 产物。
 	Artifact string `json:"artifact,omitempty"`
 	Required bool   `json:"required,omitempty"`
 }
@@ -203,10 +209,10 @@ func (p ExecutionPlan) Validate() error {
 
 // ProcessedMail 表示处理层对单封邮件的输出。
 type ProcessedMail struct {
-	Trace     MailTrace               `json:"trace"`
-	Plan      ExecutionPlan           `json:"plan"`
-	Artifacts map[string]MailArtifact `json:"-"`
-	Cleanup   func() error            `json:"-"`
+	Trace   MailTrace     `json:"trace"`
+	Plan    ExecutionPlan `json:"plan"`
+	Mail    MailObject    `json:"-"`
+	Cleanup func() error  `json:"-"`
 }
 
 func (m ProcessedMail) Validate() error {
@@ -216,32 +222,10 @@ func (m ProcessedMail) Validate() error {
 	if err := m.Plan.Validate(); err != nil {
 		return err
 	}
-	if len(m.Artifacts) == 0 {
-		return fmt.Errorf("至少需要一个处理产物")
-	}
-	for name, artifact := range m.Artifacts {
-		if err := artifact.Validate(); err != nil {
-			return fmt.Errorf("校验产物 %s 失败: %w", name, err)
-		}
-	}
-	for _, target := range m.Plan.Targets {
-		if _, err := m.Artifact(target.Artifact); err != nil {
-			return fmt.Errorf("校验目标 %s 失败: %w", target.Key(), err)
-		}
+	if err := m.Mail.Validate(); err != nil {
+		return fmt.Errorf("校验邮件对象失败: %w", err)
 	}
 	return nil
-}
-
-func (m ProcessedMail) Artifact(name string) (MailArtifact, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		name = "primary"
-	}
-	artifact, ok := m.Artifacts[name]
-	if !ok {
-		return MailArtifact{}, fmt.Errorf("找不到产物: %s", name)
-	}
-	return artifact, nil
 }
 
 func (m ProcessedMail) Release() error {
@@ -260,9 +244,9 @@ type Processor interface {
 }
 
 type ConsumeRequest struct {
-	Trace    MailTrace
-	Target   DeliveryTarget
-	Artifact MailArtifact
+	Trace  MailTrace
+	Target DeliveryTarget
+	Mail   MailObject
 }
 
 // DeliveryReceipt 表示某个消费目标的幂等写入结果。

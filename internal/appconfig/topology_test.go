@@ -17,7 +17,6 @@ func TestTopologyValidateStructureAllowsMissingDefaultSelections(t *testing.T) {
 				Name:         "archive",
 				Driver:       "imap",
 				Mode:         "poll",
-				StatePath:    "/state/flow-sync-archive.json",
 				Folder:       "Archive",
 				PollInterval: 1,
 				CycleTimeout: 1,
@@ -55,7 +54,6 @@ func TestTopologyValidateStructureRejectsInvalidConfiguredDefaultSelection(t *te
 				Name:         "archive",
 				Driver:       "imap",
 				Mode:         "poll",
-				StatePath:    "/state/flow-sync-archive.json",
 				Folder:       "Archive",
 				PollInterval: 1,
 				CycleTimeout: 1,
@@ -195,7 +193,6 @@ func TestTopologyValidateStructureAllowsCredentialRefOnAnySinkForRuntimeValidati
 				Name:         "archive",
 				Driver:       "imap",
 				Mode:         "poll",
-				StatePath:    "/state/flow-sync-archive.json",
 				PollInterval: 1,
 				CycleTimeout: 1,
 			},
@@ -232,7 +229,6 @@ func TestTopologyValidateStructureAllowsDeleteSourceWithoutDriverCapabilityCheck
 				Name:         "archive",
 				Driver:       "graph",
 				Mode:         "poll",
-				StatePath:    "/state/flow-sync-archive.json",
 				PollInterval: 1,
 				CycleTimeout: 1,
 			},
@@ -258,6 +254,87 @@ func TestTopologyValidateStructureAllowsDeleteSourceWithoutDriverCapabilityCheck
 	err := topology.ValidateStructure()
 	if err != nil {
 		t.Fatalf("ValidateStructure() error = %v", err)
+	}
+}
+
+func TestConfiguredInstanceSummaryPreservesDeclaredIdentity(t *testing.T) {
+	t.Parallel()
+
+	source := Source{
+		Name:          "incoming",
+		Driver:        "webhook",
+		Mode:          "push",
+		CredentialRef: "default-auth",
+	}
+	sink := Sink{
+		Name:          "archive",
+		Driver:        "imap",
+		CredentialRef: "default-auth",
+	}
+	credential := Credential{
+		Name: "default-auth",
+		Kind: CredentialKindOAuth,
+	}
+
+	if got := source.Summary(); got.Kind != InstanceKindSource || got.Name != "incoming" || got.Driver != "webhook" || got.CredentialRef != "default-auth" {
+		t.Fatalf("source summary = %+v", got)
+	}
+	if got := sink.Summary(); got.Kind != InstanceKindSink || got.Name != "archive" || got.Driver != "imap" || got.CredentialRef != "default-auth" {
+		t.Fatalf("sink summary = %+v", got)
+	}
+	if got := credential.Summary(); got.Kind != InstanceKindCredential || got.Name != "default-auth" || got.Driver != CredentialKindOAuth {
+		t.Fatalf("credential summary = %+v", got)
+	}
+}
+
+func TestTopologyNamedInstanceLookupsUseConfiguredInstanceSemantics(t *testing.T) {
+	t.Parallel()
+
+	topology := Topology{
+		Sources: map[string]Source{
+			"incoming": {Name: "incoming", Driver: "webhook", Mode: "push", StatePath: "/runtime/source.json"},
+		},
+		Sinks: map[string]Sink{
+			"archive": {Name: "archive", Driver: "file", OutputDir: "/tmp/out"},
+		},
+		Routes: map[string]Route{
+			"default": {Name: "default", StateDir: "/runtime/route"},
+		},
+	}
+
+	if source, err := topology.SourceInstance("incoming"); err != nil || source.Name != "incoming" {
+		t.Fatalf("SourceInstance() = %+v, %v", source, err)
+	} else if source.StatePath != "" {
+		t.Fatalf("SourceInstance() preserved runtime state path = %q", source.StatePath)
+	}
+	if sink, err := topology.SinkInstance("archive"); err != nil || sink.Name != "archive" {
+		t.Fatalf("SinkInstance() = %+v, %v", sink, err)
+	}
+	if route, err := topology.RouteInstance("default"); err != nil || route.Name != "default" {
+		t.Fatalf("RouteInstance() = %+v, %v", route, err)
+	} else if route.StateDir != "" {
+		t.Fatalf("RouteInstance() preserved runtime state dir = %q", route.StateDir)
+	}
+}
+
+func TestTopologyNormalizeDropsRuntimeDerivedFields(t *testing.T) {
+	t.Parallel()
+
+	topology := Topology{
+		Sources: map[string]Source{
+			"archive": {Driver: "imap", Mode: "poll", StatePath: "/runtime/source.json"},
+		},
+		Routes: map[string]Route{
+			"default": {SourceRefs: []string{"archive"}, StateDir: "/runtime/route"},
+		},
+	}
+
+	normalized := topology.Normalize()
+	if got := normalized.Sources["archive"].StatePath; got != "" {
+		t.Fatalf("normalized source state path = %q, want empty", got)
+	}
+	if got := normalized.Routes["default"].StateDir; got != "" {
+		t.Fatalf("normalized route state dir = %q, want empty", got)
 	}
 }
 
@@ -379,7 +456,6 @@ func TestTopologyValidateStructureAllowsWebhookConfigOnNonWebhookDriverForRuntim
 				Name:         "archive",
 				Driver:       "imap",
 				Mode:         "poll",
-				StatePath:    "/state/flow-sync-archive.json",
 				PollInterval: time.Minute,
 				CycleTimeout: 2 * time.Minute,
 				Webhook: &WebhookSource{

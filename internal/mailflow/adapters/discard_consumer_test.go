@@ -10,7 +10,7 @@ import (
 	"mimecrypt/internal/mailflow"
 )
 
-func TestDiscardConsumerConsumesArtifact(t *testing.T) {
+func TestDiscardConsumerConsumesMail(t *testing.T) {
 	t.Parallel()
 
 	consumer := &DiscardConsumer{}
@@ -20,7 +20,7 @@ func TestDiscardConsumerConsumesArtifact(t *testing.T) {
 			Name:     "discard-primary",
 			Consumer: "discard",
 		},
-		Artifact: mailflow.MailArtifact{
+		Mail: mailflow.MailObject{
 			Name: "primary",
 			MIME: func() (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("encrypted-mime")), nil
@@ -45,7 +45,7 @@ func TestDiscardConsumerReturnsOpenError(t *testing.T) {
 			Name:     "discard-primary",
 			Consumer: "discard",
 		},
-		Artifact: mailflow.MailArtifact{
+		Mail: mailflow.MailObject{
 			Name: "primary",
 			MIME: func() (io.ReadCloser, error) {
 				return nil, errors.New("open failed")

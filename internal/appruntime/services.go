@@ -12,21 +12,37 @@ import (
 )
 
 func BuildLoginService(plan CredentialPlan) (*login.Service, error) {
-	runtime, err := providers.BuildLoginRuntime(plan.Config, plan.AuthDrivers...)
+	runtime, err := providers.BuildCredentialRuntime(
+		plan.EffectiveCredentialName(),
+		plan.EffectiveCredentialKind(),
+		plan.LocalConfig.LoginConfig,
+		plan.Config,
+		plan.AuthDrivers...,
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	service := &login.Service{
-		Session:  runtime.Session,
-		StateDir: runtime.Config.Auth.StateDir,
+		Session:    runtime.Session,
+		Credential: runtime.Name,
+		Kind:       runtime.Kind,
+		Runtime:    runtime.RuntimeName,
+		Drivers:    append([]string(nil), runtime.Drivers...),
+		StateDir:   runtime.Config.Auth.StateDir,
 	}
 	service.IdentityProbe = runtime.IdentityProbe
 	return service, nil
 }
 
 func BuildRevokeService(plan CredentialPlan, force bool) (*revoke.Service, error) {
-	loginRuntime, err := providers.BuildLoginRuntime(plan.Config, plan.AuthDrivers...)
+	loginRuntime, err := providers.BuildCredentialRuntime(
+		plan.EffectiveCredentialName(),
+		plan.EffectiveCredentialKind(),
+		plan.LocalConfig.LoginConfig,
+		plan.Config,
+		plan.AuthDrivers...,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -49,7 +65,7 @@ func BuildRevokeService(plan CredentialPlan, force bool) (*revoke.Service, error
 		return service, nil
 	}
 
-	remoteRevoker, _, err := buildRemoteRevoker(cfg, kind, loginRuntime.Session, plan.AuthDrivers...)
+	remoteRevoker, _, err := buildRemoteRevoker(cfg, kind, plan.LocalConfig.LoginConfig, loginRuntime.Session, plan.AuthDrivers...)
 	if err != nil {
 		if !force {
 			return nil, fmt.Errorf("初始化远端吊销器失败: %w", err)
@@ -73,7 +89,7 @@ func effectiveRevokeCredentialKind(plan CredentialPlan) (string, appconfig.Crede
 	return appconfig.NormalizeCredentialKind(kind), spec, nil
 }
 
-func buildRemoteRevoker(cfg appconfig.Config, credentialKind string, tokenSource providers.CredentialSession, drivers ...string) (revoke.RemoteRevoker, appconfig.Config, error) {
+func buildRemoteRevoker(cfg appconfig.Config, credentialKind, runtimeName string, tokenSource providers.CredentialSession, drivers ...string) (revoke.RemoteRevoker, appconfig.Config, error) {
 	kind := appconfig.NormalizeCredentialKind(credentialKind)
 	spec, ok := appconfig.LookupCredentialKindSpec(kind)
 	if !ok {
@@ -82,7 +98,7 @@ func buildRemoteRevoker(cfg appconfig.Config, credentialKind string, tokenSource
 	if !spec.RequiresRemoteRevoke {
 		return nil, cfg, nil
 	}
-	revoker, effectiveCfg, err := providers.BuildRemoteRevoker(cfg, tokenSource, drivers...)
+	revoker, effectiveCfg, err := providers.BuildRemoteRevoker(kind, runtimeName, cfg, tokenSource, drivers...)
 	if err != nil {
 		return nil, appconfig.Config{}, err
 	}
@@ -90,12 +106,22 @@ func buildRemoteRevoker(cfg appconfig.Config, credentialKind string, tokenSource
 }
 
 func BuildTokenStateService(plan CredentialPlan) (*tokenstate.Service, error) {
-	runtime, err := providers.BuildLoginRuntime(plan.Config, plan.AuthDrivers...)
+	runtime, err := providers.BuildCredentialRuntime(
+		plan.EffectiveCredentialName(),
+		plan.EffectiveCredentialKind(),
+		plan.LocalConfig.LoginConfig,
+		plan.Config,
+		plan.AuthDrivers...,
+	)
 	if err != nil {
 		return nil, err
 	}
 
 	return &tokenstate.Service{
+		Credential:     runtime.Name,
+		CredentialKind: runtime.Kind,
+		Runtime:        runtime.RuntimeName,
+		Drivers:        append([]string(nil), runtime.Drivers...),
 		Session:        runtime.Session,
 		StateDir:       runtime.Config.Auth.StateDir,
 		TokenStore:     runtime.Config.Auth.TokenStoreMode(),

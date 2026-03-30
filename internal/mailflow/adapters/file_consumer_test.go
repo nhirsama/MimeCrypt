@@ -12,7 +12,7 @@ import (
 	"mimecrypt/internal/mailflow"
 )
 
-func TestFileConsumerSavesArtifactToOutputDir(t *testing.T) {
+func TestFileConsumerSavesMailToOutputDir(t *testing.T) {
 	t.Parallel()
 
 	outputDir := t.TempDir()
@@ -28,7 +28,7 @@ func TestFileConsumerSavesArtifactToOutputDir(t *testing.T) {
 			Name:     "local-output",
 			Consumer: "local-output",
 		},
-		Artifact: mailflow.MailArtifact{
+		Mail: mailflow.MailObject{
 			Name: "primary",
 			MIME: func() (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("encrypted-mime")), nil
@@ -63,7 +63,7 @@ func TestFileConsumerRequiresOutputDir(t *testing.T) {
 			Name:     "local-output",
 			Consumer: "local-output",
 		},
-		Artifact: mailflow.MailArtifact{
+		Mail: mailflow.MailObject{
 			Name: "primary",
 			MIME: func() (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("encrypted-mime")), nil

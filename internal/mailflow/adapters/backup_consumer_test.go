@@ -10,13 +10,44 @@ import (
 	"time"
 
 	"mimecrypt/internal/mailflow"
+	"mimecrypt/internal/modules/encrypt"
 )
 
-func TestBackupConsumerSavesArtifactToBackupDir(t *testing.T) {
+type fakeRawMailEncryptor struct {
+	output string
+	err    error
+	input  string
+}
+
+func (e *fakeRawMailEncryptor) RunRawFromOpenerContext(_ context.Context, open encrypt.MIMEOpenFunc, out io.Writer) (encrypt.Result, error) {
+	if e.err != nil {
+		return encrypt.Result{}, e.err
+	}
+	reader, err := open()
+	if err != nil {
+		return encrypt.Result{}, err
+	}
+	defer reader.Close()
+	input, err := io.ReadAll(reader)
+	if err != nil {
+		return encrypt.Result{}, err
+	}
+	e.input = string(input)
+	if _, err := out.Write([]byte(e.output)); err != nil {
+		return encrypt.Result{}, err
+	}
+	return encrypt.Result{Encrypted: true, Format: "pgp"}, nil
+}
+
+func TestBackupConsumerEncryptsAndSavesMailToBackupDir(t *testing.T) {
 	t.Parallel()
 
 	outputDir := t.TempDir()
-	consumer := &BackupConsumer{OutputDir: outputDir}
+	encryptor := &fakeRawMailEncryptor{output: "backup-armored"}
+	consumer := &BackupConsumer{
+		OutputDir: outputDir,
+		Encryptor: encryptor,
+	}
 
 	result, err := consumer.Consume(context.Background(), mailflow.ConsumeRequest{
 		Trace: mailflow.MailTrace{
@@ -27,15 +58,11 @@ func TestBackupConsumerSavesArtifactToBackupDir(t *testing.T) {
 				"format": "pgp-mime",
 			},
 		},
-		Target: mailflow.DeliveryTarget{
-			Name:     "backup",
-			Consumer: "__default_backup__",
-			Artifact: "backup",
-		},
-		Artifact: mailflow.MailArtifact{
-			Name: "backup",
+		Target: mailflow.DeliveryTarget{Name: "backup", Consumer: "backup", Artifact: "backup"},
+		Mail: mailflow.MailObject{
+			Name: "message",
 			MIME: func() (io.ReadCloser, error) {
-				return io.NopCloser(strings.NewReader("backup-armored")), nil
+				return io.NopCloser(strings.NewReader("source-mime")), nil
 			},
 		},
 	})
@@ -58,23 +85,22 @@ func TestBackupConsumerSavesArtifactToBackupDir(t *testing.T) {
 	if string(content) != "backup-armored" {
 		t.Fatalf("content = %q, want backup-armored", string(content))
 	}
+	if encryptor.input != "source-mime" {
+		t.Fatalf("backup input MIME = %q, want source-mime", encryptor.input)
+	}
 }
 
 func TestBackupConsumerRequiresOutputDir(t *testing.T) {
 	t.Parallel()
 
-	consumer := &BackupConsumer{}
+	consumer := &BackupConsumer{Encryptor: &fakeRawMailEncryptor{output: "backup-armored"}}
 	_, err := consumer.Consume(context.Background(), mailflow.ConsumeRequest{
-		Trace: mailflow.MailTrace{TransactionKey: "tx-backup-missing"},
-		Target: mailflow.DeliveryTarget{
-			Name:     "backup",
-			Consumer: "__default_backup__",
-			Artifact: "backup",
-		},
-		Artifact: mailflow.MailArtifact{
-			Name: "backup",
+		Trace:  mailflow.MailTrace{TransactionKey: "tx-backup-missing"},
+		Target: mailflow.DeliveryTarget{Name: "backup", Consumer: "backup", Artifact: "backup"},
+		Mail: mailflow.MailObject{
+			Name: "message",
 			MIME: func() (io.ReadCloser, error) {
-				return io.NopCloser(strings.NewReader("backup-armored")), nil
+				return io.NopCloser(strings.NewReader("source-mime")), nil
 			},
 		},
 	})

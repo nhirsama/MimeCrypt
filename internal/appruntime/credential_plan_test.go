@@ -86,7 +86,8 @@ func TestResolveCredentialCommandPlanRestoresDriversFromLocalConfig(t *testing.T
 	stateDir := t.TempDir()
 	credentialStateDir := filepath.Join(stateDir, "credentials", "office-auth")
 	if err := appconfig.SaveLocalConfig(credentialStateDir, appconfig.LocalConfig{
-		Drivers: []string{"imap", "graph"},
+		Drivers:     []string{"imap", "graph"},
+		LoginConfig: "oauth-device",
 		Microsoft: &appconfig.MicrosoftLocalConfig{
 			IMAPUsername: "stored@example.com",
 		},
@@ -107,8 +108,130 @@ func TestResolveCredentialCommandPlanRestoresDriversFromLocalConfig(t *testing.T
 	if got := strings.Join(plan.AuthDrivers, ","); got != "graph,imap" {
 		t.Fatalf("AuthDrivers = %q, want graph,imap", got)
 	}
+	if plan.LocalConfig.LoginConfig != "oauth-device" {
+		t.Fatalf("LocalConfig.LoginConfig = %q, want oauth-device", plan.LocalConfig.LoginConfig)
+	}
 	if plan.Config.Mail.Client.IMAPUsername != "stored@example.com" {
 		t.Fatalf("IMAPUsername = %q, want stored@example.com", plan.Config.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestResolveCredentialCommandPlanKeepsStoredDriversWhenTopologyHasBindings(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	writeCredentialTopology(t, topologyPath, appconfig.Topology{
+		DefaultCredential: "office-auth",
+		Credentials: map[string]appconfig.Credential{
+			"office-auth": {Name: "office-auth", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:          "office",
+				Driver:        "imap",
+				Mode:          "poll",
+				CredentialRef: "office-auth",
+				Folder:        "INBOX",
+				PollInterval:  time.Minute,
+				CycleTimeout:  2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+
+	credentialStateDir := filepath.Join(stateDir, "credentials", "office-auth")
+	if err := appconfig.SaveLocalConfig(credentialStateDir, appconfig.LocalConfig{
+		Drivers: []string{"graph", "imap"},
+		Microsoft: &appconfig.MicrosoftLocalConfig{
+			IMAPUsername: "stored@example.com",
+		},
+	}); err != nil {
+		t.Fatalf("SaveLocalConfig() error = %v", err)
+	}
+
+	plan, err := ResolveCredentialCommandPlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "office-auth")
+	if err != nil {
+		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
+	}
+	if got := strings.Join(plan.AuthDrivers, ","); got != "graph,imap" {
+		t.Fatalf("AuthDrivers = %q, want graph,imap", got)
+	}
+	if len(plan.Bindings) != 1 || plan.Bindings[0].Driver != "imap" {
+		t.Fatalf("Bindings = %+v, want single imap binding", plan.Bindings)
+	}
+	if plan.Config.Mail.Client.IMAPUsername != "stored@example.com" {
+		t.Fatalf("IMAPUsername = %q, want stored@example.com", plan.Config.Mail.Client.IMAPUsername)
+	}
+}
+
+func TestResolveCredentialCommandPlanCollectsBindingsWithoutInferringDrivers(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	writeCredentialTopology(t, topologyPath, appconfig.Topology{
+		DefaultCredential: "office-auth",
+		Credentials: map[string]appconfig.Credential{
+			"office-auth": {Name: "office-auth", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:          "office",
+				Driver:        "imap",
+				Mode:          "poll",
+				CredentialRef: "office-auth",
+				Folder:        "INBOX",
+				PollInterval:  time.Minute,
+				CycleTimeout:  2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+
+	plan, err := ResolveCredentialCommandPlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "office-auth")
+	if err != nil {
+		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
+	}
+	if len(plan.Bindings) != 1 || plan.Bindings[0].Driver != "imap" {
+		t.Fatalf("Bindings = %+v, want single imap binding", plan.Bindings)
+	}
+	if len(plan.AuthDrivers) != 0 {
+		t.Fatalf("AuthDrivers = %#v, want empty without local runtime config", plan.AuthDrivers)
 	}
 }
 

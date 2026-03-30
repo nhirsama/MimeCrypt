@@ -2,7 +2,7 @@ package cli
 
 import (
 	"fmt"
-	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -16,7 +16,7 @@ func newRevokeCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "revoke",
-		Short: "撤销 credential 登录状态并清理本地凭据",
+		Short: "吊销 credential 会话并清理本地凭据材料",
 		Args:  noArgs(),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if err := bootstrap.Error(); err != nil {
@@ -34,14 +34,20 @@ func newRevokeCmd() *cobra.Command {
 				return fmt.Errorf("revoke 失败: %w", err)
 			}
 
-			if err := service.Run(cmd.Context(), os.Stdout); err != nil {
+			out := cmd.OutOrStdout()
+			if err := service.Run(cmd.Context(), out); err != nil {
 				return fmt.Errorf("revoke 失败: %w", err)
 			}
 
+			credentialName := strings.TrimSpace(resolved.EffectiveCredentialName())
+			if credentialName != "" {
+				_, _ = fmt.Fprintf(out, "credential=%s\n", credentialName)
+			}
+			_, _ = fmt.Fprintf(out, "kind=%s\n", resolved.EffectiveCredentialKind())
 			if service.RequireRemote {
-				fmt.Printf("已吊销远端登录状态并清除本地凭据\n")
+				_, _ = fmt.Fprintln(out, "已吊销远端会话并清除本地凭据")
 			} else {
-				fmt.Printf("已清除本地凭据\n")
+				_, _ = fmt.Fprintln(out, "已清除本地凭据")
 			}
 			return nil
 		},

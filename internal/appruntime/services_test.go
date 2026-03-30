@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -62,6 +63,7 @@ func TestBuildLoginServiceGraphIdentityProbeUsesGraphToken(t *testing.T) {
 
 	service, err := BuildLoginService(CredentialPlan{
 		Config:      cfg,
+		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
 		AuthDrivers: []string{"graph"},
 	})
 	if err != nil {
@@ -91,6 +93,12 @@ func TestBuildLoginServiceFallsBackToIMAPUsernameIdentity(t *testing.T) {
 	t.Parallel()
 
 	service, err := BuildLoginService(CredentialPlan{
+		Credential: appconfig.Credential{
+			Name: "office-auth",
+			Kind: appconfig.CredentialKindOAuth,
+		},
+		CredentialName: "office-auth",
+		LocalConfig:    appconfig.LocalConfig{LoginConfig: "oauth-device"},
 		Config: appconfig.Config{
 			Auth: appconfig.AuthConfig{
 				ClientID:         "client-id",
@@ -114,6 +122,9 @@ func TestBuildLoginServiceFallsBackToIMAPUsernameIdentity(t *testing.T) {
 	if service.IdentityProbe == nil {
 		t.Fatalf("IdentityProbe = nil")
 	}
+	if service.Credential != "office-auth" || service.Kind != appconfig.CredentialKindOAuth || service.Runtime != "oauth-device" {
+		t.Fatalf("unexpected login runtime metadata: %+v", service)
+	}
 
 	user, err := service.IdentityProbe(context.Background())
 	if err != nil {
@@ -128,6 +139,7 @@ func TestBuildLoginServiceUsesDriverLoginConfigToTrimScopes(t *testing.T) {
 	t.Parallel()
 
 	service, err := BuildLoginService(CredentialPlan{
+		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
 		Config: appconfig.Config{
 			Auth: appconfig.AuthConfig{
 				ClientID:         "client-id",
@@ -186,6 +198,7 @@ func TestBuildRevokeServiceForceStillClearsLocalStateWhenRemoteRevokerInitFails(
 
 	service, err := BuildRevokeService(CredentialPlan{
 		Config:      cfg,
+		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
 		AuthDrivers: []string{"imap"},
 	}, true)
 	if err != nil {
@@ -208,6 +221,7 @@ func TestBuildRevokeServiceRejectsRemoteRevokerInitFailureWithoutForce(t *testin
 	t.Parallel()
 
 	_, err := BuildRevokeService(CredentialPlan{
+		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
 		Config: appconfig.Config{
 			Auth: appconfig.AuthConfig{
 				ClientID:         "client-id",
@@ -249,6 +263,7 @@ func TestBuildRevokeServiceSharedSessionSkipsRemoteRevoke(t *testing.T) {
 
 	service, err := BuildRevokeService(CredentialPlan{
 		Config:      cfg,
+		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
 		AuthDrivers: []string{"imap"},
 		Credential: appconfig.Credential{
 			Name: "default",
@@ -271,5 +286,60 @@ func TestBuildRevokeServiceSharedSessionSkipsRemoteRevoke(t *testing.T) {
 	}
 	if _, statErr := os.Stat(appconfig.LocalConfigPath(stateDir)); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("Stat(local config) error = %v, want os.ErrNotExist", statErr)
+	}
+}
+
+func TestBuildTokenStateServiceDoesNotInferDriversFromTopologyBindings(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	writeCredentialTopology(t, topologyPath, appconfig.Topology{
+		DefaultCredential: "office-auth",
+		Credentials: map[string]appconfig.Credential{
+			"office-auth": {Name: "office-auth", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:          "office",
+				Driver:        "imap",
+				Mode:          "poll",
+				CredentialRef: "office-auth",
+				Folder:        "INBOX",
+				PollInterval:  time.Minute,
+				CycleTimeout:  2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+
+	plan, err := ResolveCredentialCommandPlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir:   stateDir,
+			TokenStore: "file",
+		},
+	}, "office-auth")
+	if err != nil {
+		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
+	}
+	if len(plan.Bindings) != 1 || plan.Bindings[0].Driver != "imap" {
+		t.Fatalf("Bindings = %+v, want single imap binding", plan.Bindings)
+	}
+
+	_, err = BuildTokenStateService(plan)
+	if err == nil || !strings.Contains(err.Error(), "未配置运行时驱动") {
+		t.Fatalf("BuildTokenStateService() error = %v, want missing runtime driver error", err)
 	}
 }

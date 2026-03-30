@@ -19,7 +19,7 @@ type WritebackConsumer struct {
 func (c *WritebackConsumer) Consume(ctx context.Context, req mailflow.ConsumeRequest) (mailflow.DeliveryReceipt, error) {
 	result, err := c.service().Run(ctx, writeback.Request{
 		Source:              toMessageRef(req.Trace),
-		MIMEOpener:          provider.MIMEOpener(req.Artifact.MIME),
+		MIMEOpener:          provider.MIMEOpener(req.Mail.MIME),
 		DestinationFolderID: c.DestinationFolderID,
 		Verify:              c.Verify,
 	})

@@ -1,6 +1,7 @@
 package provider_test
 
 import (
+	"reflect"
 	"testing"
 
 	"mimecrypt/internal/provider"
@@ -58,5 +59,20 @@ func TestBuiltinDriverSpecsFromRegistry(t *testing.T) {
 	}
 	if _, ok := webhook.Source.ModeSpec("push"); !ok {
 		t.Fatalf("webhook ModeSpec(push) = missing")
+	}
+}
+
+func TestAllDriversExposeStableSortedRegistry(t *testing.T) {
+	t.Parallel()
+
+	drivers := providers.AllDrivers()
+	names := make([]string, 0, len(drivers))
+	for _, driver := range drivers {
+		names = append(names, provider.NamedDriver(driver))
+	}
+
+	want := []string{"backup", "discard", "ews", "file", "graph", "imap", "webhook"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("AllDrivers() names = %#v, want %#v", names, want)
 	}
 }

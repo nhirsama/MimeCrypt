@@ -103,15 +103,10 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 			if err != nil {
 				return Result{}, err
 			}
-			artifact, err := processed.Artifact(target.Artifact)
-			if err != nil {
-				return Result{}, err
-			}
-
 			receipt, err := consumer.Consume(ctx, ConsumeRequest{
-				Trace:    processed.Trace,
-				Target:   target,
-				Artifact: artifact,
+				Trace:  processed.Trace,
+				Target: target,
+				Mail:   processed.Mail,
 			})
 			if err != nil {
 				if target.Required {
@@ -126,7 +121,7 @@ func (c *Coordinator) Run(ctx context.Context, envelope MailEnvelope) (Result, e
 			if strings.TrimSpace(receipt.Consumer) == "" {
 				receipt.Consumer = target.Consumer
 			}
-			if strings.EqualFold(strings.TrimSpace(target.Artifact), "backup") && strings.TrimSpace(receipt.ID) != "" {
+			if strings.EqualFold(strings.TrimSpace(receipt.Store.Driver), "backup") && strings.TrimSpace(receipt.ID) != "" {
 				if state.Trace.Attributes == nil {
 					state.Trace.Attributes = make(map[string]string)
 				}

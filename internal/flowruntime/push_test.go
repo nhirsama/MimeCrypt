@@ -2,6 +2,7 @@ package flowruntime
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow/adapters"
+	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers"
 )
 
@@ -140,7 +142,7 @@ func TestBuildPushRuntimeUsesSourceScopedSpoolDirWhenStateDirShared(t *testing.T
 	}
 }
 
-func TestPushCapableDriversHaveIngressBuilders(t *testing.T) {
+func TestPushCapableDriversHaveSourceRuntimeBuilders(t *testing.T) {
 	t.Setenv("MIMECRYPT_WEBHOOK_SECRET", "top-secret")
 
 	for _, spec := range providers.AllDriverSpecs() {
@@ -162,11 +164,16 @@ func TestPushCapableDriversHaveIngressBuilders(t *testing.T) {
 				SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
 			}
 		}
-		ingress, err := providers.BuildPushIngress(appconfig.Config{}, appconfig.Route{Name: "default"}, source, &adapters.PushSpool{Dir: t.TempDir()})
+		runtime, err := providers.BuildSourceRuntime(appconfig.Config{}, source, nil, provider.SourceRuntimeOptions{
+			Route: appconfig.Route{Name: "default"},
+			EnqueuePushMessage: func(provider.PushMessage, io.Reader) (bool, error) {
+				return false, nil
+			},
+		})
 		if err != nil {
-			t.Fatalf("push-capable driver %s missing ingress builder: %v", spec.Name, err)
+			t.Fatalf("push-capable driver %s missing runtime builder: %v", spec.Name, err)
 		}
-		if ingress == nil {
+		if runtime.Ingress == nil {
 			t.Fatalf("push-capable driver %s returned nil ingress", spec.Name)
 		}
 	}

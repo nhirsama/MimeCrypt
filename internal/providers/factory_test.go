@@ -12,6 +12,7 @@ import (
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
+	"mimecrypt/internal/provider"
 )
 
 func TestSessionAuthConfigForDriversUsesLeastPrivilegeUnion(t *testing.T) {
@@ -51,6 +52,46 @@ func TestBuildSourceClientsUsesExplicitDriver(t *testing.T) {
 	}
 	if got := reflect.TypeOf(clients.Reader).String(); got != "*imap.reader" {
 		t.Fatalf("reader type = %s, want *imap.reader", got)
+	}
+}
+
+func TestBuildSourceClientsRejectsIngressOnlySourceDriver(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+
+	_, err := BuildSourceClients(cfg, "webhook", "", nil)
+	if err == nil || err.Error() != "source driver webhook 未提供 provider clients" {
+		t.Fatalf("BuildSourceClients() error = %v, want ingress-only rejection", err)
+	}
+}
+
+func TestBuildSourceRuntimeBuildsWebhookIngress(t *testing.T) {
+	t.Setenv("MIMECRYPT_WEBHOOK_SECRET", "top-secret")
+
+	runtime, err := BuildSourceRuntime(appconfig.Config{}, appconfig.Source{
+		Name:   "incoming",
+		Driver: "webhook",
+		Mode:   "push",
+		Webhook: &appconfig.WebhookSource{
+			ListenAddr: "127.0.0.1:0",
+			Path:       "/mail/incoming",
+			SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+		},
+	}, nil, provider.SourceRuntimeOptions{
+		Route: appconfig.Route{Name: "default"},
+		EnqueuePushMessage: func(provider.PushMessage, io.Reader) (bool, error) {
+			return false, nil
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildSourceRuntime() error = %v", err)
+	}
+	if runtime.Ingress == nil {
+		t.Fatalf("BuildSourceRuntime() ingress = nil")
+	}
+	if runtime.Clients.Reader != nil || runtime.Clients.Deleter != nil {
+		t.Fatalf("BuildSourceRuntime() clients = %+v, want zero clients for webhook", runtime.Clients)
 	}
 }
 

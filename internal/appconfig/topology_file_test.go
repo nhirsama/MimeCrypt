@@ -117,12 +117,13 @@ func TestLoadTopologyFileNormalizesNames(t *testing.T) {
       "driver": "discard"
     }
   },
-  "routes": {
-    "default": {
-      "source_refs": ["office"],
-      "targets": [
-        {"name": "discard", "sink_ref": "discard", "artifact": "primary", "required": true}
-      ]
+	  "routes": {
+	    "default": {
+	      "state_dir": "/state/flow/default",
+	      "source_refs": ["office"],
+	      "targets": [
+	        {"name": "discard", "sink_ref": "discard", "artifact": "primary", "required": true}
+	      ]
     }
   },
   "default_source": "office",
@@ -145,6 +146,60 @@ func TestLoadTopologyFileNormalizesNames(t *testing.T) {
 	if topology.Sources["office"].PollInterval != time.Minute {
 		t.Fatalf("poll interval = %s, want %s", topology.Sources["office"].PollInterval, time.Minute)
 	}
+	if topology.Sources["office"].StatePath != "" {
+		t.Fatalf("legacy source state path = %q, want empty", topology.Sources["office"].StatePath)
+	}
+	if topology.Routes["default"].StateDir != "" {
+		t.Fatalf("legacy route state dir = %q, want empty", topology.Routes["default"].StateDir)
+	}
+}
+
+func TestLoadTopologyFileAllowsLegacyRuntimeFieldsButStripsThem(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "topology.json")
+	content := `{
+  "sources": {
+    "archive": {
+      "name": "archive",
+      "driver": "imap",
+      "mode": "poll",
+      "state_path": "/runtime/flow-sync.json"
+    }
+  },
+  "sinks": {
+    "discard": {
+      "name": "discard",
+      "driver": "discard"
+    }
+  },
+  "routes": {
+    "default": {
+      "name": "default",
+      "source_refs": ["archive"],
+      "state_dir": "/runtime/flow-state",
+      "targets": [
+        {"name": "discard", "sink_ref": "discard", "required": true}
+      ]
+    }
+  },
+  "default_source": "archive",
+  "default_route": "default"
+}`
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	topology, err := LoadTopologyFile(path)
+	if err != nil {
+		t.Fatalf("LoadTopologyFile() error = %v", err)
+	}
+	if got := topology.Sources["archive"].StatePath; got != "" {
+		t.Fatalf("source state path = %q, want empty", got)
+	}
+	if got := topology.Routes["default"].StateDir; got != "" {
+		t.Fatalf("route state dir = %q, want empty", got)
+	}
 }
 
 func TestSaveTopologyFileRoundTrips(t *testing.T) {
@@ -154,9 +209,10 @@ func TestSaveTopologyFileRoundTrips(t *testing.T) {
 	want := Topology{
 		Sources: map[string]Source{
 			"incoming": {
-				Name:   "incoming",
-				Driver: "webhook",
-				Mode:   "push",
+				Name:      "incoming",
+				Driver:    "webhook",
+				Mode:      "push",
+				StatePath: "/runtime/flow-sync.json",
 				Webhook: &WebhookSource{
 					ListenAddr:         "127.0.0.1:8080",
 					Path:               "/mail/incoming",
@@ -172,6 +228,7 @@ func TestSaveTopologyFileRoundTrips(t *testing.T) {
 		Routes: map[string]Route{
 			"default": {
 				Name:       "default",
+				StateDir:   "/runtime/flow-state",
 				SourceRefs: []string{"incoming"},
 				Targets: []RouteTarget{
 					{Name: "archive", SinkRef: "archive", Artifact: "primary", Required: true},
@@ -185,6 +242,13 @@ func TestSaveTopologyFileRoundTrips(t *testing.T) {
 	if err := SaveTopologyFile(path, want); err != nil {
 		t.Fatalf("SaveTopologyFile() error = %v", err)
 	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if strings.Contains(string(content), "state_path") || strings.Contains(string(content), "state_dir") {
+		t.Fatalf("saved topology leaked runtime fields: %s", string(content))
+	}
 
 	got, err := LoadTopologyFile(path)
 	if err != nil {
@@ -195,5 +259,11 @@ func TestSaveTopologyFileRoundTrips(t *testing.T) {
 	}
 	if got.Sources["incoming"].Webhook == nil || got.Sources["incoming"].Webhook.Path != "/mail/incoming" {
 		t.Fatalf("sources = %+v", got.Sources)
+	}
+	if got.Sources["incoming"].StatePath != "" {
+		t.Fatalf("round-tripped source state path = %q, want empty", got.Sources["incoming"].StatePath)
+	}
+	if got.Routes["default"].StateDir != "" {
+		t.Fatalf("round-tripped route state dir = %q, want empty", got.Routes["default"].StateDir)
 	}
 }

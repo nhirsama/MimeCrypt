@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"mimecrypt/internal/mailflow/adapters"
+	"mimecrypt/internal/provider"
 )
 
 type countingReadCloser struct {
@@ -40,10 +41,10 @@ func TestWebhookIngressRejectsInvalidSignatureWithoutReadingBody(t *testing.T) {
 		secret:             []byte("secret"),
 		maxBodyBytes:       1024,
 		timestampTolerance: time.Minute,
-		spool: &adapters.PushSpool{
+		enqueuePushMessage: enqueueWithSpool(&adapters.PushSpool{
 			Dir:             t.TempDir(),
 			ReplayRetention: time.Hour,
-		},
+		}),
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mail/incoming", reader)
@@ -80,7 +81,7 @@ func TestWebhookIngressAcceptsValidSignedRequest(t *testing.T) {
 		secret:             []byte("secret"),
 		maxBodyBytes:       1024,
 		timestampTolerance: time.Minute,
-		spool:              spool,
+		enqueuePushMessage: enqueueWithSpool(spool),
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/mail/incoming", io.NopCloser(strings.NewReader(string(body))))
@@ -123,4 +124,26 @@ func TestWebhookIngressAcceptsValidSignedRequest(t *testing.T) {
 func sha256hex(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
+}
+
+func enqueueWithSpool(spool *adapters.PushSpool) provider.EnqueuePushMessageFunc {
+	return func(message provider.PushMessage, mime io.Reader) (bool, error) {
+		return spool.EnqueueReader(adapters.PushMessage{
+			DeliveryID:        message.DeliveryID,
+			InternetMessageID: message.InternetMessageID,
+			ReceivedAt:        message.ReceivedAt,
+			Attributes:        cloneTestAttributes(message.Attributes),
+		}, mime)
+	}
+}
+
+func cloneTestAttributes(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
 }

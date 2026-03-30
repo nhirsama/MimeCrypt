@@ -11,7 +11,7 @@ import (
 
 func TestTokenStatusCommandFallsBackWithoutTopology(t *testing.T) {
 	stateDir := t.TempDir()
-	if err := appconfig.SaveLocalConfig(stateDir, appconfig.LocalConfig{Drivers: []string{"imap"}}); err != nil {
+	if err := appconfig.SaveLocalConfig(stateDir, appconfig.LocalConfig{LoginConfig: "oauth-device"}); err != nil {
 		t.Fatalf("SaveLocalConfig() error = %v", err)
 	}
 	cmd := newTokenStatusCmd(appconfig.Config{
@@ -38,6 +38,28 @@ func TestTokenStatusCommandFallsBackWithoutTopology(t *testing.T) {
 	}
 	if !strings.Contains(output, "state_dir="+stateDir) {
 		t.Fatalf("output = %q, want scoped state dir", output)
+	}
+}
+
+func TestFormatTokenMetaIncludesCredentialRuntimeFields(t *testing.T) {
+	t.Parallel()
+
+	got := formatTokenMeta(tokenMeta{
+		Credential:     "office-auth",
+		CredentialKind: "oauth",
+		Runtime:        "oauth-device",
+		Drivers:        []string{"imap", "graph"},
+		StateDir:       "/state",
+		TokenStore:     "file",
+	})
+	if !strings.Contains(got, "credential=office-auth") {
+		t.Fatalf("meta = %q", got)
+	}
+	if !strings.Contains(got, "runtime=oauth-device") {
+		t.Fatalf("meta = %q", got)
+	}
+	if !strings.Contains(got, "drivers=graph,imap") {
+		t.Fatalf("meta = %q", got)
 	}
 }
 

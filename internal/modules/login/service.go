@@ -15,10 +15,18 @@ type Session interface {
 type Service struct {
 	Session       Session
 	IdentityProbe func(context.Context) (provider.User, error)
+	Credential    string
+	Kind          string
+	Runtime       string
+	Drivers       []string
 	StateDir      string
 }
 
 type Result struct {
+	Credential  string
+	Kind        string
+	Runtime     string
+	Drivers     []string
 	Account     string
 	DisplayName string
 	StateDir    string
@@ -40,6 +48,10 @@ func (s *Service) Run(ctx context.Context, out io.Writer) (Result, error) {
 	}
 
 	return Result{
+		Credential:  s.Credential,
+		Kind:        s.Kind,
+		Runtime:     s.Runtime,
+		Drivers:     append([]string(nil), s.Drivers...),
 		Account:     user.Account(),
 		DisplayName: user.DisplayName,
 		StateDir:    s.StateDir,

@@ -3,6 +3,7 @@ package flowruntime
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -23,6 +24,8 @@ import (
 type sourceBundle struct {
 	Config  SourcePlan
 	Clients provider.SourceClients
+	Ingress provider.SourceIngress
+	Spool   *adapters.PushSpool
 }
 
 type sinkBundle struct {
@@ -158,10 +161,7 @@ func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 	if !strings.EqualFold(mode, "poll") {
 		return nil, fmt.Errorf("run 尚未实现 source=%s 的 mode=%s", run.Source.Name, mode)
 	}
-	source, err := buildSourceBundle(SourcePlan{
-		Source: run.Source,
-		Config: run.Config,
-	})
+	source, err := buildSourceRuntimeBundle(run)
 	if err != nil {
 		return nil, err
 	}
@@ -200,11 +200,6 @@ func buildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflo
 		plan = compiledPlan
 	}
 
-	backupEncryptor, err := buildCatchAllBackupEncryptor(run.Config)
-	if err != nil {
-		return nil, err
-	}
-
 	auditor := &audit.Service{
 		Path:   run.Config.Mail.Pipeline.AuditLogPath,
 		Stdout: run.Config.Mail.Pipeline.AuditStdout,
@@ -220,12 +215,16 @@ func buildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflo
 	}
 
 	return &mailflow.Coordinator{
-		Processor: &adapters.EncryptingProcessor{
-			Encryptor:       &encrypt.Service{ProtectSubject: run.Config.Mail.Pipeline.ProtectSubject},
-			BackupEncryptor: backupEncryptor,
-			Auditor:         auditor,
-			WorkDir:         run.Config.Mail.Pipeline.WorkDir,
-			StaticPlan:      plan,
+		Processor: &adapters.ContextualProcessor{
+			Encrypting: &adapters.EncryptingProcessor{
+				Encryptor:  &encrypt.Service{ProtectSubject: run.Config.Mail.Pipeline.ProtectSubject},
+				Auditor:    auditor,
+				WorkDir:    run.Config.Mail.Pipeline.WorkDir,
+				StaticPlan: plan,
+			},
+			NoOp: &adapters.NoOpProcessor{
+				StaticPlan: plan,
+			},
 		},
 		Store:     store,
 		Consumers: consumers,
@@ -257,6 +256,10 @@ func buildMailflowConsumers(ctx context.Context, run SourceRun, auditor *audit.S
 			consumer, err := providers.BuildLocalConsumer(sink.Config, sink.Sink, auditor)
 			if err != nil {
 				return nil, err
+			}
+			if backupConsumer, ok := consumer.(*adapters.BackupConsumer); ok {
+				backupConsumer.WorkDir = run.Config.Mail.Pipeline.WorkDir
+				backupConsumer.Encryptor = buildCatchAllBackupEncryptor(run.Config)
 			}
 			consumers[sinkRef] = consumer
 			continue
@@ -324,13 +327,57 @@ func buildSourceBundle(plan SourcePlan) (sourceBundle, error) {
 	if err != nil {
 		return sourceBundle{}, err
 	}
-	clients, err := providers.BuildSourceClients(plan.Config, plan.Source.Driver, plan.Source.Folder, tokenSource)
+	runtime, err := providers.BuildSourceRuntime(plan.Config, plan.Source, tokenSource, provider.SourceRuntimeOptions{})
+	if err != nil {
+		return sourceBundle{}, err
+	}
+	if !sourceClientsAvailable(runtime.Clients) {
+		return sourceBundle{}, fmt.Errorf("source driver %s 未提供 provider clients", plan.Source.Driver)
+	}
+	return sourceBundle{
+		Config:  plan,
+		Clients: runtime.Clients,
+		Ingress: runtime.Ingress,
+	}, nil
+}
+
+func buildSourceRuntimeBundle(run SourceRun) (sourceBundle, error) {
+	tokenSource, err := buildTokenSource(run.Config, run.Source.Driver)
+	if err != nil {
+		return sourceBundle{}, err
+	}
+
+	options := provider.SourceRuntimeOptions{
+		Route: run.Route,
+	}
+	var spool *adapters.PushSpool
+	if strings.EqualFold(strings.TrimSpace(run.Source.Mode), "push") {
+		spool = &adapters.PushSpool{
+			Dir:             pushSpoolDirForSource(run.Route.StateDir, run.Source),
+			ReplayRetention: replayRetentionForSource(run.Source),
+		}
+		options.EnqueuePushMessage = func(message provider.PushMessage, mime io.Reader) (bool, error) {
+			return spool.EnqueueReader(adapters.PushMessage{
+				DeliveryID:        message.DeliveryID,
+				InternetMessageID: message.InternetMessageID,
+				ReceivedAt:        message.ReceivedAt,
+				Attributes:        clonePushAttributes(message.Attributes),
+			}, mime)
+		}
+	}
+
+	runtime, err := providers.BuildSourceRuntime(run.Config, run.Source, tokenSource, options)
 	if err != nil {
 		return sourceBundle{}, err
 	}
 	return sourceBundle{
-		Config:  plan,
-		Clients: clients,
+		Config: SourcePlan{
+			Source: run.Source,
+			Config: run.Config,
+		},
+		Clients: runtime.Clients,
+		Ingress: runtime.Ingress,
+		Spool:   spool,
 	}, nil
 }
 
@@ -426,14 +473,29 @@ func sourceDeleteSemantics(driver string) provider.DeleteSemantics {
 	return sourceSpec.DeleteSemantics
 }
 
-func buildCatchAllBackupEncryptor(cfg appconfig.Config) (*encrypt.Service, error) {
+func buildCatchAllBackupEncryptor(cfg appconfig.Config) *encrypt.Service {
 	key := strings.TrimSpace(cfg.Mail.Pipeline.BackupKeyID)
+	service := &encrypt.Service{}
 	if key == "" {
-		return nil, nil
+		return service
 	}
-	return &encrypt.Service{
-		RecipientResolver: func([]byte) ([]string, error) {
-			return []string{key}, nil
-		},
-	}, nil
+	service.RecipientResolver = func([]byte) ([]string, error) {
+		return []string{key}, nil
+	}
+	return service
+}
+
+func sourceClientsAvailable(clients provider.SourceClients) bool {
+	return clients.Reader != nil || clients.Deleter != nil
+}
+
+func clonePushAttributes(src map[string]string) map[string]string {
+	if len(src) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(src))
+	for key, value := range src {
+		cloned[key] = value
+	}
+	return cloned
 }

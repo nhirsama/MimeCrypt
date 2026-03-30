@@ -106,6 +106,39 @@ func TestRunReturnsErrAlreadyEncryptedForSMIME(t *testing.T) {
 	}
 }
 
+func TestRunRawFromOpenerContextEncryptsOriginalMIMEWithoutEncryptedCheck(t *testing.T) {
+	t.Parallel()
+
+	encryptor := &fakeEncryptor{
+		output: []byte("raw-backup-ciphertext"),
+	}
+	service := Service{
+		Encryptor: encryptor,
+	}
+
+	var out bytes.Buffer
+	result, err := service.RunRawFromOpenerContext(context.Background(), func() (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(strings.Join([]string{
+			"To: archive@example.com",
+			"Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"",
+			"",
+			"body",
+		}, "\r\n"))), nil
+	}, &out)
+	if err != nil {
+		t.Fatalf("RunRawFromOpenerContext() error = %v", err)
+	}
+	if result.Format != "pgp" {
+		t.Fatalf("Format = %q, want pgp", result.Format)
+	}
+	if got := out.String(); got != "raw-backup-ciphertext" {
+		t.Fatalf("output = %q, want raw-backup-ciphertext", got)
+	}
+	if got := string(encryptor.gotMIME); !strings.Contains(got, "multipart/encrypted") {
+		t.Fatalf("got MIME = %q, want original MIME body", got)
+	}
+}
+
 func TestRunEncryptsPlainMIMEToPGPMIME(t *testing.T) {
 	t.Parallel()
 

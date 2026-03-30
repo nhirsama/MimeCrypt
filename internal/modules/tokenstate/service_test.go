@@ -32,9 +32,13 @@ func TestServiceStatusReturnsAbsentWhenLoginMissing(t *testing.T) {
 	t.Parallel()
 
 	service := Service{
-		Session:    &fakeSession{loadErr: auth.ErrLoginRequired},
-		StateDir:   "/state",
-		TokenStore: "file",
+		Credential:     "office-auth",
+		CredentialKind: "oauth",
+		Runtime:        "oauth-device",
+		Drivers:        []string{"imap"},
+		Session:        &fakeSession{loadErr: auth.ErrLoginRequired},
+		StateDir:       "/state",
+		TokenStore:     "file",
 	}
 
 	result, err := service.Status()
@@ -43,6 +47,9 @@ func TestServiceStatusReturnsAbsentWhenLoginMissing(t *testing.T) {
 	}
 	if result.Present {
 		t.Fatalf("Present = true, want false")
+	}
+	if result.Credential != "office-auth" || result.Runtime != "oauth-device" {
+		t.Fatalf("unexpected metadata: %+v", result)
 	}
 }
 

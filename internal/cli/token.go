@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -17,7 +18,7 @@ func newTokenCmd() *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "token",
-		Short: "查询或导入本地 token 状态",
+		Short: "查询或导入 credential token 状态",
 	}
 	if err := bootstrap.Error(); err != nil {
 		root.PersistentPreRunE = func(*cobra.Command, []string) error {
@@ -54,13 +55,18 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("token status 失败: %w", err)
 			}
+			out := cmd.OutOrStdout()
+			meta := formatTokenMeta(tokenMeta{
+				Credential:     result.Credential,
+				CredentialKind: result.CredentialKind,
+				Runtime:        result.Runtime,
+				Drivers:        result.Drivers,
+				StateDir:       result.StateDir,
+				TokenStore:     result.TokenStore,
+			})
 
 			if !result.Present {
-				if strings.TrimSpace(resolved.CredentialName) != "" {
-					fmt.Printf("token_absent credential=%s state_dir=%s token_store=%s\n", resolved.CredentialName, result.StateDir, result.TokenStore)
-					return nil
-				}
-				fmt.Printf("token_absent state_dir=%s token_store=%s\n", result.StateDir, result.TokenStore)
+				_, _ = fmt.Fprintf(out, "token_absent%s\n", meta)
 				return nil
 			}
 
@@ -68,22 +74,10 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 			if !result.Token.ExpiresAt.IsZero() {
 				expiresAt = result.Token.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z")
 			}
-			if strings.TrimSpace(resolved.CredentialName) != "" {
-				fmt.Printf(
-					"token_present credential=%s state_dir=%s token_store=%s expires_at=%s scope=%q has_refresh_token=%t\n",
-					resolved.CredentialName,
-					result.StateDir,
-					result.TokenStore,
-					expiresAt,
-					result.Token.Scope,
-					strings.TrimSpace(result.Token.RefreshToken) != "",
-				)
-				return nil
-			}
-			fmt.Printf(
-				"token_present state_dir=%s token_store=%s expires_at=%s scope=%q has_refresh_token=%t\n",
-				result.StateDir,
-				result.TokenStore,
+			_, _ = fmt.Fprintf(
+				out,
+				"token_present%s expires_at=%s scope=%q has_refresh_token=%t\n",
+				meta,
 				expiresAt,
 				result.Token.Scope,
 				strings.TrimSpace(result.Token.RefreshToken) != "",
@@ -126,21 +120,20 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("token import 失败: %w", err)
 			}
+			out := cmd.OutOrStdout()
+			meta := formatTokenMeta(tokenMeta{
+				Credential:     result.Credential,
+				CredentialKind: result.CredentialKind,
+				Runtime:        result.Runtime,
+				Drivers:        result.Drivers,
+				StateDir:       result.StateDir,
+				TokenStore:     result.TokenStore,
+			})
 
-			if strings.TrimSpace(resolved.CredentialName) != "" {
-				fmt.Printf(
-					"已导入 token，credential=%s state_dir=%s token_store=%s has_refresh_token=%t\n",
-					resolved.CredentialName,
-					result.StateDir,
-					result.TokenStore,
-					strings.TrimSpace(result.Token.RefreshToken) != "",
-				)
-				return nil
-			}
-			fmt.Printf(
-				"已导入 token，state_dir=%s token_store=%s has_refresh_token=%t\n",
-				result.StateDir,
-				result.TokenStore,
+			_, _ = fmt.Fprintf(
+				out,
+				"已导入 token%s has_refresh_token=%t\n",
+				meta,
 				strings.TrimSpace(result.Token.RefreshToken) != "",
 			)
 			return nil
@@ -160,4 +153,34 @@ func openTokenImportSource(args []string) (*os.File, func(), error) {
 		return nil, func() {}, err
 	}
 	return file, func() { _ = file.Close() }, nil
+}
+
+type tokenMeta struct {
+	Credential     string
+	CredentialKind string
+	Runtime        string
+	Drivers        []string
+	StateDir       string
+	TokenStore     string
+}
+
+func formatTokenMeta(result tokenMeta) string {
+	parts := make([]string, 0, 6)
+	if credential := strings.TrimSpace(result.Credential); credential != "" {
+		parts = append(parts, "credential="+credential)
+	}
+	if kind := strings.TrimSpace(result.CredentialKind); kind != "" {
+		parts = append(parts, "kind="+kind)
+	}
+	if runtime := strings.TrimSpace(result.Runtime); runtime != "" {
+		parts = append(parts, "runtime="+runtime)
+	}
+	if len(result.Drivers) > 0 {
+		drivers := append([]string(nil), result.Drivers...)
+		slices.Sort(drivers)
+		parts = append(parts, "drivers="+strings.Join(drivers, ","))
+	}
+	parts = append(parts, "state_dir="+result.StateDir)
+	parts = append(parts, "token_store="+result.TokenStore)
+	return " " + strings.Join(parts, " ")
 }

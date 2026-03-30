@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -22,8 +23,8 @@ func TestBuildLoginRuntimeUsesDriverLoginConfigForIMAP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLoginRuntime() error = %v", err)
 	}
-	if runtime.ConfigName != "microsoft-oauth" {
-		t.Fatalf("ConfigName = %q, want microsoft-oauth", runtime.ConfigName)
+	if runtime.RuntimeName != "oauth-device" {
+		t.Fatalf("RuntimeName = %q, want oauth-device", runtime.RuntimeName)
 	}
 	if runtime.IdentityProbe == nil {
 		t.Fatalf("IdentityProbe = nil")
@@ -38,17 +39,32 @@ func TestBuildLoginRuntimeUsesDriverLoginConfigForIMAP(t *testing.T) {
 	}
 }
 
-func TestBuildLoginRuntimeRequiresConfiguredDrivers(t *testing.T) {
+func TestBuildCredentialRuntimeCarriesNameAndKind(t *testing.T) {
 	t.Parallel()
 
 	cfg := testProviderConfig(t)
-
-	runtime, err := BuildLoginRuntime(cfg)
-	if err == nil || !strings.Contains(err.Error(), "未配置登录驱动") {
-		t.Fatalf("BuildLoginRuntime() error = %v, want missing driver config error", err)
+	runtime, err := BuildCredentialRuntime("office-auth", appconfig.CredentialKindOAuth, oauthDeviceRuntimeName, cfg, "imap")
+	if err != nil {
+		t.Fatalf("BuildCredentialRuntime() error = %v", err)
 	}
-	if runtime.ConfigName != "" {
-		t.Fatalf("ConfigName = %q, want empty", runtime.ConfigName)
+	if runtime.Name != "office-auth" {
+		t.Fatalf("Name = %q, want office-auth", runtime.Name)
+	}
+	if runtime.Kind != appconfig.CredentialKindOAuth {
+		t.Fatalf("Kind = %q, want oauth", runtime.Kind)
+	}
+}
+
+func TestBuildCredentialRuntimeRequiresConfiguredRuntime(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+	runtime, err := BuildCredentialRuntime("office-auth", appconfig.CredentialKindOAuth, "", cfg)
+	if err == nil || !strings.Contains(err.Error(), "未配置运行时驱动") {
+		t.Fatalf("BuildCredentialRuntime() error = %v, want missing runtime config", err)
+	}
+	if runtime.RuntimeName != "" {
+		t.Fatalf("RuntimeName = %q, want empty", runtime.RuntimeName)
 	}
 }
 
@@ -72,7 +88,7 @@ func TestBuildRemoteRevokerUsesDriverRevokeConfigForIMAP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLoginRuntime() error = %v", err)
 	}
-	revoker, effectiveCfg, err := BuildRemoteRevoker(runtime.Config, runtime.Session, "imap")
+	revoker, effectiveCfg, err := BuildRemoteRevoker(appconfig.CredentialKindOAuth, runtime.RuntimeName, runtime.Config, runtime.Session, "imap")
 	if err != nil {
 		t.Fatalf("BuildRemoteRevoker() error = %v", err)
 	}
@@ -89,6 +105,7 @@ func TestConfigureLoginLocalConfigPromptsForDriversAndPersistsMicrosoftOverrides
 
 	cfg := testProviderConfig(t)
 	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
+		appconfig.CredentialKindOAuth,
 		cfg,
 		appconfig.LocalConfig{},
 		strings.NewReader("imap\n\n\n\nmailbox@example.com\n"),
@@ -103,8 +120,8 @@ func TestConfigureLoginLocalConfigPromptsForDriversAndPersistsMicrosoftOverrides
 	if !reflect.DeepEqual(localCfg.Drivers, []string{"imap"}) {
 		t.Fatalf("LocalConfig.Drivers = %#v, want [imap]", localCfg.Drivers)
 	}
-	if localCfg.LoginConfig != "microsoft-oauth" {
-		t.Fatalf("LoginConfig = %q, want microsoft-oauth", localCfg.LoginConfig)
+	if localCfg.LoginConfig != "oauth-device" {
+		t.Fatalf("LoginConfig = %q, want oauth-device", localCfg.LoginConfig)
 	}
 	if localCfg.IMAPUsername != "mailbox@example.com" {
 		t.Fatalf("IMAPUsername = %q, want mailbox@example.com", localCfg.IMAPUsername)
@@ -122,6 +139,7 @@ func TestConfigureLoginLocalConfigAllowsAbort(t *testing.T) {
 
 	cfg := testProviderConfig(t)
 	_, _, _, err := ConfigureLoginLocalConfig(
+		appconfig.CredentialKindOAuth,
 		cfg,
 		appconfig.LocalConfig{},
 		strings.NewReader("q\n"),
@@ -129,5 +147,97 @@ func TestConfigureLoginLocalConfigAllowsAbort(t *testing.T) {
 	)
 	if !errors.Is(err, interact.ErrAbort) {
 		t.Fatalf("ConfigureLoginLocalConfig() error = %v, want interact.ErrAbort", err)
+	}
+}
+
+func TestPromptConfigValueUsesEffectiveValueOnBlankInput(t *testing.T) {
+	t.Parallel()
+
+	got, err := promptConfigValue(bufio.NewReader(strings.NewReader("\n")), io.Discard, "Client ID", "base-client", "")
+	if err != nil {
+		t.Fatalf("promptConfigValue() error = %v", err)
+	}
+	if got != "base-client" {
+		t.Fatalf("blank prompt result = %q, want base-client", got)
+	}
+
+	got, err = promptConfigValue(bufio.NewReader(strings.NewReader("\n")), io.Discard, "Client ID", "base-client", "stored-client")
+	if err != nil {
+		t.Fatalf("promptConfigValue() error = %v", err)
+	}
+	if got != "stored-client" {
+		t.Fatalf("blank prompt result = %q, want stored-client", got)
+	}
+}
+
+func TestConfigureLoginLocalConfigClearsStoredIMAPOverrideWhenDriverDropsIMAP(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
+		appconfig.CredentialKindOAuth,
+		cfg,
+		appconfig.LocalConfig{
+			Drivers:      []string{"imap"},
+			LoginConfig:  oauthDeviceRuntimeName,
+			IMAPUsername: "stored@example.com",
+			Microsoft: &appconfig.MicrosoftLocalConfig{
+				ClientID:         "client-id",
+				Tenant:           "organizations",
+				AuthorityBaseURL: "https://login.microsoftonline.com",
+				IMAPUsername:     "stored@example.com",
+			},
+		},
+		strings.NewReader("\n\n\n"),
+		io.Discard,
+		"graph",
+	)
+	if err != nil {
+		t.Fatalf("ConfigureLoginLocalConfig() error = %v", err)
+	}
+	if !reflect.DeepEqual(resolvedDrivers, []string{"graph"}) {
+		t.Fatalf("resolved drivers = %#v, want [graph]", resolvedDrivers)
+	}
+	if localCfg.IMAPUsername != "" {
+		t.Fatalf("LocalConfig.IMAPUsername = %q, want empty", localCfg.IMAPUsername)
+	}
+	if localCfg.Microsoft == nil || localCfg.Microsoft.IMAPUsername != "" {
+		t.Fatalf("Microsoft IMAP username = %#v, want empty override", localCfg.Microsoft)
+	}
+	if resolvedCfg.Mail.Client.IMAPUsername != cfg.Mail.Client.IMAPUsername {
+		t.Fatalf("resolved IMAP username = %q, want base config %q", resolvedCfg.Mail.Client.IMAPUsername, cfg.Mail.Client.IMAPUsername)
+	}
+	if len(resolvedCfg.Auth.IMAPScopes) != 0 {
+		t.Fatalf("IMAPScopes = %#v, want empty after graph-only runtime", resolvedCfg.Auth.IMAPScopes)
+	}
+}
+
+func TestBuildRemoteRevokerPreservesEffectiveConfigOnInitError(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+
+	revoker, effectiveCfg, err := BuildRemoteRevoker(appconfig.CredentialKindOAuth, oauthDeviceRuntimeName, cfg, nil)
+	if effectiveCfg.Auth.StateDir != cfg.Auth.StateDir {
+		t.Fatalf("effective Auth.StateDir = %q, want %q", effectiveCfg.Auth.StateDir, cfg.Auth.StateDir)
+	}
+	if err == nil || !strings.Contains(err.Error(), "token source 不能为空") {
+		t.Fatalf("BuildRemoteRevoker() error = %v, want missing token source", err)
+	}
+	if revoker != nil {
+		t.Fatalf("revoker = %#v, want nil", revoker)
+	}
+}
+
+func TestBuildCredentialRuntimeAcceptsLegacyStoredRuntimeName(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+	runtime, err := BuildCredentialRuntime("office-auth", appconfig.CredentialKindOAuth, legacyMicrosoftOAuthRuntime, cfg)
+	if err != nil {
+		t.Fatalf("BuildCredentialRuntime() error = %v", err)
+	}
+	if runtime.RuntimeName != oauthDeviceRuntimeName {
+		t.Fatalf("RuntimeName = %q, want %s", runtime.RuntimeName, oauthDeviceRuntimeName)
 	}
 }

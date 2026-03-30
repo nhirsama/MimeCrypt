@@ -88,6 +88,9 @@ func TestResolveRoutePlanAllSourcesUsesCredentialScopedStateLayout(t *testing.T)
 	if office.Route.StateDir != filepath.Join(stateDir, "flow-state", "archive-office-imap-Inbox") {
 		t.Fatalf("office route state dir = %q", office.Route.StateDir)
 	}
+	if got := plan.Topology.Sources["office"].StatePath; got != "" {
+		t.Fatalf("topology office StatePath = %q, want empty declarative value", got)
+	}
 
 	vaultStateDir := filepath.Join(stateDir, "credentials", "vault-auth")
 	vault := runs["vault"]
@@ -102,6 +105,12 @@ func TestResolveRoutePlanAllSourcesUsesCredentialScopedStateLayout(t *testing.T)
 	}
 	if vault.Route.StateDir != filepath.Join(vaultStateDir, "flow-state", "archive-vault-imap-Archive_Sub") {
 		t.Fatalf("vault route state dir = %q", vault.Route.StateDir)
+	}
+	if got := plan.Topology.Sources["vault"].StatePath; got != "" {
+		t.Fatalf("topology vault StatePath = %q, want empty declarative value", got)
+	}
+	if got := plan.Topology.Routes["archive"].StateDir; got != "" {
+		t.Fatalf("topology route StateDir = %q, want empty declarative value", got)
 	}
 	if sink, ok := vault.Sinks["write-back"]; !ok {
 		t.Fatalf("missing write-back sink plan")
@@ -203,7 +212,7 @@ func TestResolveSingleSourceRunUsesRouteSelection(t *testing.T) {
 	}
 }
 
-func TestResolveSingleSourceRunInjectsDefaultBackupTarget(t *testing.T) {
+func TestResolveSingleSourceRunDoesNotInjectBackupTargetFromPipelineConfig(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
@@ -246,20 +255,79 @@ func TestResolveSingleSourceRunInjectsDefaultBackupTarget(t *testing.T) {
 	if len(run.Route.Targets) != 1 {
 		t.Fatalf("len(Route.Targets) = %d, want 1 declarative target", len(run.Route.Targets))
 	}
-	if _, ok := run.Sinks[defaultBackupSinkRef]; !ok {
-		t.Fatalf("missing default backup sink in run.Sinks")
+	if _, ok := run.Sinks["backup"]; ok {
+		t.Fatalf("unexpected implicit backup sink in run.Sinks")
 	}
-	found := false
-	for _, target := range run.RuntimeTargets {
-		if target.SinkRef == defaultBackupSinkRef && target.Artifact == defaultBackupArtifact {
-			found = true
-			if !target.Required {
-				t.Fatalf("default backup target should be required")
-			}
-		}
+	if len(run.RuntimeTargets) != 1 {
+		t.Fatalf("len(RuntimeTargets) = %d, want 1", len(run.RuntimeTargets))
 	}
-	if !found {
-		t.Fatalf("default backup target not injected: %+v", run.RuntimeTargets)
+	if got := run.RuntimeTargets[0].SinkRef; got != "discard" {
+		t.Fatalf("RuntimeTargets[0].SinkRef = %q, want discard", got)
+	}
+	if len(run.ExecutionPlan.Targets) != 1 {
+		t.Fatalf("len(ExecutionPlan.Targets) = %d, want 1", len(run.ExecutionPlan.Targets))
+	}
+}
+
+func TestResolveSingleSourceRunIncludesExplicitBackupSink(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	backupDir := filepath.Join(stateDir, "topology-backup")
+	topology := appconfig.Topology{
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:         "office",
+				Driver:       "imap",
+				Mode:         "poll",
+				Folder:       "Inbox/Sub",
+				PollInterval: time.Minute,
+				CycleTimeout: 2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+			"backup": {
+				Name:      "backup",
+				Driver:    "backup",
+				OutputDir: backupDir,
+			},
+		},
+		Routes: map[string]appconfig.Route{
+			"archive": {
+				Name:       "archive",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+					{Name: "backup", SinkRef: "backup", Artifact: "backup", Required: false},
+				},
+			},
+		},
+		DefaultRoute:  "archive",
+		DefaultSource: "office",
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	cfg := testRuntimeConfig(stateDir, topologyPath)
+	cfg.Mail.Pipeline.BackupDir = filepath.Join(stateDir, "env-backup")
+
+	run, err := ResolveSingleSourceRun(cfg, Selector{})
+	if err != nil {
+		t.Fatalf("ResolveSingleSourceRun() error = %v", err)
+	}
+	if len(run.RuntimeTargets) != 2 {
+		t.Fatalf("len(RuntimeTargets) = %d, want 2", len(run.RuntimeTargets))
+	}
+	sink, ok := run.Sinks["backup"]
+	if !ok {
+		t.Fatalf("missing explicit backup sink in run.Sinks")
+	}
+	if sink.Sink.OutputDir != backupDir {
+		t.Fatalf("backup sink OutputDir = %q, want %q", sink.Sink.OutputDir, backupDir)
+	}
+	if sink.Config.Auth.StateDir != stateDir {
+		t.Fatalf("backup sink Auth.StateDir = %q, want %q", sink.Config.Auth.StateDir, stateDir)
 	}
 	if len(run.ExecutionPlan.Targets) != 2 {
 		t.Fatalf("len(ExecutionPlan.Targets) = %d, want 2", len(run.ExecutionPlan.Targets))
@@ -317,6 +385,9 @@ func TestResolveSourcePlanUsesCredentialScopedConfigAndStatePath(t *testing.T) {
 	if plan.Source.StatePath != filepath.Join(credentialStateDir, "flow-sync-archive-imap-Archive_2026.json") {
 		t.Fatalf("Source.StatePath = %q", plan.Source.StatePath)
 	}
+	if got := plan.Topology.Sources["archive"].StatePath; got != "" {
+		t.Fatalf("topology Source.StatePath = %q, want empty declarative value", got)
+	}
 }
 
 func TestResolveRoutePlanFallsBackSinkMailboxToSourceFolder(t *testing.T) {
@@ -367,6 +438,59 @@ func TestResolveRoutePlanFallsBackSinkMailboxToSourceFolder(t *testing.T) {
 	}
 	if got, want := sink.Mailbox, "Inbox/Archive"; got != want {
 		t.Fatalf("Mailbox = %q, want %q", got, want)
+	}
+	if sink.Sink.Folder != "" {
+		t.Fatalf("configured sink folder = %q, want empty declarative value", sink.Sink.Folder)
+	}
+	if got := plan.Topology.Sinks["archive"].Folder; got != "" {
+		t.Fatalf("topology sink folder = %q, want empty declarative value", got)
+	}
+}
+
+func TestResolveRoutePlanLeavesPushSourceStatePathEmpty(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	topology := appconfig.Topology{
+		Sources: map[string]appconfig.Source{
+			"incoming": {
+				Name:   "incoming",
+				Driver: "webhook",
+				Mode:   "push",
+				Webhook: &appconfig.WebhookSource{
+					ListenAddr: "127.0.0.1:8080",
+					Path:       "/mail/incoming",
+					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+				},
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"incoming"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+		DefaultRoute:  "default",
+		DefaultSource: "incoming",
+	}
+	writeTopologyFile(t, topologyPath, topology)
+
+	plan, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{}, RoutePlanSingleSource)
+	if err != nil {
+		t.Fatalf("ResolveRoutePlan() error = %v", err)
+	}
+	if len(plan.Runs) != 1 {
+		t.Fatalf("len(Runs) = %d, want 1", len(plan.Runs))
+	}
+	if got := plan.Runs[0].Source.StatePath; got != "" {
+		t.Fatalf("push source StatePath = %q, want empty", got)
 	}
 }
 
@@ -571,6 +695,12 @@ func TestResolveRoutePlanDoesNotPopulateStatePathForPushWebhookSource(t *testing
 	}
 	if got, want := run.Route.StateDir, filepath.Join(stateDir, "flow-state", "default-incoming-webhook"); got != want {
 		t.Fatalf("Route.StateDir = %q, want %q", got, want)
+	}
+	if got := plan.Topology.Sources["incoming"].StatePath; got != "" {
+		t.Fatalf("topology Source.StatePath = %q, want empty declarative value", got)
+	}
+	if got := plan.Topology.Routes["default"].StateDir; got != "" {
+		t.Fatalf("topology Route.StateDir = %q, want empty declarative value", got)
 	}
 }
 

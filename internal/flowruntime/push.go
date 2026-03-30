@@ -10,6 +10,7 @@ import (
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow"
 	"mimecrypt/internal/mailflow/adapters"
+	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers"
 )
 
@@ -17,25 +18,35 @@ const defaultPushIdlePollInterval = time.Second
 
 type PushRuntime struct {
 	Runner           *mailflow.Runner
-	Ingress          providers.PushIngress
+	Ingress          provider.SourceIngress
 	IdlePollInterval time.Duration
 }
 
 func BuildPushRuntime(ctx context.Context, run SourceRun) (*PushRuntime, error) {
-	if !strings.EqualFold(strings.TrimSpace(run.Source.Mode), "push") {
+	mode := strings.TrimSpace(run.Source.Mode)
+	if !strings.EqualFold(mode, "push") {
 		return nil, fmt.Errorf("push runtime 仅支持 mode=push，当前 source=%s mode=%s", run.Source.Name, run.Source.Mode)
 	}
+	sourceSpec, ok := providers.LookupSourceSpec(run.Source.Driver)
+	if !ok {
+		return nil, fmt.Errorf("run 不支持 source driver=%s", run.Source.Driver)
+	}
+	if _, ok := sourceSpec.ModeSpec(mode); !ok {
+		return nil, fmt.Errorf("run 不支持 source=%s driver=%s mode=%s", run.Source.Name, run.Source.Driver, mode)
+	}
 
-	coordinator, err := buildCoordinatorForMode(ctx, run, TransactionModePersistent)
+	source, err := buildSourceRuntimeBundle(run)
 	if err != nil {
 		return nil, err
 	}
-
-	spool := &adapters.PushSpool{
-		Dir:             pushSpoolDirForSource(run.Route.StateDir, run.Source),
-		ReplayRetention: replayRetentionForSource(run.Source),
+	if source.Ingress == nil {
+		return nil, fmt.Errorf("source driver %s 未提供 mode=push runtime", run.Source.Driver)
 	}
-	ingress, err := providers.BuildPushIngress(run.Config, run.Route, run.Source, spool)
+	if source.Spool == nil {
+		return nil, fmt.Errorf("source %s 未初始化 push spool", run.Source.Name)
+	}
+
+	coordinator, err := buildCoordinatorForMode(ctx, run, TransactionModePersistent)
 	if err != nil {
 		return nil, err
 	}
@@ -51,12 +62,12 @@ func BuildPushRuntime(ctx context.Context, run SourceRun) (*PushRuntime, error) 
 				Name:            run.Source.Name,
 				Driver:          run.Source.Driver,
 				Store:           sourceStore,
-				Spool:           spool,
+				Spool:           source.Spool,
 				DeleteSemantics: run.SourceDeleteSemantics,
 			},
 			Coordinator: coordinator,
 		},
-		Ingress:          ingress,
+		Ingress:          source.Ingress,
 		IdlePollInterval: defaultPushIdlePollInterval,
 	}, nil
 }

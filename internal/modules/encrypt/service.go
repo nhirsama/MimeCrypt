@@ -73,7 +73,7 @@ func (s *Service) Run(mimeBytes []byte) (Result, error) {
 
 // RunContext 对邮件内容进行加密，并响应上下文取消。
 func (s *Service) RunContext(ctx context.Context, mimeBytes []byte) (Result, error) {
-	format, encrypted := detectFormat(mimeBytes)
+	format, encrypted := DetectFormat(mimeBytes)
 	if encrypted {
 		return Result{}, AlreadyEncryptedError{Format: format}
 	}
@@ -137,7 +137,7 @@ func (s *Service) RunFromOpenerContext(ctx context.Context, open MIMEOpenFunc, a
 		return Result{}, fmt.Errorf("MIME 打开器不能为空")
 	}
 
-	format, encrypted, err := detectFormatFromOpener(mimeOpenFunc(open))
+	format, encrypted, err := DetectFormatFromOpener(open)
 	if err != nil {
 		return Result{}, fmt.Errorf("检测 MIME 加密格式失败: %w", err)
 	}
@@ -216,6 +216,65 @@ func (s *Service) RunFromOpenerContext(ctx context.Context, open MIMEOpenFunc, a
 		Encrypted:        true,
 		AlreadyEncrypted: false,
 		Format:           "pgp-mime",
+	}, nil
+}
+
+// RunRawFromOpenerContext 对原始 MIME 文件执行裸数据加密。
+// 该路径不做“已加密 MIME”检测，也不会生成新的 PGP/MIME 包装体，适合 backup sink 直接加密输入文件。
+func (s *Service) RunRawFromOpenerContext(ctx context.Context, open MIMEOpenFunc, armoredOut io.Writer) (Result, error) {
+	if open == nil {
+		return Result{}, fmt.Errorf("MIME 打开器不能为空")
+	}
+	if armoredOut == nil {
+		return Result{}, fmt.Errorf("加密输出不能为空")
+	}
+
+	header, err := readHeaderFromOpener(open)
+	if err != nil {
+		return Result{}, err
+	}
+	recipients, err := s.resolveRecipientsFromHeader(header)
+	if err != nil {
+		return Result{}, err
+	}
+	if len(recipients) == 0 {
+		return Result{}, ErrNoRecipients
+	}
+
+	encryptor := s.encryptor()
+	if readerEncryptor, ok := encryptor.(readerMIMEEncryptor); ok {
+		src, err := open()
+		if err != nil {
+			return Result{}, fmt.Errorf("打开 MIME 源失败: %w", err)
+		}
+		defer src.Close()
+
+		if err := readerEncryptor.EncryptReaderTo(ctx, src, recipients, armoredOut); err != nil {
+			return Result{}, err
+		}
+		return Result{
+			Encrypted:        true,
+			AlreadyEncrypted: false,
+			Format:           "pgp",
+		}, nil
+	}
+
+	data, err := readAllFromOpener(open)
+	if err != nil {
+		return Result{}, err
+	}
+	ciphertext, err := encryptor.Encrypt(ctx, data, recipients)
+	if err != nil {
+		return Result{}, err
+	}
+	if _, err := armoredOut.Write(ciphertext); err != nil {
+		return Result{}, err
+	}
+	return Result{
+		Armored:          ciphertext,
+		Encrypted:        true,
+		AlreadyEncrypted: false,
+		Format:           "pgp",
 	}, nil
 }
 

@@ -21,9 +21,9 @@ func (c *FileConsumer) Consume(_ context.Context, req mailflow.ConsumeRequest) (
 		return mailflow.DeliveryReceipt{}, fmt.Errorf("output dir 不能为空")
 	}
 
-	reader, err := req.Artifact.MIME()
+	reader, err := req.Mail.MIME()
 	if err != nil {
-		return mailflow.DeliveryReceipt{}, fmt.Errorf("打开产物 MIME 失败: %w", err)
+		return mailflow.DeliveryReceipt{}, fmt.Errorf("打开邮件对象 MIME 失败: %w", err)
 	}
 	defer reader.Close()
 

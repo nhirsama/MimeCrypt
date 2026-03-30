@@ -67,6 +67,14 @@ func detectFormatFromOpener(open mimeOpenFunc) (string, bool, error) {
 	return "plain", false, nil
 }
 
+func DetectFormat(mimeBytes []byte) (string, bool) {
+	return detectFormat(mimeBytes)
+}
+
+func DetectFormatFromOpener(open MIMEOpenFunc) (string, bool, error) {
+	return detectFormatFromOpener(mimeOpenFunc(open))
+}
+
 func extractHeaderBlock(mimeBytes []byte) []byte {
 	if idx := bytes.Index(mimeBytes, []byte("\r\n\r\n")); idx >= 0 {
 		return mimeBytes[:idx]

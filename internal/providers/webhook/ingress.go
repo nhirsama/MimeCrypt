@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"mimecrypt/internal/appconfig"
-	"mimecrypt/internal/mailflow/adapters"
+	"mimecrypt/internal/provider"
 )
 
 const (
@@ -38,12 +38,15 @@ type Ingress struct {
 	secret             []byte
 	maxBodyBytes       int64
 	timestampTolerance time.Duration
-	spool              *adapters.PushSpool
+	enqueuePushMessage provider.EnqueuePushMessageFunc
 }
 
-func BuildIngress(_ appconfig.Config, _ appconfig.Route, source appconfig.Source, spool *adapters.PushSpool) (*Ingress, error) {
+func BuildIngress(_ appconfig.Config, _ appconfig.Route, source appconfig.Source, enqueuePushMessage provider.EnqueuePushMessageFunc) (*Ingress, error) {
 	if err := ValidateSourceConfig(source); err != nil {
 		return nil, err
+	}
+	if enqueuePushMessage == nil {
+		return nil, fmt.Errorf("source %s 缺少 push message sink", source.Name)
 	}
 
 	secretEnv := strings.TrimSpace(source.Webhook.SecretEnv)
@@ -69,7 +72,7 @@ func BuildIngress(_ appconfig.Config, _ appconfig.Route, source appconfig.Source
 		secret:             secret,
 		maxBodyBytes:       maxBodyBytes,
 		timestampTolerance: timestampTolerance,
-		spool:              spool,
+		enqueuePushMessage: enqueuePushMessage,
 	}, nil
 }
 
@@ -96,7 +99,7 @@ func ValidateSourceConfig(source appconfig.Source) error {
 }
 
 func (w *Ingress) Run(ctx context.Context) error {
-	if w == nil || w.spool == nil {
+	if w == nil || w.enqueuePushMessage == nil {
 		return fmt.Errorf("webhook ingress 未初始化")
 	}
 
@@ -211,7 +214,7 @@ func (w *Ingress) Handle(rw http.ResponseWriter, req *http.Request) {
 	}
 	defer bodyFile.Close()
 
-	duplicate, err := w.spool.EnqueueReader(adapters.PushMessage{
+	duplicate, err := w.enqueuePushMessage(provider.PushMessage{
 		DeliveryID:        deliveryID,
 		InternetMessageID: extractInternetMessageIDFromFile(bodyPath),
 		ReceivedAt:        timestamp,

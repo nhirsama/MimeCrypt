@@ -67,11 +67,15 @@ func summarizeMailflowResult(result mailflow.Result) (mailflowSummary, error) {
 	if summary.MessageID == "" {
 		summary.MessageID = strings.TrimSpace(result.Key)
 	}
+	summary.AlreadyEncrypted = strings.EqualFold(strings.TrimSpace(result.Trace.Attributes["already_encrypted"]), "true")
+	if encrypted := strings.TrimSpace(result.Trace.Attributes["encrypted"]); encrypted != "" {
+		summary.Encrypted = strings.EqualFold(encrypted, "true")
+	} else {
+		summary.Encrypted = summary.Format != "" && !strings.EqualFold(summary.Format, "plain")
+	}
 	if result.Skipped {
-		summary.AlreadyEncrypted = result.Trace.Attributes["already_encrypted"] == "true"
 		return summary, nil
 	}
-	summary.Encrypted = true
 
 	for _, receipt := range result.Deliveries {
 		switch {

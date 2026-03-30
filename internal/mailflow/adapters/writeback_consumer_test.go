@@ -53,7 +53,7 @@ func TestWritebackConsumerForwardsWithoutDeleteSource(t *testing.T) {
 			Name:     "archive-main",
 			Consumer: "archive",
 		},
-		Artifact: mailflow.MailArtifact{
+		Mail: mailflow.MailObject{
 			Name: "primary",
 			MIME: func() (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("encrypted")), nil
@@ -89,7 +89,7 @@ func TestWritebackConsumerReturnsServiceError(t *testing.T) {
 			Name:     "archive-main",
 			Consumer: "archive",
 		},
-		Artifact: mailflow.MailArtifact{
+		Mail: mailflow.MailObject{
 			Name: "primary",
 			MIME: func() (io.ReadCloser, error) {
 				return io.NopCloser(strings.NewReader("encrypted")), nil

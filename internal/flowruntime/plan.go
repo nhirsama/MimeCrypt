@@ -66,11 +66,15 @@ func ResolveSourcePlan(cfg appconfig.Config, selector Selector) (SourcePlan, err
 	}
 	topology.DefaultSource = sourceName
 
-	source, ok := topology.Sources[sourceName]
-	if !ok {
+	source, err := topology.SourceInstance(sourceName)
+	if err != nil {
 		return SourcePlan{}, fmt.Errorf("topology source 不存在: %s", sourceName)
 	}
 	sourceCfg, err := configForSource(cfg, topology, source)
+	if err != nil {
+		return SourcePlan{}, err
+	}
+	source, err = sourceWithRuntimeStatePath(sourceCfg, source)
 	if err != nil {
 		return SourcePlan{}, err
 	}
@@ -103,8 +107,8 @@ func ResolveRoutePlan(cfg appconfig.Config, selector Selector, mode RoutePlanMod
 	}
 	topology.DefaultRoute = routeName
 
-	route, ok := topology.Routes[routeName]
-	if !ok {
+	route, err := topology.RouteInstance(routeName)
+	if err != nil {
 		return RoutePlan{}, fmt.Errorf("topology route 不存在: %s", routeName)
 	}
 	sourceNames, err := selectRouteSources(topology, route, selector.SourceName, mode)
@@ -117,8 +121,8 @@ func ResolveRoutePlan(cfg appconfig.Config, selector Selector, mode RoutePlanMod
 
 	runs := make([]SourceRun, 0, len(sourceNames))
 	for _, sourceName := range sourceNames {
-		source, ok := topology.Sources[sourceName]
-		if !ok {
+		source, err := topology.SourceInstance(sourceName)
+		if err != nil {
 			return RoutePlan{}, fmt.Errorf("topology source 不存在: %s", sourceName)
 		}
 		run, err := buildSourceRun(cfg, topology, route, source)
@@ -144,42 +148,10 @@ func loadRuntimeTopology(cfg appconfig.Config) (appconfig.Topology, error) {
 	if err != nil {
 		return appconfig.Topology{}, err
 	}
-	if err := populateSourceStatePaths(cfg, &topology); err != nil {
-		return appconfig.Topology{}, err
-	}
 	if err := topology.ValidateStructure(); err != nil {
 		return appconfig.Topology{}, err
 	}
 	return topology, nil
-}
-
-func populateSourceStatePaths(cfg appconfig.Config, topology *appconfig.Topology) error {
-	if topology == nil {
-		return fmt.Errorf("topology 不能为空")
-	}
-	for name, source := range topology.Sources {
-		if strings.TrimSpace(source.StatePath) != "" {
-			continue
-		}
-		sourceSpec, ok := providers.LookupSourceSpec(source.Driver)
-		if !ok {
-			return fmt.Errorf("source %s 不支持 driver: %s", source.Name, source.Driver)
-		}
-		modeSpec, ok := sourceSpec.ModeSpec(source.Mode)
-		if !ok {
-			return fmt.Errorf("source %s 的 driver %s 不支持 mode: %s", source.Name, source.Driver, source.Mode)
-		}
-		if !modeSpec.RequiresStatePath {
-			continue
-		}
-		sourceCfg, err := configForSource(cfg, *topology, source)
-		if err != nil {
-			return err
-		}
-		source.StatePath = sourceCfg.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)
-		topology.Sources[name] = source
-	}
-	return nil
 }
 
 func selectRouteSources(topology appconfig.Topology, route appconfig.Route, sourceName string, mode RoutePlanMode) ([]string, error) {
@@ -230,12 +202,13 @@ func buildSourceRun(cfg appconfig.Config, topology appconfig.Topology, route app
 	if err != nil {
 		return SourceRun{}, err
 	}
-
-	runRoute := route
-	if strings.TrimSpace(runRoute.StateDir) == "" {
-		runRoute.StateDir = sourceCfg.Mail.FlowStateDirFor(route.Name, source.Name, source.Driver, source.Folder)
+	source, err = sourceWithRuntimeStatePath(sourceCfg, source)
+	if err != nil {
+		return SourceRun{}, err
 	}
-	runtimeTargets := compileRuntimeTargets(route.Targets, backupEnabled(sourceCfg))
+
+	runRoute := runtimeRouteForSource(sourceCfg, route, source)
+	runtimeTargets := compileRuntimeTargets(route.Targets)
 	executionPlan, err := buildMailflowPlan(runRoute, runtimeTargets)
 	if err != nil {
 		return SourceRun{}, err
@@ -248,10 +221,6 @@ func buildSourceRun(cfg appconfig.Config, topology appconfig.Topology, route app
 			continue
 		}
 		if _, exists := sinks[sinkRef]; exists {
-			continue
-		}
-		if sinkRef == defaultBackupSinkRef {
-			sinks[sinkRef] = defaultBackupSinkPlan(sourceCfg)
 			continue
 		}
 		sink, ok := topology.Sinks[sinkRef]
@@ -395,12 +364,29 @@ func applyTopologyCredential(cfg appconfig.Config, topology appconfig.Topology, 
 	return cfg.WithCredential(credential.Name, credential), nil
 }
 
-func compileRuntimeTargets(targets []appconfig.RouteTarget, includeDefaultBackup bool) []appconfig.RouteTarget {
-	runtimeTargets := append([]appconfig.RouteTarget(nil), targets...)
-	if includeDefaultBackup {
-		runtimeTargets = appendDefaultBackupTarget(runtimeTargets)
+func sourceWithRuntimeStatePath(cfg appconfig.Config, source appconfig.Source) (appconfig.Source, error) {
+	source = source.Configured()
+	sourceSpec, ok := providers.LookupSourceSpec(source.Driver)
+	if !ok {
+		return appconfig.Source{}, fmt.Errorf("source %s 不支持 driver: %s", source.Name, source.Driver)
 	}
-	return runtimeTargets
+	modeSpec, ok := sourceSpec.ModeSpec(source.Mode)
+	if !ok {
+		return appconfig.Source{}, fmt.Errorf("source %s 的 driver %s 不支持 mode: %s", source.Name, source.Driver, source.Mode)
+	}
+	if !modeSpec.RequiresStatePath {
+		return source, nil
+	}
+	return source.WithRuntimeStatePath(cfg.Mail.FlowProducerStatePathFor(source.Name, source.Driver, source.Folder)), nil
+}
+
+func runtimeRouteForSource(cfg appconfig.Config, route appconfig.Route, source appconfig.Source) appconfig.Route {
+	route = route.Configured()
+	return route.WithRuntimeStateDir(cfg.Mail.FlowStateDirFor(route.Name, source.Name, source.Driver, source.Folder))
+}
+
+func compileRuntimeTargets(targets []appconfig.RouteTarget) []appconfig.RouteTarget {
+	return append([]appconfig.RouteTarget(nil), targets...)
 }
 
 func normalizeDriver(value, fallback string) string {

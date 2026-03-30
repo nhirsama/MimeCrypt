@@ -62,9 +62,7 @@ func TestRunnerRunOnceRunsCoordinator(t *testing.T) {
 							Required: true,
 						}},
 					},
-					Artifacts: map[string]MailArtifact{
-						"primary": {Name: "primary", MIME: bytesOpener("encrypted")},
-					},
+					Mail: MailObject{Name: "primary", MIME: bytesOpener("encrypted")},
 				},
 			},
 			Store:     store,

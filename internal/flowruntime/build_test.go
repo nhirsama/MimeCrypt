@@ -3,6 +3,7 @@ package flowruntime
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"mimecrypt/internal/appconfig"
@@ -192,5 +193,20 @@ func TestBuildHealthServiceAllowsWebhookSourceWithoutProviderClients(t *testing.
 	}
 	if service.Session != nil || service.Reader != nil {
 		t.Fatalf("webhook health should not require session/reader: %+v", service)
+	}
+}
+
+func TestBuildRunnerRejectsPushModeSource(t *testing.T) {
+	t.Parallel()
+
+	_, err := BuildRunner(context.Background(), SourceRun{
+		Source: appconfig.Source{
+			Name:   "incoming",
+			Driver: "webhook",
+			Mode:   "push",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "mode=push") {
+		t.Fatalf("BuildRunner() error = %v, want push mode rejection", err)
 	}
 }

@@ -2,7 +2,6 @@ package adapters
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -23,17 +22,14 @@ type Auditor interface {
 
 type PlanResolver func(trace mailflow.MailTrace) (mailflow.ExecutionPlan, error)
 
-// EncryptingProcessor 复用现有加密、备份与审计模块，将原始邮件转换为 mailflow.ProcessedMail。
+// EncryptingProcessor 在统一邮件对象上执行 MIME 加密。
 type EncryptingProcessor struct {
-	Encryptor       MIMEEncryptor
-	BackupEncryptor MIMEEncryptor
-	Auditor         Auditor
-	WorkDir         string
-	StaticPlan      mailflow.ExecutionPlan
-	PlanResolve     PlanResolver
+	Encryptor   MIMEEncryptor
+	Auditor     Auditor
+	WorkDir     string
+	StaticPlan  mailflow.ExecutionPlan
+	PlanResolve PlanResolver
 }
-
-const backupArtifactName = "backup"
 
 func (p *EncryptingProcessor) Process(ctx context.Context, mail mailflow.MailEnvelope) (mailflow.ProcessedMail, error) {
 	if err := mail.Validate(); err != nil {
@@ -49,6 +45,11 @@ func (p *EncryptingProcessor) Process(ctx context.Context, mail mailflow.MailEnv
 	}
 
 	trace := cloneTrace(mail.Trace)
+	if err := ensureAttributes(&trace); err != nil {
+		return mailflow.ProcessedMail{}, err
+	}
+	trace.Attributes["processor"] = "mime-encrypt"
+
 	if err := p.record(trace, "mailflow_process_started", "", "", false, false); err != nil {
 		return mailflow.ProcessedMail{}, err
 	}
@@ -64,55 +65,35 @@ func (p *EncryptingProcessor) Process(ctx context.Context, mail mailflow.MailEnv
 		}
 	}()
 
-	armoredFile, err := createTempFile(dir, "armored-*.asc")
-	if err != nil {
-		return mailflow.ProcessedMail{}, err
-	}
-	defer armoredFile.Close()
-
 	encryptedFile, err := createTempFile(dir, "encrypted-*.eml")
 	if err != nil {
 		return mailflow.ProcessedMail{}, err
 	}
 	defer encryptedFile.Close()
 
-	result, err := p.Encryptor.RunFromOpenerContext(ctx, encrypt.MIMEOpenFunc(mail.MIME), armoredFile, encryptedFile)
+	result, err := p.Encryptor.RunFromOpenerContext(ctx, encrypt.MIMEOpenFunc(mail.MIME), io.Discard, encryptedFile)
 	if err != nil {
-		if errors.Is(err, encrypt.ErrAlreadyEncrypted) {
-			if ensureErr := ensureAttributes(&trace); ensureErr != nil {
-				return mailflow.ProcessedMail{}, ensureErr
-			}
-			trace.Attributes["already_encrypted"] = "true"
-			var alreadyEncrypted encrypt.AlreadyEncryptedError
-			if errors.As(err, &alreadyEncrypted) && strings.TrimSpace(alreadyEncrypted.Format) != "" {
-				trace.Attributes["format"] = alreadyEncrypted.Format
-			}
-			_ = p.record(trace, "mailflow_already_encrypted", "", err.Error(), false, true)
-			return mailflow.ProcessedMail{}, mailflow.NewSkipError(trace, err)
-		}
 		_ = p.record(trace, "mailflow_process_failed", "", err.Error(), false, false)
 		return mailflow.ProcessedMail{}, err
-	}
-
-	if err := armoredFile.Close(); err != nil {
-		return mailflow.ProcessedMail{}, fmt.Errorf("关闭 armored 文件失败: %w", err)
 	}
 	if err := encryptedFile.Close(); err != nil {
 		return mailflow.ProcessedMail{}, fmt.Errorf("关闭 encrypted 文件失败: %w", err)
 	}
 
-	if err := ensureAttributes(&trace); err != nil {
-		return mailflow.ProcessedMail{}, err
-	}
 	trace.Attributes["format"] = result.Format
+	trace.Attributes["encrypted"] = "true"
+	delete(trace.Attributes, "already_encrypted")
 
 	if err := p.record(trace, "mailflow_process_completed", result.Format, "", result.Encrypted, result.AlreadyEncrypted); err != nil {
 		return mailflow.ProcessedMail{}, err
 	}
 
-	artifacts := map[string]mailflow.MailArtifact{
-		"primary": {
-			Name: "primary",
+	cleanupNow = false
+	return mailflow.ProcessedMail{
+		Trace: trace,
+		Plan:  plan,
+		Mail: mailflow.MailObject{
+			Name: "mail",
 			MIME: func() (io.ReadCloser, error) {
 				return os.Open(encryptedFile.Name())
 			},
@@ -120,42 +101,6 @@ func (p *EncryptingProcessor) Process(ctx context.Context, mail mailflow.MailEnv
 				"format": result.Format,
 			},
 		},
-	}
-	if needsBackupArtifact(plan) {
-		backupPath := armoredFile.Name()
-		if p.BackupEncryptor != nil {
-			backupFile, err := createTempFile(dir, "backup-*.pgp")
-			if err != nil {
-				_ = p.record(trace, "mailflow_process_failed", result.Format, err.Error(), result.Encrypted, result.AlreadyEncrypted)
-				return mailflow.ProcessedMail{}, err
-			}
-			if _, err := p.BackupEncryptor.RunFromOpenerContext(ctx, encrypt.MIMEOpenFunc(mail.MIME), backupFile, nil); err != nil {
-				_ = backupFile.Close()
-				_ = p.record(trace, "mailflow_process_failed", result.Format, err.Error(), result.Encrypted, result.AlreadyEncrypted)
-				return mailflow.ProcessedMail{}, err
-			}
-			if err := backupFile.Close(); err != nil {
-				_ = p.record(trace, "mailflow_process_failed", result.Format, err.Error(), result.Encrypted, result.AlreadyEncrypted)
-				return mailflow.ProcessedMail{}, fmt.Errorf("关闭 backup 文件失败: %w", err)
-			}
-			backupPath = backupFile.Name()
-		}
-		artifacts[backupArtifactName] = mailflow.MailArtifact{
-			Name: backupArtifactName,
-			MIME: func() (io.ReadCloser, error) {
-				return os.Open(backupPath)
-			},
-			Attributes: map[string]string{
-				"format": "pgp",
-			},
-		}
-	}
-
-	cleanupNow = false
-	return mailflow.ProcessedMail{
-		Trace:     trace,
-		Plan:      plan,
-		Artifacts: artifacts,
 		Cleanup: func() error {
 			return os.RemoveAll(dir)
 		},
@@ -221,13 +166,4 @@ func ensureAttributes(trace *mailflow.MailTrace) error {
 		trace.Attributes = make(map[string]string)
 	}
 	return nil
-}
-
-func needsBackupArtifact(plan mailflow.ExecutionPlan) bool {
-	for _, target := range plan.Targets {
-		if strings.EqualFold(strings.TrimSpace(target.Artifact), backupArtifactName) {
-			return true
-		}
-	}
-	return false
 }

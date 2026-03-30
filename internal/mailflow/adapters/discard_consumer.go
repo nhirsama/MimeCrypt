@@ -12,14 +12,14 @@ import (
 type DiscardConsumer struct{}
 
 func (c *DiscardConsumer) Consume(_ context.Context, req mailflow.ConsumeRequest) (mailflow.DeliveryReceipt, error) {
-	reader, err := req.Artifact.MIME()
+	reader, err := req.Mail.MIME()
 	if err != nil {
-		return mailflow.DeliveryReceipt{}, fmt.Errorf("打开产物 MIME 失败: %w", err)
+		return mailflow.DeliveryReceipt{}, fmt.Errorf("打开邮件对象 MIME 失败: %w", err)
 	}
 	defer reader.Close()
 
 	if _, err := io.Copy(io.Discard, reader); err != nil {
-		return mailflow.DeliveryReceipt{}, fmt.Errorf("读取产物 MIME 失败: %w", err)
+		return mailflow.DeliveryReceipt{}, fmt.Errorf("读取邮件对象 MIME 失败: %w", err)
 	}
 
 	return mailflow.DeliveryReceipt{

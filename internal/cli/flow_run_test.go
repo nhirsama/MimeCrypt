@@ -256,7 +256,7 @@ func TestSummarizeMailflowResultUsesBackupReceiptPath(t *testing.T) {
 		},
 		Deliveries: map[string]mailflow.DeliveryReceipt{
 			"backup": {
-				Consumer: "__default_backup__",
+				Consumer: "archive-backup",
 				ID:       backupPath,
 				Store: mailflow.StoreRef{
 					Driver:  "backup",

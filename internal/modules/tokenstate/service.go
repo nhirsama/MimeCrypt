@@ -18,6 +18,10 @@ type Session interface {
 }
 
 type Service struct {
+	Credential     string
+	CredentialKind string
+	Runtime        string
+	Drivers        []string
 	Session        Session
 	StateDir       string
 	TokenStore     string
@@ -25,6 +29,10 @@ type Service struct {
 }
 
 type StatusResult struct {
+	Credential     string
+	CredentialKind string
+	Runtime        string
+	Drivers        []string
 	Present        bool
 	StateDir       string
 	TokenStore     string
@@ -33,6 +41,10 @@ type StatusResult struct {
 }
 
 type ImportResult struct {
+	Credential     string
+	CredentialKind string
+	Runtime        string
+	Drivers        []string
 	StateDir       string
 	TokenStore     string
 	KeyringService string
@@ -48,6 +60,10 @@ func (s *Service) Status() (StatusResult, error) {
 	if err != nil {
 		if errors.Is(err, auth.ErrLoginRequired) {
 			return StatusResult{
+				Credential:     s.Credential,
+				CredentialKind: s.CredentialKind,
+				Runtime:        s.Runtime,
+				Drivers:        append([]string(nil), s.Drivers...),
 				Present:        false,
 				StateDir:       s.StateDir,
 				TokenStore:     s.TokenStore,
@@ -58,6 +74,10 @@ func (s *Service) Status() (StatusResult, error) {
 	}
 
 	return StatusResult{
+		Credential:     s.Credential,
+		CredentialKind: s.CredentialKind,
+		Runtime:        s.Runtime,
+		Drivers:        append([]string(nil), s.Drivers...),
 		Present:        true,
 		StateDir:       s.StateDir,
 		TokenStore:     s.TokenStore,
@@ -95,6 +115,10 @@ func (s *Service) Import(src io.Reader) (ImportResult, error) {
 	}
 
 	return ImportResult{
+		Credential:     s.Credential,
+		CredentialKind: s.CredentialKind,
+		Runtime:        s.Runtime,
+		Drivers:        append([]string(nil), s.Drivers...),
 		StateDir:       s.StateDir,
 		TokenStore:     s.TokenStore,
 		KeyringService: s.KeyringService,

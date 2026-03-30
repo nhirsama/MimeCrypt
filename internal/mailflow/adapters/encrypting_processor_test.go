@@ -72,20 +72,12 @@ func TestEncryptingProcessorBuildsProcessedMail(t *testing.T) {
 		},
 		Auditor: auditor,
 		StaticPlan: mailflow.ExecutionPlan{
-			Targets: []mailflow.DeliveryTarget{
-				{
-					Name:     "archive-main",
-					Consumer: "archive",
-					Artifact: "primary",
-					Required: true,
-				},
-				{
-					Name:     "backup",
-					Consumer: "backup",
-					Artifact: "backup",
-					Required: true,
-				},
-			},
+			Targets: []mailflow.DeliveryTarget{{
+				Name:     "archive-main",
+				Consumer: "archive",
+				Artifact: "primary",
+				Required: true,
+			}},
 		},
 	}
 
@@ -106,9 +98,9 @@ func TestEncryptingProcessorBuildsProcessedMail(t *testing.T) {
 	if result.Trace.Attributes["format"] != "pgp-mime" {
 		t.Fatalf("format attr = %q, want pgp-mime", result.Trace.Attributes["format"])
 	}
-	reader, err := result.Artifacts["primary"].MIME()
+	reader, err := result.Mail.MIME()
 	if err != nil {
-		t.Fatalf("artifact MIME() error = %v", err)
+		t.Fatalf("mail MIME() error = %v", err)
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -116,19 +108,7 @@ func TestEncryptingProcessorBuildsProcessedMail(t *testing.T) {
 	}
 	_ = reader.Close()
 	if string(data) != "encrypted-mime" {
-		t.Fatalf("artifact data = %q, want encrypted-mime", string(data))
-	}
-	backupReader, err := result.Artifacts["backup"].MIME()
-	if err != nil {
-		t.Fatalf("backup artifact MIME() error = %v", err)
-	}
-	backupData, err := io.ReadAll(backupReader)
-	if err != nil {
-		t.Fatalf("ReadAll(backup) error = %v", err)
-	}
-	_ = backupReader.Close()
-	if string(backupData) != "armored" {
-		t.Fatalf("backup artifact data = %q, want armored", string(backupData))
+		t.Fatalf("mail data = %q, want encrypted-mime", string(data))
 	}
 	if len(auditor.events) == 0 {
 		t.Fatalf("expected audit events")
@@ -136,9 +116,8 @@ func TestEncryptingProcessorBuildsProcessedMail(t *testing.T) {
 	if err := result.Release(); err != nil {
 		t.Fatalf("Release() error = %v", err)
 	}
-	// Release 应删除临时文件，因此再次打开应该失败。
-	if _, err := result.Artifacts["primary"].MIME(); err == nil {
-		t.Fatalf("expected artifact open to fail after release")
+	if _, err := result.Mail.MIME(); err == nil {
+		t.Fatalf("expected mail open to fail after release")
 	}
 }
 
@@ -168,7 +147,7 @@ func TestEncryptingProcessorReturnsEncryptError(t *testing.T) {
 	}
 }
 
-func TestEncryptingProcessorSkipsAlreadyEncryptedMessage(t *testing.T) {
+func TestEncryptingProcessorReturnsAlreadyEncryptedError(t *testing.T) {
 	t.Parallel()
 
 	processor := &EncryptingProcessor{
@@ -189,18 +168,8 @@ func TestEncryptingProcessorSkipsAlreadyEncryptedMessage(t *testing.T) {
 		},
 		Trace: mailflow.MailTrace{TransactionKey: "tx-processor-skip"},
 	})
-	if !errors.Is(err, mailflow.ErrSkipMessage) {
-		t.Fatalf("Process() error = %v, want ErrSkipMessage", err)
-	}
-	var skipErr *mailflow.SkipError
-	if !errors.As(err, &skipErr) {
-		t.Fatalf("Process() error type = %T, want *mailflow.SkipError", err)
-	}
-	if skipErr.Trace.Attributes["already_encrypted"] != "true" {
-		t.Fatalf("already_encrypted attr = %q, want true", skipErr.Trace.Attributes["already_encrypted"])
-	}
-	if skipErr.Trace.Attributes["format"] != "pgp-mime" {
-		t.Fatalf("format attr = %q, want pgp-mime", skipErr.Trace.Attributes["format"])
+	if !errors.Is(err, encrypt.ErrAlreadyEncrypted) {
+		t.Fatalf("Process() error = %v, want ErrAlreadyEncrypted", err)
 	}
 }
 
@@ -233,13 +202,13 @@ func TestEncryptingProcessorCleanupRemovesWorkDir(t *testing.T) {
 		t.Fatalf("Process() error = %v", err)
 	}
 
-	reader, err := result.Artifacts["primary"].MIME()
+	reader, err := result.Mail.MIME()
 	if err != nil {
-		t.Fatalf("artifact MIME() error = %v", err)
+		t.Fatalf("mail MIME() error = %v", err)
 	}
 	file, ok := reader.(*os.File)
 	if !ok {
-		t.Fatalf("artifact reader type = %T, want *os.File", reader)
+		t.Fatalf("mail reader type = %T, want *os.File", reader)
 	}
 	path := file.Name()
 	_ = reader.Close()
@@ -252,54 +221,64 @@ func TestEncryptingProcessorCleanupRemovesWorkDir(t *testing.T) {
 	}
 }
 
-func TestEncryptingProcessorUsesDedicatedBackupEncryptorWhenConfigured(t *testing.T) {
+func TestContextualProcessorRoutesAlreadyEncryptedMailToNoOp(t *testing.T) {
 	t.Parallel()
 
-	processor := &EncryptingProcessor{
-		Encryptor: &fakeMailEncryptor{
-			result: encrypt.Result{Encrypted: true, Format: "pgp-mime"},
-		},
-		BackupEncryptor: &fakeMailEncryptor{
-			result:        encrypt.Result{Encrypted: true, Format: "pgp-mime"},
-			armoredOutput: "backup-armored",
-		},
-		StaticPlan: mailflow.ExecutionPlan{
-			Targets: []mailflow.DeliveryTarget{
-				{
+	processor := &ContextualProcessor{
+		Encrypting: &EncryptingProcessor{
+			Encryptor: &fakeMailEncryptor{
+				result: encrypt.Result{Encrypted: true, Format: "pgp-mime"},
+			},
+			StaticPlan: mailflow.ExecutionPlan{
+				Targets: []mailflow.DeliveryTarget{{
 					Name:     "archive-main",
 					Consumer: "archive",
 					Artifact: "primary",
 					Required: true,
-				},
-				{
-					Name:     "backup",
-					Consumer: "backup",
-					Artifact: "backup",
+				}},
+			},
+		},
+		NoOp: &NoOpProcessor{
+			StaticPlan: mailflow.ExecutionPlan{
+				Targets: []mailflow.DeliveryTarget{{
+					Name:     "archive-main",
+					Consumer: "archive",
+					Artifact: "primary",
 					Required: true,
-				},
+				}},
 			},
 		},
 	}
 
 	result, err := processor.Process(context.Background(), mailflow.MailEnvelope{
 		MIME: func() (io.ReadCloser, error) {
-			return io.NopCloser(strings.NewReader("source-mime")), nil
+			return io.NopCloser(strings.NewReader(strings.Join([]string{
+				"Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"",
+				"",
+				"body",
+			}, "\r\n"))), nil
 		},
-		Trace: mailflow.MailTrace{TransactionKey: "tx-processor-backup-key"},
+		Trace: mailflow.MailTrace{TransactionKey: "tx-processor-noop"},
 	})
 	if err != nil {
 		t.Fatalf("Process() error = %v", err)
 	}
-	reader, err := result.Artifacts["backup"].MIME()
+	if result.Trace.Attributes["already_encrypted"] != "true" {
+		t.Fatalf("already_encrypted = %q, want true", result.Trace.Attributes["already_encrypted"])
+	}
+	if result.Trace.Attributes["format"] != "pgp-mime" {
+		t.Fatalf("format = %q, want pgp-mime", result.Trace.Attributes["format"])
+	}
+	reader, err := result.Mail.MIME()
 	if err != nil {
-		t.Fatalf("backup artifact MIME() error = %v", err)
+		t.Fatalf("mail MIME() error = %v", err)
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
-		t.Fatalf("ReadAll(backup) error = %v", err)
+		t.Fatalf("ReadAll() error = %v", err)
 	}
 	_ = reader.Close()
-	if string(data) != "backup-armored" {
-		t.Fatalf("backup artifact data = %q, want backup-armored", string(data))
+	if !strings.Contains(string(data), "multipart/encrypted") {
+		t.Fatalf("mail data = %q, want passthrough encrypted MIME", string(data))
 	}
 }

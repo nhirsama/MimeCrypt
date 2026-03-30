@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"sort"
@@ -17,254 +16,351 @@ import (
 	webhookdevice "mimecrypt/internal/providers/webhook"
 )
 
-type PushIngress interface {
-	Run(ctx context.Context) error
-}
-
-type sourceClientsFactory func(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SourceClients, error)
-type sinkClientsFactory func(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SinkClients, error)
-type pushIngressFactory func(cfg appconfig.Config, route appconfig.Route, source appconfig.Source, spool *adapters.PushSpool) (PushIngress, error)
-type localConsumerFactory func(sink appconfig.Sink, cfg appconfig.Config, auditor auditRecorder) (mailflow.Consumer, error)
-
 type auditRecorder interface {
 	Record(event audit.Event) error
 }
 
-type driverRegistration struct {
-	Spec             provider.DriverSpec
-	LoginConfig      *driverLoginConfig
-	RevokeConfig     *driverRevokeConfig
-	BuildSource      sourceClientsFactory
-	BuildSink        sinkClientsFactory
-	BuildPushIngress pushIngressFactory
-	BuildLocalSink   localConsumerFactory
-	ConfigureSource  func(appconfig.Source, io.Reader, io.Writer) (appconfig.Source, error)
-	DescribeSource   func(appconfig.Source) []string
-	ValidateSource   func(source appconfig.Source) error
-	ValidateSink     func(sink appconfig.Sink) error
+type localSinkDriver interface {
+	provider.Driver
+	BuildLocalSink(sink appconfig.Sink, cfg appconfig.Config, auditor auditRecorder) (mailflow.Consumer, error)
 }
 
-var driverRegistrations = map[string]driverRegistration{
-	"backup": {
-		Spec: provider.DriverSpec{
-			Name: "backup",
-			Sink: &provider.SinkSpec{
-				RequiresOutputDir: true,
-				LocalConsumer:     true,
-				LocalConsumerKind: provider.LocalConsumerBackup,
-			},
+type loginConfigDriver interface {
+	provider.Driver
+	LoginConfig() *credentialRuntimeConfig
+}
+
+type revokeConfigDriver interface {
+	provider.Driver
+	RevokeConfig() *driverRevokeConfig
+}
+
+type backupDriver struct{}
+
+func (backupDriver) Info() provider.DriverInfo {
+	return provider.DriverInfo{
+		Name: "backup",
+		Sink: &provider.SinkCapabilities{
+			RequiresOutputDir: true,
+			LocalConsumer:     true,
+			LocalConsumerKind: provider.LocalConsumerBackup,
 		},
-		BuildLocalSink: func(sink appconfig.Sink, _ appconfig.Config, auditor auditRecorder) (mailflow.Consumer, error) {
-			return &adapters.BackupConsumer{
-				OutputDir: sink.OutputDir,
-				Auditor:   auditor,
-			}, nil
+	}
+}
+
+func (backupDriver) BuildLocalSink(sink appconfig.Sink, _ appconfig.Config, auditor auditRecorder) (mailflow.Consumer, error) {
+	return &adapters.BackupConsumer{
+		OutputDir: sink.OutputDir,
+		Auditor:   auditor,
+	}, nil
+}
+
+type discardDriver struct{}
+
+func (discardDriver) Info() provider.DriverInfo {
+	return provider.DriverInfo{
+		Name: "discard",
+		Sink: &provider.SinkCapabilities{
+			LocalConsumer:     true,
+			LocalConsumerKind: provider.LocalConsumerDiscard,
 		},
-	},
-	"discard": {
-		Spec: provider.DriverSpec{
-			Name: "discard",
-			Sink: &provider.SinkSpec{
-				LocalConsumer:     true,
-				LocalConsumerKind: provider.LocalConsumerDiscard,
-			},
+	}
+}
+
+func (discardDriver) BuildLocalSink(appconfig.Sink, appconfig.Config, auditRecorder) (mailflow.Consumer, error) {
+	return &adapters.DiscardConsumer{}, nil
+}
+
+type fileDriver struct{}
+
+func (fileDriver) Info() provider.DriverInfo {
+	return provider.DriverInfo{
+		Name: "file",
+		Sink: &provider.SinkCapabilities{
+			RequiresOutputDir: true,
+			LocalConsumer:     true,
+			LocalConsumerKind: provider.LocalConsumerFile,
 		},
-		BuildLocalSink: func(appconfig.Sink, appconfig.Config, auditRecorder) (mailflow.Consumer, error) {
-			return &adapters.DiscardConsumer{}, nil
+	}
+}
+
+func (fileDriver) BuildLocalSink(sink appconfig.Sink, _ appconfig.Config, _ auditRecorder) (mailflow.Consumer, error) {
+	return &adapters.FileConsumer{OutputDir: sink.OutputDir}, nil
+}
+
+type ewsDriver struct{}
+
+func (ewsDriver) Info() provider.DriverInfo {
+	return provider.DriverInfo{
+		Name: "ews",
+		Auth: provider.AuthRequirement{
+			Graph: true,
+			EWS:   true,
 		},
-	},
-	"ews": {
-		Spec: provider.DriverSpec{
-			Name: "ews",
-			Auth: provider.AuthRequirement{
-				Graph: true,
-				EWS:   true,
-			},
-			Sink: &provider.SinkSpec{
-				RequiresCredential: true,
-				SupportsVerify:     true,
-				SupportsReconcile:  true,
-				SupportsHealth:     true,
-			},
+		Sink: &provider.SinkCapabilities{
+			RequiresCredential: true,
+			SupportsVerify:     true,
+			SupportsReconcile:  true,
+			SupportsHealth:     true,
 		},
-		LoginConfig:  microsoftDriverLoginConfig,
-		RevokeConfig: microsoftDriverRevokeConfig,
-		BuildSink:    graph.NewEWSWriterClients,
-	},
-	"file": {
-		Spec: provider.DriverSpec{
-			Name: "file",
-			Sink: &provider.SinkSpec{
-				RequiresOutputDir: true,
-				LocalConsumer:     true,
-				LocalConsumerKind: provider.LocalConsumerFile,
-			},
+	}
+}
+
+func (ewsDriver) BuildSink(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SinkClients, error) {
+	return graph.NewEWSWriterClients(cfg, folder, tokenSource)
+}
+
+func (ewsDriver) LoginConfig() *credentialRuntimeConfig { return microsoftDriverLoginConfig }
+func (ewsDriver) RevokeConfig() *driverRevokeConfig     { return microsoftDriverRevokeConfig }
+
+type graphDriver struct{}
+
+func (graphDriver) Info() provider.DriverInfo {
+	return provider.DriverInfo{
+		Name: "graph",
+		Auth: provider.AuthRequirement{
+			Graph: true,
 		},
-		BuildLocalSink: func(sink appconfig.Sink, _ appconfig.Config, _ auditRecorder) (mailflow.Consumer, error) {
-			return &adapters.FileConsumer{OutputDir: sink.OutputDir}, nil
-		},
-	},
-	"graph": {
-		Spec: provider.DriverSpec{
-			Name: "graph",
-			Auth: provider.AuthRequirement{
-				Graph: true,
-			},
-			Source: &provider.SourceSpec{
-				RequiresCredential: true,
-				SupportsDelete:     true,
-				DeleteSemantics:    provider.DeleteSemanticsSoft,
-				ProbeKind:          provider.ProviderProbeIdentity,
-				Modes: map[string]provider.SourceModeSpec{
-					"poll": {
-						RequiresStatePath:    true,
-						RequiresPollInterval: true,
-						RequiresCycleTimeout: true,
-					},
-				},
-			},
-			Sink: &provider.SinkSpec{
-				RequiresCredential: true,
-				SupportsVerify:     true,
-				SupportsReconcile:  true,
-				SupportsHealth:     true,
-			},
-		},
-		LoginConfig:  microsoftDriverLoginConfig,
-		RevokeConfig: microsoftDriverRevokeConfig,
-		BuildSource:  graph.BuildSourceClientsWithTokenSource,
-		BuildSink:    graph.NewWriterClients,
-	},
-	"imap": {
-		Spec: provider.DriverSpec{
-			Name: "imap",
-			Auth: provider.AuthRequirement{
-				IMAP: true,
-			},
-			Source: &provider.SourceSpec{
-				RequiresCredential: true,
-				SupportsDelete:     true,
-				DeleteSemantics:    provider.DeleteSemanticsHard,
-				ProbeKind:          provider.ProviderProbeFolderList,
-				Modes: map[string]provider.SourceModeSpec{
-					"poll": {
-						RequiresStatePath:    true,
-						RequiresPollInterval: true,
-						RequiresCycleTimeout: true,
-					},
-				},
-			},
-			Sink: &provider.SinkSpec{
-				RequiresCredential: true,
-				SupportsVerify:     true,
-				SupportsReconcile:  true,
-				SupportsHealth:     true,
-			},
-		},
-		LoginConfig:  microsoftDriverLoginConfig,
-		RevokeConfig: microsoftDriverRevokeConfig,
-		BuildSource:  imap.BuildSourceClientsWithTokenSource,
-		BuildSink:    imap.NewWriterClients,
-	},
-	"webhook": {
-		Spec: provider.DriverSpec{
-			Name: "webhook",
-			Source: &provider.SourceSpec{
-				SupportsDelete:  false,
-				DeleteSemantics: provider.DeleteSemanticsUnknown,
-				Modes: map[string]provider.SourceModeSpec{
-					"push": {},
+		Source: &provider.SourceCapabilities{
+			RequiresCredential: true,
+			SupportsDelete:     true,
+			DeleteSemantics:    provider.DeleteSemanticsSoft,
+			ProbeKind:          provider.ProviderProbeIdentity,
+			Modes: map[string]provider.SourceModeSpec{
+				"poll": {
+					RequiresStatePath:    true,
+					RequiresPollInterval: true,
+					RequiresCycleTimeout: true,
 				},
 			},
 		},
-		BuildPushIngress: func(cfg appconfig.Config, route appconfig.Route, source appconfig.Source, spool *adapters.PushSpool) (PushIngress, error) {
-			return webhookdevice.BuildIngress(cfg, route, source, spool)
+		Sink: &provider.SinkCapabilities{
+			RequiresCredential: true,
+			SupportsVerify:     true,
+			SupportsReconcile:  true,
+			SupportsHealth:     true,
 		},
-		ConfigureSource: webhookdevice.ConfigureSource,
-		DescribeSource:  webhookdevice.DescribeSource,
-		ValidateSource:  webhookdevice.ValidateSourceConfig,
-	},
+	}
+}
+
+func (graphDriver) BuildSource(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SourceClients, error) {
+	return graph.BuildSourceClientsWithTokenSource(cfg, folder, tokenSource)
+}
+
+func (graphDriver) BuildSourceRuntime(cfg appconfig.Config, source appconfig.Source, tokenSource provider.TokenSource, _ provider.SourceRuntimeOptions) (provider.SourceRuntime, error) {
+	clients, err := graph.BuildSourceClientsWithTokenSource(cfg, source.Folder, tokenSource)
+	if err != nil {
+		return provider.SourceRuntime{}, err
+	}
+	return provider.SourceRuntime{Clients: clients}, nil
+}
+
+func (graphDriver) BuildSink(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SinkClients, error) {
+	return graph.NewWriterClients(cfg, folder, tokenSource)
+}
+
+func (graphDriver) LoginConfig() *credentialRuntimeConfig { return microsoftDriverLoginConfig }
+func (graphDriver) RevokeConfig() *driverRevokeConfig     { return microsoftDriverRevokeConfig }
+
+type imapDriver struct{}
+
+func (imapDriver) Info() provider.DriverInfo {
+	return provider.DriverInfo{
+		Name: "imap",
+		Auth: provider.AuthRequirement{
+			IMAP: true,
+		},
+		Source: &provider.SourceCapabilities{
+			RequiresCredential: true,
+			SupportsDelete:     true,
+			DeleteSemantics:    provider.DeleteSemanticsHard,
+			ProbeKind:          provider.ProviderProbeFolderList,
+			Modes: map[string]provider.SourceModeSpec{
+				"poll": {
+					RequiresStatePath:    true,
+					RequiresPollInterval: true,
+					RequiresCycleTimeout: true,
+				},
+			},
+		},
+		Sink: &provider.SinkCapabilities{
+			RequiresCredential: true,
+			SupportsVerify:     true,
+			SupportsReconcile:  true,
+			SupportsHealth:     true,
+		},
+	}
+}
+
+func (imapDriver) BuildSource(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SourceClients, error) {
+	return imap.BuildSourceClientsWithTokenSource(cfg, folder, tokenSource)
+}
+
+func (imapDriver) BuildSourceRuntime(cfg appconfig.Config, source appconfig.Source, tokenSource provider.TokenSource, _ provider.SourceRuntimeOptions) (provider.SourceRuntime, error) {
+	clients, err := imap.BuildSourceClientsWithTokenSource(cfg, source.Folder, tokenSource)
+	if err != nil {
+		return provider.SourceRuntime{}, err
+	}
+	return provider.SourceRuntime{Clients: clients}, nil
+}
+
+func (imapDriver) BuildSink(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SinkClients, error) {
+	return imap.NewWriterClients(cfg, folder, tokenSource)
+}
+
+func (imapDriver) LoginConfig() *credentialRuntimeConfig { return microsoftDriverLoginConfig }
+func (imapDriver) RevokeConfig() *driverRevokeConfig     { return microsoftDriverRevokeConfig }
+
+type webhookDriver struct{}
+
+func (webhookDriver) Info() provider.DriverInfo {
+	return provider.DriverInfo{
+		Name: "webhook",
+		Source: &provider.SourceCapabilities{
+			SupportsDelete:  false,
+			DeleteSemantics: provider.DeleteSemanticsUnknown,
+			Modes: map[string]provider.SourceModeSpec{
+				"push": {},
+			},
+		},
+	}
+}
+
+func (webhookDriver) BuildSourceRuntime(cfg appconfig.Config, source appconfig.Source, _ provider.TokenSource, options provider.SourceRuntimeOptions) (provider.SourceRuntime, error) {
+	if options.EnqueuePushMessage == nil {
+		return provider.SourceRuntime{}, nil
+	}
+	ingress, err := webhookdevice.BuildIngress(cfg, options.Route, source, options.EnqueuePushMessage)
+	if err != nil {
+		return provider.SourceRuntime{}, err
+	}
+	return provider.SourceRuntime{Ingress: ingress}, nil
+}
+
+func (webhookDriver) ConfigureSource(source appconfig.Source, in io.Reader, out io.Writer) (appconfig.Source, error) {
+	return webhookdevice.ConfigureSource(source, in, out)
+}
+
+func (webhookDriver) DescribeSource(source appconfig.Source) []string {
+	return webhookdevice.DescribeSource(source)
+}
+
+func (webhookDriver) ValidateSource(source appconfig.Source) error {
+	return webhookdevice.ValidateSourceConfig(source)
+}
+
+var registeredDrivers = map[string]provider.Driver{
+	"backup":  backupDriver{},
+	"discard": discardDriver{},
+	"ews":     ewsDriver{},
+	"file":    fileDriver{},
+	"graph":   graphDriver{},
+	"imap":    imapDriver{},
+	"webhook": webhookDriver{},
+}
+
+func LookupDriver(driver string) (provider.Driver, bool) {
+	driverImpl, ok := registeredDrivers[normalizeDriver(driver)]
+	return driverImpl, ok
+}
+
+func LookupDriverInfo(driver string) (provider.DriverInfo, bool) {
+	driverImpl, ok := LookupDriver(driver)
+	if !ok {
+		return provider.DriverInfo{}, false
+	}
+	return driverImpl.Info(), true
 }
 
 func LookupDriverSpec(driver string) (provider.DriverSpec, bool) {
-	registration, ok := lookupDriverRegistration(driver)
-	if !ok {
-		return provider.DriverSpec{}, false
+	return LookupDriverInfo(driver)
+}
+
+func LookupSourceInfo(driver string) (*provider.SourceCapabilities, bool) {
+	info, ok := LookupDriverInfo(driver)
+	if !ok || info.Source == nil {
+		return nil, false
 	}
-	return registration.Spec, true
+	return info.Source, true
 }
 
 func LookupSourceSpec(driver string) (*provider.SourceSpec, bool) {
-	spec, ok := LookupDriverSpec(driver)
-	if !ok || spec.Source == nil {
+	return LookupSourceInfo(driver)
+}
+
+func LookupSinkInfo(driver string) (*provider.SinkCapabilities, bool) {
+	info, ok := LookupDriverInfo(driver)
+	if !ok || info.Sink == nil {
 		return nil, false
 	}
-	return spec.Source, true
+	return info.Sink, true
 }
 
 func LookupSinkSpec(driver string) (*provider.SinkSpec, bool) {
-	spec, ok := LookupDriverSpec(driver)
-	if !ok || spec.Sink == nil {
-		return nil, false
-	}
-	return spec.Sink, true
+	return LookupSinkInfo(driver)
 }
 
-func AllDriverSpecs() []provider.DriverSpec {
-	names := make([]string, 0, len(driverRegistrations))
-	for name := range driverRegistrations {
+func AllDrivers() []provider.Driver {
+	names := make([]string, 0, len(registeredDrivers))
+	for name := range registeredDrivers {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
-	specs := make([]provider.DriverSpec, 0, len(names))
+	drivers := make([]provider.Driver, 0, len(names))
 	for _, name := range names {
-		specs = append(specs, driverRegistrations[name].Spec)
+		drivers = append(drivers, registeredDrivers[name])
 	}
-	return specs
+	return drivers
 }
 
-func BuildPushIngress(cfg appconfig.Config, route appconfig.Route, source appconfig.Source, spool *adapters.PushSpool) (PushIngress, error) {
-	registration, ok := lookupDriverRegistration(source.Driver)
-	if !ok || registration.BuildPushIngress == nil {
-		return nil, fmt.Errorf("push source driver 未提供 ingress 实现: %s", source.Driver)
+func AllDriverInfos() []provider.DriverInfo {
+	drivers := AllDrivers()
+	infos := make([]provider.DriverInfo, 0, len(drivers))
+	for _, driverImpl := range drivers {
+		infos = append(infos, driverImpl.Info())
 	}
-	return registration.BuildPushIngress(cfg, route, source, spool)
+	return infos
+}
+
+func AllDriverSpecs() []provider.DriverSpec {
+	return AllDriverInfos()
 }
 
 func BuildLocalConsumer(cfg appconfig.Config, sink appconfig.Sink, auditor auditRecorder) (mailflow.Consumer, error) {
-	registration, ok := lookupDriverRegistration(sink.Driver)
-	if !ok || registration.BuildLocalSink == nil {
+	driverImpl, ok := LookupDriver(sink.Driver)
+	if !ok {
+		return nil, fmt.Errorf("sink driver 未注册: %s", sink.Driver)
+	}
+	localDriver, ok := driverImpl.(localSinkDriver)
+	if !ok {
 		return nil, fmt.Errorf("sink driver %s 未提供本地 consumer 实现", sink.Driver)
 	}
-	return registration.BuildLocalSink(sink, cfg, auditor)
+	return localDriver.BuildLocalSink(sink, cfg, auditor)
 }
 
 func ValidateSourceConfig(source appconfig.Source) error {
-	registration, ok := lookupDriverRegistration(source.Driver)
+	driverImpl, ok := LookupDriver(source.Driver)
 	if !ok {
 		return fmt.Errorf("source %s 不支持 driver: %s", source.Name, source.Driver)
 	}
-	if registration.ValidateSource != nil {
-		return registration.ValidateSource(source)
+	configurable, ok := driverImpl.(provider.SourceConfigurator)
+	if !ok {
+		return nil
 	}
-	return nil
+	return configurable.ValidateSource(source)
 }
 
 func ValidateSinkConfig(sink appconfig.Sink) error {
-	registration, ok := lookupDriverRegistration(sink.Driver)
+	driverImpl, ok := LookupDriver(sink.Driver)
 	if !ok {
 		return fmt.Errorf("sink %s 不支持 driver: %s", sink.Name, sink.Driver)
 	}
-	if registration.ValidateSink != nil {
-		return registration.ValidateSink(sink)
+	validator, ok := driverImpl.(provider.SinkValidator)
+	if !ok {
+		return nil
 	}
-	return nil
-}
-
-func lookupDriverRegistration(driver string) (driverRegistration, bool) {
-	registration, ok := driverRegistrations[normalizeDriver(driver)]
-	return registration, ok
+	return validator.ValidateSink(sink)
 }
 
 func normalizeDriver(driver string) string {
