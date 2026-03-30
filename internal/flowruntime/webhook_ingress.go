@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/mail"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -140,7 +141,7 @@ func (w *webhookIngress) handle(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	req.Body = http.MaxBytesReader(rw, req.Body, w.maxBodyBytes)
-	body, err := io.ReadAll(req.Body)
+	bodyPath, bodyHash, err := spoolRequestBody(req.Body)
 	if err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
@@ -150,27 +151,36 @@ func (w *webhookIngress) handle(rw http.ResponseWriter, req *http.Request) {
 		http.Error(rw, "invalid request body", http.StatusBadRequest)
 		return
 	}
-	if len(body) == 0 {
+	defer func() {
+		_ = os.Remove(bodyPath)
+	}()
+	if strings.TrimSpace(bodyHash) == "" {
 		http.Error(rw, "empty request body", http.StatusBadRequest)
 		return
 	}
 
 	signature := strings.TrimSpace(req.Header.Get(webhookHeaderSignature))
-	if !w.validSignature(req.Method, req.URL.Path, timestamp, deliveryID, body, signature) {
+	if !w.validSignatureForBodyHash(req.Method, req.URL.Path, timestamp, deliveryID, bodyHash, signature) {
 		http.Error(rw, "invalid signature", http.StatusUnauthorized)
 		return
 	}
 
-	duplicate, err := w.spool.Enqueue(adapters.PushMessage{
+	bodyFile, err := os.Open(filepath.Clean(bodyPath))
+	if err != nil {
+		http.Error(rw, "failed to open request body", http.StatusInternalServerError)
+		return
+	}
+	defer bodyFile.Close()
+
+	duplicate, err := w.spool.EnqueueReader(adapters.PushMessage{
 		DeliveryID:        deliveryID,
-		InternetMessageID: extractInternetMessageID(body),
+		InternetMessageID: extractInternetMessageIDFromFile(bodyPath),
 		ReceivedAt:        timestamp,
-		MIME:              body,
 		Attributes: map[string]string{
 			"ingress":     "webhook",
 			"delivery_id": deliveryID,
 		},
-	})
+	}, bodyFile)
 	if err != nil {
 		http.Error(rw, "failed to enqueue message", http.StatusInternalServerError)
 		return
@@ -202,7 +212,12 @@ func (w *webhookIngress) allowedContentType(value string) bool {
 }
 
 func (w *webhookIngress) validSignature(method, path string, timestamp time.Time, deliveryID string, body []byte, signature string) bool {
-	expected := webhookSignature(w.secret, w.sourceName, method, path, timestamp, deliveryID, body)
+	bodySum := sha256.Sum256(body)
+	return w.validSignatureForBodyHash(method, path, timestamp, deliveryID, hex.EncodeToString(bodySum[:]), signature)
+}
+
+func (w *webhookIngress) validSignatureForBodyHash(method, path string, timestamp time.Time, deliveryID, bodyHash, signature string) bool {
+	expected := webhookSignatureForBodyHash(w.secret, w.sourceName, method, path, timestamp, deliveryID, bodyHash)
 	signature = strings.TrimPrefix(strings.TrimSpace(signature), "sha256=")
 	if len(signature) != len(expected) {
 		return false
@@ -212,13 +227,17 @@ func (w *webhookIngress) validSignature(method, path string, timestamp time.Time
 
 func webhookSignature(secret []byte, sourceName, method, path string, timestamp time.Time, deliveryID string, body []byte) string {
 	bodySum := sha256.Sum256(body)
+	return webhookSignatureForBodyHash(secret, sourceName, method, path, timestamp, deliveryID, hex.EncodeToString(bodySum[:]))
+}
+
+func webhookSignatureForBodyHash(secret []byte, sourceName, method, path string, timestamp time.Time, deliveryID, bodyHash string) string {
 	payload := strings.Join([]string{
 		strings.TrimSpace(sourceName),
 		strings.ToUpper(strings.TrimSpace(method)),
 		strings.TrimSpace(path),
 		timestamp.UTC().Format(time.RFC3339),
 		strings.TrimSpace(deliveryID),
-		hex.EncodeToString(bodySum[:]),
+		strings.TrimSpace(bodyHash),
 	}, "\n")
 	mac := hmac.New(sha256.New, secret)
 	_, _ = mac.Write([]byte(payload))
@@ -248,9 +267,58 @@ func withinTolerance(now, timestamp time.Time, tolerance time.Duration) bool {
 }
 
 func extractInternetMessageID(body []byte) string {
-	message, err := mail.ReadMessage(bytes.NewReader(body))
+	return extractInternetMessageIDFromReader(bytes.NewReader(body))
+}
+
+func extractInternetMessageIDFromFile(path string) string {
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	return extractInternetMessageIDFromReader(file)
+}
+
+func extractInternetMessageIDFromReader(reader io.Reader) string {
+	message, err := mail.ReadMessage(reader)
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(message.Header.Get("Message-ID"))
+}
+
+func spoolRequestBody(src io.Reader) (string, string, error) {
+	if src == nil {
+		return "", "", fmt.Errorf("request body 不能为空")
+	}
+
+	file, err := os.CreateTemp("", "mimecrypt-webhook-body-*.eml")
+	if err != nil {
+		return "", "", fmt.Errorf("创建 webhook 临时文件失败: %w", err)
+	}
+
+	cleanup := func() {
+		_ = file.Close()
+		_ = os.Remove(file.Name())
+	}
+	if err := file.Chmod(0o600); err != nil {
+		cleanup()
+		return "", "", fmt.Errorf("设置 webhook 临时文件权限失败: %w", err)
+	}
+
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(file, hasher), src)
+	if err != nil {
+		cleanup()
+		return "", "", err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(file.Name())
+		return "", "", fmt.Errorf("关闭 webhook 临时文件失败: %w", err)
+	}
+	if written == 0 {
+		_ = os.Remove(file.Name())
+		return "", "", nil
+	}
+	return file.Name(), hex.EncodeToString(hasher.Sum(nil)), nil
 }

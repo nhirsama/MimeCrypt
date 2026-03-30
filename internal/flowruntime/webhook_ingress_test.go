@@ -2,6 +2,8 @@ package flowruntime
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -91,6 +93,11 @@ func TestWebhookIngressRejectsInvalidSignature(t *testing.T) {
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
 	}
+	if _, found, err := ingress.spool.ClaimNext(); err != nil {
+		t.Fatalf("ClaimNext() error = %v", err)
+	} else if found {
+		t.Fatalf("ClaimNext() found = true, want false")
+	}
 }
 
 func TestWebhookIngressRejectsTimestampOutsideTolerance(t *testing.T) {
@@ -121,6 +128,47 @@ func TestWebhookIngressRejectsOversizedBody(t *testing.T) {
 
 	if recorder.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusRequestEntityTooLarge)
+	}
+}
+
+func TestSpoolRequestBodyComputesHashAndPersistsBody(t *testing.T) {
+	t.Parallel()
+
+	body := webhookTestBody("<stream@example.com>")
+	path, bodyHash, err := spoolRequestBody(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("spoolRequestBody() error = %v", err)
+	}
+	defer os.Remove(path)
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(content) != string(body) {
+		t.Fatalf("stored body = %q, want %q", string(content), string(body))
+	}
+
+	sum := sha256.Sum256(body)
+	if got, want := bodyHash, hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("body hash = %q, want %q", got, want)
+	}
+}
+
+func TestSpoolRequestBodyRejectsEmptyBody(t *testing.T) {
+	t.Parallel()
+
+	path, bodyHash, err := spoolRequestBody(strings.NewReader(""))
+	if err != nil {
+		t.Fatalf("spoolRequestBody() error = %v", err)
+	}
+	defer os.Remove(path)
+
+	if bodyHash != "" {
+		t.Fatalf("body hash = %q, want empty", bodyHash)
+	}
+	if path != "" {
+		t.Fatalf("path = %q, want empty", path)
 	}
 }
 

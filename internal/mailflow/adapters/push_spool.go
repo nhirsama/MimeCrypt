@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -57,10 +58,14 @@ type pushSeenMarker struct {
 }
 
 func (s *PushSpool) Enqueue(message PushMessage) (bool, error) {
+	return s.EnqueueReader(message, bytes.NewReader(message.MIME))
+}
+
+func (s *PushSpool) EnqueueReader(message PushMessage, mime io.Reader) (bool, error) {
 	if strings.TrimSpace(message.DeliveryID) == "" {
 		return false, fmt.Errorf("delivery id 不能为空")
 	}
-	if len(message.MIME) == 0 {
+	if mime == nil {
 		return false, fmt.Errorf("push MIME 不能为空")
 	}
 	if message.ReceivedAt.IsZero() {
@@ -109,8 +114,12 @@ func (s *PushSpool) Enqueue(message PushMessage) (bool, error) {
 	if err := writeJSONFile(filepath.Join(stagingDir, pushSpoolMetaFile), meta); err != nil {
 		return false, err
 	}
-	if _, err := fileutil.WriteFileAtomic(filepath.Join(stagingDir, pushSpoolMIMEFile), 0o600, bytes.NewReader(message.MIME)); err != nil {
+	written, err := fileutil.WriteFileAtomic(filepath.Join(stagingDir, pushSpoolMIMEFile), 0o600, mime)
+	if err != nil {
 		return false, fmt.Errorf("写入 push MIME 失败: %w", err)
+	}
+	if written == 0 {
+		return false, fmt.Errorf("push MIME 不能为空")
 	}
 
 	if err := os.Rename(stagingDir, s.pendingPath(key)); err != nil {

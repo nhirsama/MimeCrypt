@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,6 +59,42 @@ func TestPushSpoolEnqueueClaimAndAck(t *testing.T) {
 	}
 	if _, err := os.Stat(spool.processingPath(claimed.Key)); !os.IsNotExist(err) {
 		t.Fatalf("processing path still exists after Ack(): err=%v", err)
+	}
+}
+
+func TestPushSpoolEnqueueReaderStoresMessage(t *testing.T) {
+	t.Parallel()
+
+	spool := &PushSpool{
+		Dir:             t.TempDir(),
+		ReplayRetention: time.Hour,
+		Now:             func() time.Time { return time.Now().UTC() },
+	}
+
+	duplicate, err := spool.EnqueueReader(PushMessage{
+		DeliveryID:        "delivery-reader",
+		InternetMessageID: "<reader@example.com>",
+	}, strings.NewReader("Subject: reader\r\n\r\nhello"))
+	if err != nil {
+		t.Fatalf("EnqueueReader() error = %v", err)
+	}
+	if duplicate {
+		t.Fatalf("EnqueueReader() duplicate = true, want false")
+	}
+
+	claimed, found, err := spool.ClaimNext()
+	if err != nil {
+		t.Fatalf("ClaimNext() error = %v", err)
+	}
+	if !found {
+		t.Fatalf("ClaimNext() found = false, want true")
+	}
+	content, err := os.ReadFile(claimed.MIMEPath)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(content) != "Subject: reader\r\n\r\nhello" {
+		t.Fatalf("stored MIME = %q", string(content))
 	}
 }
 
