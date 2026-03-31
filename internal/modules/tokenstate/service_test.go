@@ -35,7 +35,7 @@ func TestServiceStatusReturnsAbsentWhenLoginMissing(t *testing.T) {
 		Credential:     "office-auth",
 		CredentialKind: "oauth",
 		Runtime:        "oauth-device",
-		Drivers:        []string{"imap"},
+		AuthProfile:    "imap",
 		Session:        &fakeSession{loadErr: auth.ErrLoginRequired},
 		StateDir:       "/state",
 		TokenStore:     "file",
@@ -50,6 +50,9 @@ func TestServiceStatusReturnsAbsentWhenLoginMissing(t *testing.T) {
 	}
 	if result.Credential != "office-auth" || result.Runtime != "oauth-device" {
 		t.Fatalf("unexpected metadata: %+v", result)
+	}
+	if result.AuthProfile != "imap" {
+		t.Fatalf("AuthProfile = %q, want imap", result.AuthProfile)
 	}
 }
 

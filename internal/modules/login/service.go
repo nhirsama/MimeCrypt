@@ -18,7 +18,7 @@ type Service struct {
 	Credential    string
 	Kind          string
 	Runtime       string
-	Drivers       []string
+	AuthProfile   string
 	StateDir      string
 }
 
@@ -26,7 +26,7 @@ type Result struct {
 	Credential  string
 	Kind        string
 	Runtime     string
-	Drivers     []string
+	AuthProfile string
 	Account     string
 	DisplayName string
 	StateDir    string
@@ -51,7 +51,7 @@ func (s *Service) Run(ctx context.Context, out io.Writer) (Result, error) {
 		Credential:  s.Credential,
 		Kind:        s.Kind,
 		Runtime:     s.Runtime,
-		Drivers:     append([]string(nil), s.Drivers...),
+		AuthProfile: s.AuthProfile,
 		Account:     user.Account(),
 		DisplayName: user.DisplayName,
 		StateDir:    s.StateDir,

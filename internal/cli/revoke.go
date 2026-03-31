@@ -44,6 +44,12 @@ func newRevokeCmd() *cobra.Command {
 				_, _ = fmt.Fprintf(out, "credential=%s\n", credentialName)
 			}
 			_, _ = fmt.Fprintf(out, "kind=%s\n", resolved.EffectiveCredentialKind())
+			if runtimeName := strings.TrimSpace(resolved.EffectiveRuntimeName()); runtimeName != "" {
+				_, _ = fmt.Fprintf(out, "runtime=%s\n", runtimeName)
+			}
+			if authProfile := strings.TrimSpace(resolved.EffectiveAuthProfile()); authProfile != "" {
+				_, _ = fmt.Fprintf(out, "auth_profile=%s\n", authProfile)
+			}
 			if service.RequireRemote {
 				_, _ = fmt.Fprintln(out, "已吊销远端会话并清除本地凭据")
 			} else {

@@ -63,8 +63,7 @@ func TestBuildLoginServiceGraphIdentityProbeUsesGraphToken(t *testing.T) {
 
 	service, err := BuildLoginService(CredentialPlan{
 		Config:      cfg,
-		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
-		AuthDrivers: []string{"graph"},
+		LocalConfig: appconfig.LocalConfig{RuntimeName: "oauth-device", AuthProfile: "graph"},
 	})
 	if err != nil {
 		t.Fatalf("BuildLoginService() error = %v", err)
@@ -98,7 +97,7 @@ func TestBuildLoginServiceFallsBackToIMAPUsernameIdentity(t *testing.T) {
 			Kind: appconfig.CredentialKindOAuth,
 		},
 		CredentialName: "office-auth",
-		LocalConfig:    appconfig.LocalConfig{LoginConfig: "oauth-device"},
+		LocalConfig:    appconfig.LocalConfig{RuntimeName: "oauth-device", AuthProfile: "imap"},
 		Config: appconfig.Config{
 			Auth: appconfig.AuthConfig{
 				ClientID:         "client-id",
@@ -114,7 +113,6 @@ func TestBuildLoginServiceFallsBackToIMAPUsernameIdentity(t *testing.T) {
 				},
 			},
 		},
-		AuthDrivers: []string{"imap"},
 	})
 	if err != nil {
 		t.Fatalf("BuildLoginService() error = %v", err)
@@ -139,7 +137,7 @@ func TestBuildLoginServiceUsesDriverLoginConfigToTrimScopes(t *testing.T) {
 	t.Parallel()
 
 	service, err := BuildLoginService(CredentialPlan{
-		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
+		LocalConfig: appconfig.LocalConfig{RuntimeName: "oauth-device", AuthProfile: "imap"},
 		Config: appconfig.Config{
 			Auth: appconfig.AuthConfig{
 				ClientID:         "client-id",
@@ -157,7 +155,6 @@ func TestBuildLoginServiceUsesDriverLoginConfigToTrimScopes(t *testing.T) {
 				},
 			},
 		},
-		AuthDrivers: []string{"imap"},
 	})
 	if err != nil {
 		t.Fatalf("BuildLoginService() error = %v", err)
@@ -198,8 +195,7 @@ func TestBuildRevokeServiceForceStillClearsLocalStateWhenRemoteRevokerInitFails(
 
 	service, err := BuildRevokeService(CredentialPlan{
 		Config:      cfg,
-		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
-		AuthDrivers: []string{"imap"},
+		LocalConfig: appconfig.LocalConfig{RuntimeName: "oauth-device", AuthProfile: "imap"},
 	}, true)
 	if err != nil {
 		t.Fatalf("BuildRevokeService() error = %v", err)
@@ -221,7 +217,7 @@ func TestBuildRevokeServiceRejectsRemoteRevokerInitFailureWithoutForce(t *testin
 	t.Parallel()
 
 	_, err := BuildRevokeService(CredentialPlan{
-		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
+		LocalConfig: appconfig.LocalConfig{RuntimeName: "oauth-device", AuthProfile: "imap"},
 		Config: appconfig.Config{
 			Auth: appconfig.AuthConfig{
 				ClientID:         "client-id",
@@ -232,7 +228,6 @@ func TestBuildRevokeServiceRejectsRemoteRevokerInitFailureWithoutForce(t *testin
 				TokenStore:       "file",
 			},
 		},
-		AuthDrivers: []string{"imap"},
 	}, false)
 	if err == nil || !strings.Contains(err.Error(), "初始化远端吊销器失败") {
 		t.Fatalf("BuildRevokeService() error = %v, want remote init failure", err)
@@ -263,8 +258,7 @@ func TestBuildRevokeServiceSharedSessionSkipsRemoteRevoke(t *testing.T) {
 
 	service, err := BuildRevokeService(CredentialPlan{
 		Config:      cfg,
-		LocalConfig: appconfig.LocalConfig{LoginConfig: "oauth-device"},
-		AuthDrivers: []string{"imap"},
+		LocalConfig: appconfig.LocalConfig{RuntimeName: "oauth-device", AuthProfile: "imap"},
 		Credential: appconfig.Credential{
 			Name: "default",
 			Kind: appconfig.CredentialKindSharedSession,
@@ -341,5 +335,59 @@ func TestBuildTokenStateServiceDoesNotInferDriversFromTopologyBindings(t *testin
 	_, err = BuildTokenStateService(plan)
 	if err == nil || !strings.Contains(err.Error(), "未配置运行时驱动") {
 		t.Fatalf("BuildTokenStateService() error = %v, want missing runtime driver error", err)
+	}
+}
+
+func TestBuildRevokeServiceDoesNotInferRuntimeFromTopologyBindings(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	writeCredentialTopology(t, topologyPath, appconfig.Topology{
+		DefaultCredential: "office-auth",
+		Credentials: map[string]appconfig.Credential{
+			"office-auth": {Name: "office-auth", Kind: "oauth"},
+		},
+		Sources: map[string]appconfig.Source{
+			"office": {
+				Name:          "office",
+				Driver:        "imap",
+				Mode:          "poll",
+				CredentialRef: "office-auth",
+				Folder:        "INBOX",
+				PollInterval:  time.Minute,
+				CycleTimeout:  2 * time.Minute,
+			},
+		},
+		Sinks: map[string]appconfig.Sink{
+			"discard": {Name: "discard", Driver: "discard"},
+		},
+		Routes: map[string]appconfig.Route{
+			"default": {
+				Name:       "default",
+				SourceRefs: []string{"office"},
+				Targets: []appconfig.RouteTarget{
+					{Name: "discard", SinkRef: "discard", Artifact: "primary", Required: true},
+				},
+			},
+		},
+	})
+
+	plan, err := ResolveCredentialCommandPlan(appconfig.Config{
+		TopologyPath: topologyPath,
+		Auth: appconfig.AuthConfig{
+			StateDir: stateDir,
+		},
+	}, "office-auth")
+	if err != nil {
+		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
+	}
+	if len(plan.Bindings) != 1 || plan.Bindings[0].Driver != "imap" {
+		t.Fatalf("Bindings = %+v, want single imap binding", plan.Bindings)
+	}
+
+	_, err = BuildRevokeService(plan, false)
+	if err == nil || !strings.Contains(err.Error(), "未配置运行时驱动") {
+		t.Fatalf("BuildRevokeService() error = %v, want missing runtime driver error", err)
 	}
 }

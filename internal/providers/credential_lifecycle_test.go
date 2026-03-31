@@ -15,7 +15,7 @@ import (
 	"mimecrypt/internal/interact"
 )
 
-func TestBuildLoginRuntimeUsesDriverLoginConfigForIMAP(t *testing.T) {
+func TestBuildLoginRuntimeUsesRuntimeRegistryWithIMAPHint(t *testing.T) {
 	t.Parallel()
 
 	cfg := testProviderConfig(t)
@@ -55,6 +55,22 @@ func TestBuildCredentialRuntimeCarriesNameAndKind(t *testing.T) {
 	}
 }
 
+func TestBuildCredentialRuntimeUsesConfiguredRuntimeWithoutDriverHints(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+	runtime, err := BuildCredentialRuntime("office-auth", appconfig.CredentialKindOAuth, oauthDeviceRuntimeName, cfg)
+	if err != nil {
+		t.Fatalf("BuildCredentialRuntime() error = %v", err)
+	}
+	if runtime.RuntimeName != oauthDeviceRuntimeName {
+		t.Fatalf("RuntimeName = %q, want %q", runtime.RuntimeName, oauthDeviceRuntimeName)
+	}
+	if len(runtime.Drivers) != 0 {
+		t.Fatalf("Drivers = %#v, want empty without hints", runtime.Drivers)
+	}
+}
+
 func TestBuildCredentialRuntimeRequiresConfiguredRuntime(t *testing.T) {
 	t.Parallel()
 
@@ -68,7 +84,7 @@ func TestBuildCredentialRuntimeRequiresConfiguredRuntime(t *testing.T) {
 	}
 }
 
-func TestBuildRemoteRevokerUsesDriverRevokeConfigForIMAP(t *testing.T) {
+func TestBuildRemoteRevokerUsesRuntimeRegistryWithIMAPHint(t *testing.T) {
 	t.Parallel()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -100,16 +116,18 @@ func TestBuildRemoteRevokerUsesDriverRevokeConfigForIMAP(t *testing.T) {
 	}
 }
 
-func TestConfigureLoginLocalConfigPromptsForDriversAndPersistsMicrosoftOverrides(t *testing.T) {
+func TestConfigureLoginLocalConfigUsesExplicitAuthHintsAndPersistsMicrosoftOverrides(t *testing.T) {
 	t.Parallel()
 
 	cfg := testProviderConfig(t)
+	var out strings.Builder
 	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
 		appconfig.CredentialKindOAuth,
 		cfg,
 		appconfig.LocalConfig{},
-		strings.NewReader("imap\n\n\n\nmailbox@example.com\n"),
-		io.Discard,
+		strings.NewReader("\n\n\nmailbox@example.com\n"),
+		&out,
+		"imap",
 	)
 	if err != nil {
 		t.Fatalf("ConfigureLoginLocalConfig() error = %v", err)
@@ -131,6 +149,53 @@ func TestConfigureLoginLocalConfigPromptsForDriversAndPersistsMicrosoftOverrides
 	}
 	if resolvedCfg.Mail.Client.IMAPUsername != "mailbox@example.com" {
 		t.Fatalf("resolved IMAP username = %q, want mailbox@example.com", resolvedCfg.Mail.Client.IMAPUsername)
+	}
+	if strings.Contains(out.String(), "请选择 credential 需要支持的邮件驱动") {
+		t.Fatalf("unexpected driver selection prompt: %q", out.String())
+	}
+	if strings.Contains(out.String(), "认证提示") || strings.Contains(out.String(), "提示:") {
+		t.Fatalf("unexpected auth hint selection prompt: %q", out.String())
+	}
+	if strings.Contains(out.String(), "邮件驱动") || strings.Contains(out.String(), "驱动:") {
+		t.Fatalf("unexpected driver runtime wording: %q", out.String())
+	}
+}
+
+func TestConfigureLoginLocalConfigPromptsForAuthHintsInsteadOfMailDrivers(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+	var out strings.Builder
+	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
+		appconfig.CredentialKindOAuth,
+		cfg,
+		appconfig.LocalConfig{},
+		strings.NewReader("imap\n\n\n\nmailbox@example.com\n"),
+		&out,
+	)
+	if err != nil {
+		t.Fatalf("ConfigureLoginLocalConfig() error = %v", err)
+	}
+	if !reflect.DeepEqual(resolvedDrivers, []string{"imap"}) {
+		t.Fatalf("resolved drivers = %#v, want [imap]", resolvedDrivers)
+	}
+	if !reflect.DeepEqual(localCfg.Drivers, []string{"imap"}) {
+		t.Fatalf("LocalConfig.Drivers = %#v, want [imap]", localCfg.Drivers)
+	}
+	if localCfg.LoginConfig != oauthDeviceRuntimeName {
+		t.Fatalf("LoginConfig = %q, want %q", localCfg.LoginConfig, oauthDeviceRuntimeName)
+	}
+	if localCfg.IMAPUsername != "mailbox@example.com" {
+		t.Fatalf("LocalConfig.IMAPUsername = %q, want mailbox@example.com", localCfg.IMAPUsername)
+	}
+	if resolvedCfg.Mail.Client.IMAPUsername != "mailbox@example.com" {
+		t.Fatalf("resolved IMAP username = %q, want mailbox@example.com", resolvedCfg.Mail.Client.IMAPUsername)
+	}
+	if !strings.Contains(out.String(), "认证提示") || !strings.Contains(out.String(), "提示:") {
+		t.Fatalf("missing auth hint prompt: %q", out.String())
+	}
+	if strings.Contains(out.String(), "邮件驱动") || strings.Contains(out.String(), "驱动:") {
+		t.Fatalf("unexpected driver runtime wording: %q", out.String())
 	}
 }
 
@@ -212,6 +277,39 @@ func TestConfigureLoginLocalConfigClearsStoredIMAPOverrideWhenDriverDropsIMAP(t 
 	}
 }
 
+func TestConfigureLoginLocalConfigNormalizesLegacyStoredRuntimeName(t *testing.T) {
+	t.Parallel()
+
+	cfg := testProviderConfig(t)
+	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
+		appconfig.CredentialKindOAuth,
+		cfg,
+		appconfig.LocalConfig{
+			Drivers:     []string{"graph"},
+			LoginConfig: legacyMicrosoftOAuthRuntime,
+			Microsoft: &appconfig.MicrosoftLocalConfig{
+				ClientID:         "stored-client",
+				Tenant:           "stored-tenant",
+				AuthorityBaseURL: "https://login.example.com",
+			},
+		},
+		strings.NewReader("\n\n\n\n"),
+		io.Discard,
+	)
+	if err != nil {
+		t.Fatalf("ConfigureLoginLocalConfig() error = %v", err)
+	}
+	if localCfg.LoginConfig != oauthDeviceRuntimeName {
+		t.Fatalf("LoginConfig = %q, want %q", localCfg.LoginConfig, oauthDeviceRuntimeName)
+	}
+	if !reflect.DeepEqual(resolvedDrivers, []string{"graph"}) {
+		t.Fatalf("resolved drivers = %#v, want [graph]", resolvedDrivers)
+	}
+	if resolvedCfg.Auth.ClientID != "stored-client" {
+		t.Fatalf("resolved ClientID = %q, want stored-client", resolvedCfg.Auth.ClientID)
+	}
+}
+
 func TestBuildRemoteRevokerPreservesEffectiveConfigOnInitError(t *testing.T) {
 	t.Parallel()
 
@@ -239,5 +337,27 @@ func TestBuildCredentialRuntimeAcceptsLegacyStoredRuntimeName(t *testing.T) {
 	}
 	if runtime.RuntimeName != oauthDeviceRuntimeName {
 		t.Fatalf("RuntimeName = %q, want %s", runtime.RuntimeName, oauthDeviceRuntimeName)
+	}
+}
+
+func TestAvailableCredentialAuthHintNamesUsesIndependentRegistry(t *testing.T) {
+	t.Parallel()
+
+	got := availableCredentialAuthHintNames()
+	want := []string{"ews", "graph", "imap"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("availableCredentialAuthHintNames() = %#v, want %#v", got, want)
+	}
+}
+
+func TestLookupCredentialRuntimeRegistrationAcceptsLegacyAlias(t *testing.T) {
+	t.Parallel()
+
+	registration, ok := lookupCredentialRuntimeRegistration(legacyMicrosoftOAuthRuntime)
+	if !ok {
+		t.Fatalf("lookupCredentialRuntimeRegistration() ok = false, want true")
+	}
+	if registration.Name != oauthDeviceRuntimeName {
+		t.Fatalf("registration.Name = %q, want %q", registration.Name, oauthDeviceRuntimeName)
 	}
 }

@@ -86,8 +86,8 @@ func TestResolveCredentialCommandPlanRestoresDriversFromLocalConfig(t *testing.T
 	stateDir := t.TempDir()
 	credentialStateDir := filepath.Join(stateDir, "credentials", "office-auth")
 	if err := appconfig.SaveLocalConfig(credentialStateDir, appconfig.LocalConfig{
-		Drivers:     []string{"imap", "graph"},
-		LoginConfig: "oauth-device",
+		RuntimeName: "oauth-device",
+		AuthProfile: "imap+graph",
 		Microsoft: &appconfig.MicrosoftLocalConfig{
 			IMAPUsername: "stored@example.com",
 		},
@@ -105,11 +105,14 @@ func TestResolveCredentialCommandPlanRestoresDriversFromLocalConfig(t *testing.T
 	if err != nil {
 		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
 	}
-	if got := strings.Join(plan.AuthDrivers, ","); got != "graph,imap" {
-		t.Fatalf("AuthDrivers = %q, want graph,imap", got)
+	if got := strings.Join(plan.RuntimeAuthHints(), ","); got != "graph,imap" {
+		t.Fatalf("RuntimeAuthHints = %q, want graph,imap", got)
 	}
-	if plan.LocalConfig.LoginConfig != "oauth-device" {
-		t.Fatalf("LocalConfig.LoginConfig = %q, want oauth-device", plan.LocalConfig.LoginConfig)
+	if plan.LocalConfig.EffectiveRuntimeName() != "oauth-device" {
+		t.Fatalf("LocalConfig.EffectiveRuntimeName = %q, want oauth-device", plan.LocalConfig.EffectiveRuntimeName())
+	}
+	if plan.LocalConfig.EffectiveAuthProfile() != "graph+imap" {
+		t.Fatalf("LocalConfig.EffectiveAuthProfile = %q, want graph+imap", plan.LocalConfig.EffectiveAuthProfile())
 	}
 	if plan.Config.Mail.Client.IMAPUsername != "stored@example.com" {
 		t.Fatalf("IMAPUsername = %q, want stored@example.com", plan.Config.Mail.Client.IMAPUsername)
@@ -153,7 +156,7 @@ func TestResolveCredentialCommandPlanKeepsStoredDriversWhenTopologyHasBindings(t
 
 	credentialStateDir := filepath.Join(stateDir, "credentials", "office-auth")
 	if err := appconfig.SaveLocalConfig(credentialStateDir, appconfig.LocalConfig{
-		Drivers: []string{"graph", "imap"},
+		AuthProfile: "graph+imap",
 		Microsoft: &appconfig.MicrosoftLocalConfig{
 			IMAPUsername: "stored@example.com",
 		},
@@ -171,8 +174,8 @@ func TestResolveCredentialCommandPlanKeepsStoredDriversWhenTopologyHasBindings(t
 	if err != nil {
 		t.Fatalf("ResolveCredentialCommandPlan() error = %v", err)
 	}
-	if got := strings.Join(plan.AuthDrivers, ","); got != "graph,imap" {
-		t.Fatalf("AuthDrivers = %q, want graph,imap", got)
+	if got := strings.Join(plan.RuntimeAuthHints(), ","); got != "graph,imap" {
+		t.Fatalf("RuntimeAuthHints = %q, want graph,imap", got)
 	}
 	if len(plan.Bindings) != 1 || plan.Bindings[0].Driver != "imap" {
 		t.Fatalf("Bindings = %+v, want single imap binding", plan.Bindings)
@@ -230,8 +233,8 @@ func TestResolveCredentialCommandPlanCollectsBindingsWithoutInferringDrivers(t *
 	if len(plan.Bindings) != 1 || plan.Bindings[0].Driver != "imap" {
 		t.Fatalf("Bindings = %+v, want single imap binding", plan.Bindings)
 	}
-	if len(plan.AuthDrivers) != 0 {
-		t.Fatalf("AuthDrivers = %#v, want empty without local runtime config", plan.AuthDrivers)
+	if len(plan.RuntimeAuthHints()) != 0 {
+		t.Fatalf("RuntimeAuthHints = %#v, want empty without local runtime config", plan.RuntimeAuthHints())
 	}
 }
 
@@ -440,7 +443,7 @@ func TestResolveCredentialPlanAllowsExplicitScopeClearFromTopology(t *testing.T)
 	}
 }
 
-func TestResolveCredentialPlanCollectsBindingsAndAuthDrivers(t *testing.T) {
+func TestResolveCredentialPlanCollectsBindingsAndBindingDrivers(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
@@ -496,8 +499,8 @@ func TestResolveCredentialPlanCollectsBindingsAndAuthDrivers(t *testing.T) {
 		t.Fatalf("ResolveCredentialPlan() error = %v", err)
 	}
 
-	if got := strings.Join(plan.AuthDrivers, ","); got != "graph,imap" {
-		t.Fatalf("AuthDrivers = %q, want graph,imap", got)
+	if got := strings.Join(plan.BindingDrivers, ","); got != "graph,imap" {
+		t.Fatalf("BindingDrivers = %q, want graph,imap", got)
 	}
 
 	wantBindings := []CredentialBinding{
@@ -560,8 +563,8 @@ func TestResolveCredentialPlanIgnoresAmbiguousImplicitBindingsWhenCredentialExpl
 		t.Fatalf("ResolveCredentialPlan() error = %v", err)
 	}
 
-	if got := strings.Join(plan.AuthDrivers, ","); got != "imap" {
-		t.Fatalf("AuthDrivers = %q, want imap", got)
+	if got := strings.Join(plan.BindingDrivers, ","); got != "imap" {
+		t.Fatalf("BindingDrivers = %q, want imap", got)
 	}
 	if len(plan.Bindings) != 1 || plan.Bindings[0].Name != "copy" {
 		t.Fatalf("Bindings = %+v, want only explicit sink binding", plan.Bindings)

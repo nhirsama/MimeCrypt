@@ -35,7 +35,7 @@ type CredentialPlan struct {
 	Config         appconfig.Config
 	LocalConfig    appconfig.LocalConfig
 	Bindings       []CredentialBinding
-	AuthDrivers    []string
+	BindingDrivers []string
 }
 
 func (p CredentialPlan) EffectiveCredentialName() string {
@@ -51,6 +51,29 @@ func (p CredentialPlan) EffectiveCredentialKind() string {
 		kind = appconfig.CredentialKindOAuth
 	}
 	return appconfig.NormalizeCredentialKind(kind)
+}
+
+func (p CredentialPlan) EffectiveRuntimeName() string {
+	return p.LocalConfig.EffectiveRuntimeName()
+}
+
+func (p CredentialPlan) EffectiveAuthProfile() string {
+	return p.LocalConfig.EffectiveAuthProfile()
+}
+
+func (p CredentialPlan) RuntimeAuthHints() []string {
+	return p.LocalConfig.AuthHintNames()
+}
+
+func (p CredentialPlan) SuggestedAuthHints() []string {
+	if hints := p.RuntimeAuthHints(); len(hints) > 0 {
+		return hints
+	}
+	hints := providers.CredentialAuthHintsForDrivers(p.BindingDrivers...)
+	if len(hints) == 0 {
+		return nil
+	}
+	return hints
 }
 
 // ResolveCredentialCommandPlan 为 login/revoke/token 这类 credential 生命周期命令解析配置。
@@ -97,7 +120,7 @@ func ResolveCredentialCommandPlan(cfg appconfig.Config, explicit string) (Creden
 		return CredentialPlan{}, err
 	}
 	plan.Bindings, _ = resolveCredentialBindingsForCommand(topology, credential.Name)
-	plan.AuthDrivers = append([]string(nil), plan.LocalConfig.Drivers...)
+	plan.BindingDrivers = bindingDrivers(plan.Bindings)
 	return plan, nil
 }
 
@@ -148,7 +171,7 @@ func ResolveCredentialPlan(cfg appconfig.Config, explicit string) (CredentialPla
 	if err != nil {
 		return CredentialPlan{}, err
 	}
-	plan.Bindings, plan.AuthDrivers, err = resolveCredentialBindings(topology, credential.Name)
+	plan.Bindings, plan.BindingDrivers, err = resolveCredentialBindings(topology, credential.Name)
 	if err != nil {
 		return CredentialPlan{}, err
 	}
@@ -165,9 +188,6 @@ func resolveBootstrapCredentialPlan(cfg appconfig.Config) (CredentialPlan, error
 	}
 	plan.Config = resolvedCfg
 	plan.LocalConfig = localCfg
-	if len(plan.AuthDrivers) == 0 {
-		plan.AuthDrivers = append([]string(nil), localCfg.Drivers...)
-	}
 	return plan, nil
 }
 
@@ -192,9 +212,6 @@ func resolveBootstrapCredentialPlanForCommand(cfg appconfig.Config, explicit str
 	plan.Config, plan.LocalConfig, err = applyLocalConfigOverlay(plan.Config)
 	if err != nil {
 		return CredentialPlan{}, err
-	}
-	if len(plan.AuthDrivers) == 0 {
-		plan.AuthDrivers = append([]string(nil), plan.LocalConfig.Drivers...)
 	}
 	return plan, nil
 }
@@ -382,4 +399,25 @@ func applyLocalConfigOverlay(cfg appconfig.Config) (appconfig.Config, appconfig.
 		return appconfig.Config{}, appconfig.LocalConfig{}, err
 	}
 	return cfg.WithLocalConfig(localCfg), localCfg, nil
+}
+
+func bindingDrivers(bindings []CredentialBinding) []string {
+	if len(bindings) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(bindings))
+	drivers := make([]string, 0, len(bindings))
+	for _, binding := range bindings {
+		driver := strings.TrimSpace(binding.Driver)
+		if driver == "" {
+			continue
+		}
+		if _, ok := seen[driver]; ok {
+			continue
+		}
+		seen[driver] = struct{}{}
+		drivers = append(drivers, driver)
+	}
+	sort.Strings(drivers)
+	return drivers
 }

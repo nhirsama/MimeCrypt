@@ -4,33 +4,45 @@ import (
 	"reflect"
 	"testing"
 
+	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/appruntime"
 )
 
-func TestLoginDriversForConfigUsesBindingsWhenPresent(t *testing.T) {
+func TestCredentialPlanSuggestedAuthHintsReturnsStoredProfileHints(t *testing.T) {
 	t.Parallel()
 
 	plan := appruntime.CredentialPlan{
-		AuthDrivers: []string{"imap", "graph"},
+		LocalConfig: appconfig.LocalConfig{AuthProfile: "graph+imap"},
 		Bindings: []appruntime.CredentialBinding{
 			{Kind: appruntime.CredentialBindingSource, Name: "inbox", Driver: "imap"},
 		},
+		BindingDrivers: []string{"imap"},
 	}
 
-	got := loginDriversForConfig(plan)
-	if !reflect.DeepEqual(got, []string{"imap", "graph"}) {
-		t.Fatalf("loginDriversForConfig() = %#v, want [imap graph]", got)
+	got := plan.SuggestedAuthHints()
+	if !reflect.DeepEqual(got, []string{"graph", "imap"}) {
+		t.Fatalf("SuggestedAuthHints() = %#v, want [graph imap]", got)
 	}
 }
 
-func TestLoginDriversForConfigAllowsInteractiveReconfigureWithoutBindings(t *testing.T) {
+func TestCredentialPlanSuggestedAuthHintsTranslatesBindingDriversToAuthHints(t *testing.T) {
 	t.Parallel()
 
 	plan := appruntime.CredentialPlan{
-		AuthDrivers: []string{"imap"},
+		BindingDrivers: []string{"ews"},
 	}
 
-	if got := loginDriversForConfig(plan); got != nil {
-		t.Fatalf("loginDriversForConfig() = %#v, want nil", got)
+	if got := plan.SuggestedAuthHints(); !reflect.DeepEqual(got, []string{"graph", "ews"}) {
+		t.Fatalf("SuggestedAuthHints() = %#v, want [graph ews]", got)
+	}
+}
+
+func TestCredentialPlanSuggestedAuthHintsReturnsNilWithoutProfileOrBindings(t *testing.T) {
+	t.Parallel()
+
+	plan := appruntime.CredentialPlan{}
+
+	if got := plan.SuggestedAuthHints(); got != nil {
+		t.Fatalf("SuggestedAuthHints() = %#v, want nil", got)
 	}
 }

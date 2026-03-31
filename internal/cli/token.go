@@ -3,7 +3,6 @@ package cli
 import (
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -60,7 +59,7 @@ func newTokenStatusCmd(cfg appconfig.Config) *cobra.Command {
 				Credential:     result.Credential,
 				CredentialKind: result.CredentialKind,
 				Runtime:        result.Runtime,
-				Drivers:        result.Drivers,
+				AuthProfile:    result.AuthProfile,
 				StateDir:       result.StateDir,
 				TokenStore:     result.TokenStore,
 			})
@@ -125,7 +124,7 @@ func newTokenImportCmd(cfg appconfig.Config) *cobra.Command {
 				Credential:     result.Credential,
 				CredentialKind: result.CredentialKind,
 				Runtime:        result.Runtime,
-				Drivers:        result.Drivers,
+				AuthProfile:    result.AuthProfile,
 				StateDir:       result.StateDir,
 				TokenStore:     result.TokenStore,
 			})
@@ -159,7 +158,7 @@ type tokenMeta struct {
 	Credential     string
 	CredentialKind string
 	Runtime        string
-	Drivers        []string
+	AuthProfile    string
 	StateDir       string
 	TokenStore     string
 }
@@ -175,10 +174,8 @@ func formatTokenMeta(result tokenMeta) string {
 	if runtime := strings.TrimSpace(result.Runtime); runtime != "" {
 		parts = append(parts, "runtime="+runtime)
 	}
-	if len(result.Drivers) > 0 {
-		drivers := append([]string(nil), result.Drivers...)
-		slices.Sort(drivers)
-		parts = append(parts, "drivers="+strings.Join(drivers, ","))
+	if authProfile := strings.TrimSpace(result.AuthProfile); authProfile != "" {
+		parts = append(parts, "auth_profile="+authProfile)
 	}
 	parts = append(parts, "state_dir="+result.StateDir)
 	parts = append(parts, "token_store="+result.TokenStore)

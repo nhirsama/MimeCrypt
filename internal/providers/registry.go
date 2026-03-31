@@ -25,16 +25,6 @@ type localSinkDriver interface {
 	BuildLocalSink(sink appconfig.Sink, cfg appconfig.Config, auditor auditRecorder) (mailflow.Consumer, error)
 }
 
-type loginConfigDriver interface {
-	provider.Driver
-	LoginConfig() *credentialRuntimeConfig
-}
-
-type revokeConfigDriver interface {
-	provider.Driver
-	RevokeConfig() *driverRevokeConfig
-}
-
 type backupDriver struct{}
 
 func (backupDriver) Info() provider.DriverInfo {
@@ -110,9 +100,6 @@ func (ewsDriver) BuildSink(cfg appconfig.Config, folder string, tokenSource prov
 	return graph.NewEWSWriterClients(cfg, folder, tokenSource)
 }
 
-func (ewsDriver) LoginConfig() *credentialRuntimeConfig { return microsoftDriverLoginConfig }
-func (ewsDriver) RevokeConfig() *driverRevokeConfig     { return microsoftDriverRevokeConfig }
-
 type graphDriver struct{}
 
 func (graphDriver) Info() provider.DriverInfo {
@@ -159,9 +146,6 @@ func (graphDriver) BuildSink(cfg appconfig.Config, folder string, tokenSource pr
 	return graph.NewWriterClients(cfg, folder, tokenSource)
 }
 
-func (graphDriver) LoginConfig() *credentialRuntimeConfig { return microsoftDriverLoginConfig }
-func (graphDriver) RevokeConfig() *driverRevokeConfig     { return microsoftDriverRevokeConfig }
-
 type imapDriver struct{}
 
 func (imapDriver) Info() provider.DriverInfo {
@@ -207,9 +191,6 @@ func (imapDriver) BuildSourceRuntime(cfg appconfig.Config, source appconfig.Sour
 func (imapDriver) BuildSink(cfg appconfig.Config, folder string, tokenSource provider.TokenSource) (provider.SinkClients, error) {
 	return imap.NewWriterClients(cfg, folder, tokenSource)
 }
-
-func (imapDriver) LoginConfig() *credentialRuntimeConfig { return microsoftDriverLoginConfig }
-func (imapDriver) RevokeConfig() *driverRevokeConfig     { return microsoftDriverRevokeConfig }
 
 type webhookDriver struct{}
 

@@ -11,10 +11,14 @@ import (
 )
 
 type LocalConfig struct {
-	Drivers      []string              `json:"drivers,omitempty"`
-	LoginConfig  string                `json:"loginConfig,omitempty"`
+	RuntimeName  string                `json:"runtime,omitempty"`
+	AuthProfile  string                `json:"authProfile,omitempty"`
 	IMAPUsername string                `json:"imapUsername,omitempty"`
 	Microsoft    *MicrosoftLocalConfig `json:"microsoft,omitempty"`
+
+	// Drivers/LoginConfig 仅保留内存兼容，便于 provider runtime 迁移期继续读取。
+	Drivers     []string `json:"-"`
+	LoginConfig string   `json:"-"`
 }
 
 type MicrosoftLocalConfig struct {
@@ -22,6 +26,32 @@ type MicrosoftLocalConfig struct {
 	Tenant           string `json:"tenant,omitempty"`
 	AuthorityBaseURL string `json:"authorityBaseURL,omitempty"`
 	IMAPUsername     string `json:"imapUsername,omitempty"`
+}
+
+func (c *LocalConfig) UnmarshalJSON(data []byte) error {
+	type localConfigJSON struct {
+		RuntimeName  string                `json:"runtime,omitempty"`
+		AuthProfile  string                `json:"authProfile,omitempty"`
+		Drivers      []string              `json:"drivers,omitempty"`
+		LoginConfig  string                `json:"loginConfig,omitempty"`
+		IMAPUsername string                `json:"imapUsername,omitempty"`
+		Microsoft    *MicrosoftLocalConfig `json:"microsoft,omitempty"`
+	}
+
+	var decoded localConfigJSON
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+
+	*c = LocalConfig{
+		RuntimeName:  decoded.RuntimeName,
+		AuthProfile:  decoded.AuthProfile,
+		Drivers:      append([]string(nil), decoded.Drivers...),
+		LoginConfig:  decoded.LoginConfig,
+		IMAPUsername: decoded.IMAPUsername,
+		Microsoft:    decoded.Microsoft,
+	}
+	return nil
 }
 
 func LoadLocalConfig(stateDir string) (LocalConfig, error) {
@@ -79,24 +109,11 @@ func LocalConfigPath(stateDir string) string {
 }
 
 func normalizeLocalConfig(cfg LocalConfig) LocalConfig {
-	cfg.LoginConfig = strings.TrimSpace(cfg.LoginConfig)
+	cfg.RuntimeName = strings.TrimSpace(firstNonEmptyString(cfg.RuntimeName, cfg.LoginConfig))
+	cfg.LoginConfig = cfg.RuntimeName
+	cfg.AuthProfile = CredentialAuthProfileForHints(firstNonEmptyStrings(CredentialAuthHintsForProfile(cfg.AuthProfile), cfg.Drivers))
 	cfg.IMAPUsername = strings.TrimSpace(cfg.IMAPUsername)
-
-	seen := make(map[string]struct{}, len(cfg.Drivers))
-	drivers := make([]string, 0, len(cfg.Drivers))
-	for _, driver := range cfg.Drivers {
-		driver = strings.ToLower(strings.TrimSpace(driver))
-		if driver == "" {
-			continue
-		}
-		if _, ok := seen[driver]; ok {
-			continue
-		}
-		seen[driver] = struct{}{}
-		drivers = append(drivers, driver)
-	}
-	sort.Strings(drivers)
-	cfg.Drivers = drivers
+	cfg.Drivers = CredentialAuthHintsForProfile(cfg.AuthProfile)
 
 	if cfg.Microsoft != nil {
 		cfg.Microsoft.ClientID = strings.TrimSpace(cfg.Microsoft.ClientID)
@@ -115,4 +132,112 @@ func normalizeLocalConfig(cfg LocalConfig) LocalConfig {
 	}
 
 	return cfg
+}
+
+func (c LocalConfig) Normalize() LocalConfig {
+	return normalizeLocalConfig(c)
+}
+
+func (c LocalConfig) EffectiveRuntimeName() string {
+	return strings.TrimSpace(normalizeLocalConfig(c).RuntimeName)
+}
+
+func (c LocalConfig) EffectiveAuthProfile() string {
+	return strings.TrimSpace(normalizeLocalConfig(c).AuthProfile)
+}
+
+func (c LocalConfig) AuthHintNames() []string {
+	return append([]string(nil), normalizeLocalConfig(c).Drivers...)
+}
+
+func (c LocalConfig) WithRuntimeName(runtimeName string) LocalConfig {
+	c.RuntimeName = strings.TrimSpace(runtimeName)
+	c.LoginConfig = c.RuntimeName
+	return normalizeLocalConfig(c)
+}
+
+func (c LocalConfig) WithAuthHintNames(hints []string) LocalConfig {
+	c.AuthProfile = CredentialAuthProfileForHints(hints)
+	c.Drivers = append([]string(nil), hints...)
+	return normalizeLocalConfig(c)
+}
+
+func CredentialAuthProfileForHints(hints []string) string {
+	normalized := normalizeCredentialAuthHints(hints)
+	if len(normalized) == 0 {
+		return ""
+	}
+	return strings.Join(normalized, "+")
+}
+
+func CredentialAuthHintsForProfile(profile string) []string {
+	if strings.TrimSpace(profile) == "" {
+		return nil
+	}
+	tokens := strings.FieldsFunc(profile, func(r rune) bool {
+		return r == '+' || r == ',' || r == '/' || r == '|' || r == ';' || r == ':'
+	})
+	return normalizeCredentialAuthHints(tokens)
+}
+
+func normalizeCredentialAuthHints(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	known := make([]string, 0, len(values))
+	unknown := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.ToLower(strings.TrimSpace(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		if credentialAuthHintRank(value) >= 0 {
+			known = append(known, value)
+			continue
+		}
+		unknown = append(unknown, value)
+	}
+	sort.Slice(known, func(i, j int) bool {
+		return credentialAuthHintRank(known[i]) < credentialAuthHintRank(known[j])
+	})
+	sort.Strings(unknown)
+	return append(known, unknown...)
+}
+
+func credentialAuthHintRank(value string) int {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "graph":
+		return 0
+	case "ews":
+		return 1
+	case "imap":
+		return 2
+	default:
+		return -1
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyStrings(values ...[]string) []string {
+	for _, value := range values {
+		if len(value) == 0 {
+			continue
+		}
+		return append([]string(nil), value...)
+	}
+	return nil
 }

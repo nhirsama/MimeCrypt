@@ -15,21 +15,21 @@ func BuildLoginService(plan CredentialPlan) (*login.Service, error) {
 	runtime, err := providers.BuildCredentialRuntime(
 		plan.EffectiveCredentialName(),
 		plan.EffectiveCredentialKind(),
-		plan.LocalConfig.LoginConfig,
+		plan.EffectiveRuntimeName(),
 		plan.Config,
-		plan.AuthDrivers...,
+		plan.RuntimeAuthHints()...,
 	)
 	if err != nil {
 		return nil, err
 	}
 
 	service := &login.Service{
-		Session:    runtime.Session,
-		Credential: runtime.Name,
-		Kind:       runtime.Kind,
-		Runtime:    runtime.RuntimeName,
-		Drivers:    append([]string(nil), runtime.Drivers...),
-		StateDir:   runtime.Config.Auth.StateDir,
+		Session:     runtime.Session,
+		Credential:  runtime.Name,
+		Kind:        runtime.Kind,
+		Runtime:     runtime.RuntimeName,
+		AuthProfile: appconfig.CredentialAuthProfileForHints(runtime.Drivers),
+		StateDir:    runtime.Config.Auth.StateDir,
 	}
 	service.IdentityProbe = runtime.IdentityProbe
 	return service, nil
@@ -39,9 +39,9 @@ func BuildRevokeService(plan CredentialPlan, force bool) (*revoke.Service, error
 	loginRuntime, err := providers.BuildCredentialRuntime(
 		plan.EffectiveCredentialName(),
 		plan.EffectiveCredentialKind(),
-		plan.LocalConfig.LoginConfig,
+		plan.EffectiveRuntimeName(),
 		plan.Config,
-		plan.AuthDrivers...,
+		plan.RuntimeAuthHints()...,
 	)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func BuildRevokeService(plan CredentialPlan, force bool) (*revoke.Service, error
 		return service, nil
 	}
 
-	remoteRevoker, _, err := buildRemoteRevoker(cfg, kind, plan.LocalConfig.LoginConfig, loginRuntime.Session, plan.AuthDrivers...)
+	remoteRevoker, _, err := buildRemoteRevoker(cfg, kind, plan.EffectiveRuntimeName(), loginRuntime.Session, plan.RuntimeAuthHints()...)
 	if err != nil {
 		if !force {
 			return nil, fmt.Errorf("初始化远端吊销器失败: %w", err)
@@ -109,9 +109,9 @@ func BuildTokenStateService(plan CredentialPlan) (*tokenstate.Service, error) {
 	runtime, err := providers.BuildCredentialRuntime(
 		plan.EffectiveCredentialName(),
 		plan.EffectiveCredentialKind(),
-		plan.LocalConfig.LoginConfig,
+		plan.EffectiveRuntimeName(),
 		plan.Config,
-		plan.AuthDrivers...,
+		plan.RuntimeAuthHints()...,
 	)
 	if err != nil {
 		return nil, err
@@ -121,7 +121,7 @@ func BuildTokenStateService(plan CredentialPlan) (*tokenstate.Service, error) {
 		Credential:     runtime.Name,
 		CredentialKind: runtime.Kind,
 		Runtime:        runtime.RuntimeName,
-		Drivers:        append([]string(nil), runtime.Drivers...),
+		AuthProfile:    appconfig.CredentialAuthProfileForHints(runtime.Drivers),
 		Session:        runtime.Session,
 		StateDir:       runtime.Config.Auth.StateDir,
 		TokenStore:     runtime.Config.Auth.TokenStoreMode(),

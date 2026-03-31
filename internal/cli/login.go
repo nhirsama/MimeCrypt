@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 	"time"
 
@@ -39,14 +38,13 @@ func newLoginCmd() *cobra.Command {
 
 			localCfg := resolved.LocalConfig
 			out := cmd.OutOrStdout()
-			configureDrivers := loginDriversForConfig(resolved)
-			localCfg, cfg, resolvedDrivers, err := providers.ConfigureLoginLocalConfig(
+			localCfg, cfg, _, err = providers.ConfigureLoginLocalConfig(
 				resolved.EffectiveCredentialKind(),
 				cfg,
 				localCfg,
 				cmd.InOrStdin(),
 				out,
-				configureDrivers...,
+				resolved.SuggestedAuthHints()...,
 			)
 			if err != nil {
 				if errors.Is(err, interact.ErrAbort) {
@@ -55,12 +53,12 @@ func newLoginCmd() *cobra.Command {
 				}
 				return fmt.Errorf("login 失败: %w", err)
 			}
+			localCfg = localCfg.Normalize()
 			if err := appconfig.SaveLocalConfig(cfg.Auth.StateDir, localCfg); err != nil {
 				return fmt.Errorf("login 失败: 保存 credential 本地配置失败: %w", err)
 			}
 			resolved.Config = cfg
 			resolved.LocalConfig = localCfg
-			resolved.AuthDrivers = resolvedDrivers
 
 			loginCtx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
 			defer cancel()
@@ -84,6 +82,9 @@ func newLoginCmd() *cobra.Command {
 			if result.Runtime != "" {
 				_, _ = fmt.Fprintf(out, "runtime=%s\n", result.Runtime)
 			}
+			if result.AuthProfile != "" {
+				_, _ = fmt.Fprintf(out, "auth_profile=%s\n", result.AuthProfile)
+			}
 			if result.Account != "" || result.DisplayName != "" {
 				_, _ = fmt.Fprintf(out, "登录成功，账号: %s (%s)\n", result.Account, result.DisplayName)
 			} else {
@@ -105,22 +106,10 @@ func printCredentialBindingSummary(out io.Writer, plan appruntime.CredentialPlan
 	if out == nil {
 		out = io.Discard
 	}
-	if len(plan.AuthDrivers) > 0 {
-		drivers := append([]string(nil), plan.AuthDrivers...)
-		slices.Sort(drivers)
-		_, _ = fmt.Fprintf(out, "drivers=%s\n", strings.Join(drivers, ","))
-	}
 	if sources := plan.BindingNames(appruntime.CredentialBindingSource); len(sources) > 0 {
 		_, _ = fmt.Fprintf(out, "sources=%s\n", strings.Join(sources, ","))
 	}
 	if sinks := plan.BindingNames(appruntime.CredentialBindingSink); len(sinks) > 0 {
 		_, _ = fmt.Fprintf(out, "sinks=%s\n", strings.Join(sinks, ","))
 	}
-}
-
-func loginDriversForConfig(plan appruntime.CredentialPlan) []string {
-	if len(plan.Bindings) == 0 {
-		return nil
-	}
-	return append([]string(nil), plan.AuthDrivers...)
 }
