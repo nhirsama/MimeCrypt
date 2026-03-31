@@ -208,19 +208,18 @@ func TestSaveTopologyFileRoundTrips(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nested", "topology.json")
 	want := Topology{
 		Sources: map[string]Source{
-			"incoming": {
+			"incoming": mustWebhookSourceWithConfig(t, Source{
 				Name:      "incoming",
 				Driver:    "webhook",
 				Mode:      "push",
 				StatePath: "/runtime/flow-sync.json",
-				Webhook: &WebhookSource{
-					ListenAddr:         "127.0.0.1:8080",
-					Path:               "/mail/incoming",
-					SecretEnv:          "MIMECRYPT_WEBHOOK_SECRET",
-					MaxBodyBytes:       25 << 20,
-					TimestampTolerance: 5 * time.Minute,
-				},
-			},
+			}, webhookSourceConfig{
+				ListenAddr:         "127.0.0.1:8080",
+				Path:               "/mail/incoming",
+				SecretEnv:          "MIMECRYPT_WEBHOOK_SECRET",
+				MaxBodyBytes:       25 << 20,
+				TimestampTolerance: 5 * time.Minute,
+			}),
 		},
 		Sinks: map[string]Sink{
 			"archive": {Name: "archive", Driver: "file", OutputDir: "/tmp/out"},
@@ -257,7 +256,12 @@ func TestSaveTopologyFileRoundTrips(t *testing.T) {
 	if got.DefaultSource != want.DefaultSource || got.DefaultRoute != want.DefaultRoute {
 		t.Fatalf("defaults = %+v, want %+v", got, want)
 	}
-	if got.Sources["incoming"].Webhook == nil || got.Sources["incoming"].Webhook.Path != "/mail/incoming" {
+	var webhook webhookSourceConfig
+	err = got.Sources["incoming"].DecodeDriverConfig(&webhook)
+	if err != nil {
+		t.Fatalf("DecodeDriverConfig() error = %v", err)
+	}
+	if webhook.Path != "/mail/incoming" {
 		t.Fatalf("sources = %+v", got.Sources)
 	}
 	if got.Sources["incoming"].StatePath != "" {

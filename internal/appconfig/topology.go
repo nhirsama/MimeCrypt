@@ -57,19 +57,11 @@ type Source struct {
 	CredentialRef string `json:"credential_ref,omitempty"`
 	Folder        string `json:"folder,omitempty"`
 	// StatePath 是 compiled runtime 注入的派生值，不属于 topology 配置持久化。
-	StatePath       string         `json:"-"`
-	IncludeExisting bool           `json:"include_existing,omitempty"`
-	PollInterval    time.Duration  `json:"poll_interval,omitempty"`
-	CycleTimeout    time.Duration  `json:"cycle_timeout,omitempty"`
-	Webhook         *WebhookSource `json:"webhook,omitempty"`
-}
-
-type WebhookSource struct {
-	ListenAddr         string        `json:"listen_addr,omitempty"`
-	Path               string        `json:"path,omitempty"`
-	SecretEnv          string        `json:"secret_env,omitempty"`
-	MaxBodyBytes       int64         `json:"max_body_bytes,omitempty"`
-	TimestampTolerance time.Duration `json:"timestamp_tolerance,omitempty"`
+	StatePath       string          `json:"-"`
+	IncludeExisting bool            `json:"include_existing,omitempty"`
+	PollInterval    time.Duration   `json:"poll_interval,omitempty"`
+	CycleTimeout    time.Duration   `json:"cycle_timeout,omitempty"`
+	DriverConfig    json.RawMessage `json:"config,omitempty"`
 }
 
 // Sink 是 topology 中的命名 sink device 配置实例。
@@ -171,16 +163,16 @@ func (c *Credential) UnmarshalJSON(data []byte) error {
 
 func (s *Source) UnmarshalJSON(data []byte) error {
 	type sourceJSON struct {
-		Name            string         `json:"name,omitempty"`
-		Driver          string         `json:"driver,omitempty"`
-		Mode            string         `json:"mode,omitempty"`
-		CredentialRef   string         `json:"credential_ref,omitempty"`
-		Folder          string         `json:"folder,omitempty"`
-		StatePath       string         `json:"state_path,omitempty"`
-		IncludeExisting bool           `json:"include_existing,omitempty"`
-		PollInterval    time.Duration  `json:"poll_interval,omitempty"`
-		CycleTimeout    time.Duration  `json:"cycle_timeout,omitempty"`
-		Webhook         *WebhookSource `json:"webhook,omitempty"`
+		Name            string          `json:"name,omitempty"`
+		Driver          string          `json:"driver,omitempty"`
+		Mode            string          `json:"mode,omitempty"`
+		CredentialRef   string          `json:"credential_ref,omitempty"`
+		Folder          string          `json:"folder,omitempty"`
+		StatePath       string          `json:"state_path,omitempty"`
+		IncludeExisting bool            `json:"include_existing,omitempty"`
+		PollInterval    time.Duration   `json:"poll_interval,omitempty"`
+		CycleTimeout    time.Duration   `json:"cycle_timeout,omitempty"`
+		DriverConfig    json.RawMessage `json:"config,omitempty"`
 	}
 
 	var decoded sourceJSON
@@ -199,7 +191,7 @@ func (s *Source) UnmarshalJSON(data []byte) error {
 		IncludeExisting: decoded.IncludeExisting,
 		PollInterval:    decoded.PollInterval,
 		CycleTimeout:    decoded.CycleTimeout,
-		Webhook:         decoded.Webhook,
+		DriverConfig:    cloneRawMessage(decoded.DriverConfig),
 	}
 	return nil
 }
@@ -397,25 +389,6 @@ func (s Source) Validate(name string, credentials map[string]Credential) error {
 		if _, ok := credentials[ref]; !ok {
 			return fmt.Errorf("source %s 引用了不存在的 credential: %s", name, ref)
 		}
-	}
-	if err := s.validateWebhookConfig(name); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s Source) validateWebhookConfig(name string) error {
-	if s.Webhook == nil {
-		return nil
-	}
-	if strings.TrimSpace(s.Webhook.ListenAddr) == "" {
-		return fmt.Errorf("source %s webhook listen addr 不能为空", name)
-	}
-	if path := strings.TrimSpace(s.Webhook.Path); path == "" || !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("source %s webhook path 必须以 / 开头", name)
-	}
-	if strings.TrimSpace(s.Webhook.SecretEnv) == "" {
-		return fmt.Errorf("source %s webhook secret_env 不能为空", name)
 	}
 	return nil
 }

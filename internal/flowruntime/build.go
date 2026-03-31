@@ -149,7 +149,7 @@ func buildEnvelopeBuilderFromSourceBundle(ctx context.Context, run SourceRun, so
 	}, nil
 }
 
-func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
+func BuildSourceExecutor(ctx context.Context, run SourceRun) (*SourceExecutor, error) {
 	sourceSpec, ok := providers.LookupSourceSpec(run.Source.Driver)
 	if !ok {
 		return nil, fmt.Errorf("run 不支持 source driver=%s", run.Source.Driver)
@@ -157,9 +157,6 @@ func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 	mode := strings.TrimSpace(run.Source.Mode)
 	if _, ok := sourceSpec.ModeSpec(mode); !ok {
 		return nil, fmt.Errorf("run 不支持 source=%s driver=%s mode=%s", run.Source.Name, run.Source.Driver, mode)
-	}
-	if !strings.EqualFold(mode, "poll") {
-		return nil, fmt.Errorf("run 尚未实现 source=%s 的 mode=%s", run.Source.Name, mode)
 	}
 	source, err := buildSourceRuntimeBundle(run)
 	if err != nil {
@@ -169,13 +166,21 @@ func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	sourceStore, err := buildMailflowSourceStore(ctx, run.Config, source.Clients.Reader, run.Source, run.Route.DeleteSource.Enabled)
-	if err != nil {
-		return nil, err
+	executor := &SourceExecutor{
+		Spec: run,
+		Runner: &mailflow.Runner{
+			Coordinator: coordinator,
+		},
+		IdlePollInterval: defaultPushIdlePollInterval,
 	}
 
-	return &mailflow.Runner{
-		Producer: &adapters.PollingProducer{
+	switch {
+	case strings.EqualFold(mode, "poll"):
+		sourceStore, err := buildMailflowSourceStore(ctx, run.Config, source.Clients.Reader, run.Source, run.Route.DeleteSource.Enabled)
+		if err != nil {
+			return nil, err
+		}
+		executor.Runner.Producer = &adapters.PollingProducer{
 			Name:            run.Source.Name,
 			Driver:          run.Source.Driver,
 			Folder:          run.Source.Folder,
@@ -185,9 +190,32 @@ func BuildRunner(ctx context.Context, run SourceRun) (*mailflow.Runner, error) {
 			Reader:          source.Clients.Reader,
 			Deleter:         source.Clients.Deleter,
 			DeleteSemantics: run.SourceDeleteSemantics,
-		},
-		Coordinator: coordinator,
-	}, nil
+		}
+	case strings.EqualFold(mode, "push"):
+		if source.Ingress == nil {
+			return nil, fmt.Errorf("source driver %s 未提供 mode=push runtime", run.Source.Driver)
+		}
+		if source.Spool == nil {
+			return nil, fmt.Errorf("source %s 未初始化 push spool", run.Source.Name)
+		}
+
+		sourceStore := mailflow.StoreRef{
+			Driver:  normalizeDriver(run.Source.Driver, ""),
+			Account: firstNonEmpty(strings.TrimSpace(run.Source.Name), normalizeDriver(run.Source.Driver, "source")),
+		}
+		executor.Runner.Producer = &adapters.PushProducer{
+			Name:            run.Source.Name,
+			Driver:          run.Source.Driver,
+			Store:           sourceStore,
+			Spool:           source.Spool,
+			DeleteSemantics: run.SourceDeleteSemantics,
+		}
+		executor.Ingress = source.Ingress
+	default:
+		return nil, fmt.Errorf("run 尚未实现 source=%s 的 mode=%s", run.Source.Name, mode)
+	}
+
+	return executor, nil
 }
 
 func buildCoordinatorWithStore(ctx context.Context, run SourceRun, store mailflow.StateStore) (*mailflow.Coordinator, error) {

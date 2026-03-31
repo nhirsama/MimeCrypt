@@ -227,7 +227,8 @@ func (webhookDriver) DescribeSource(source appconfig.Source) []string {
 }
 
 func (webhookDriver) ValidateSource(source appconfig.Source) error {
-	return webhookdevice.ValidateSourceConfig(source)
+	_, err := webhookdevice.ValidateSourceConfig(source)
+	return err
 }
 
 var registeredDrivers = map[string]provider.Driver{

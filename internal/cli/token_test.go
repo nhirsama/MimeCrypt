@@ -100,11 +100,12 @@ func TestTokenStatusCommandAcceptsLegacyStoredRuntimeName(t *testing.T) {
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	if err := appconfig.SaveLocalConfig(stateDir, appconfig.LocalConfig{
-		LoginConfig: "microsoft-oauth",
-		Drivers:     []string{"imap"},
-	}); err != nil {
-		t.Fatalf("SaveLocalConfig() error = %v", err)
+	if err := os.WriteFile(filepath.Join(stateDir, "config.json"), []byte(`{
+  "loginConfig": "microsoft-oauth",
+  "drivers": ["imap"]
+}
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 	cmd := newTokenStatusCmd(appconfig.Config{
 		TopologyPath: appconfig.DefaultTopologyPath(stateDir),

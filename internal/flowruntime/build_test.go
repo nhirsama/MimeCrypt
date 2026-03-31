@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/mailflow/adapters"
@@ -160,16 +161,11 @@ func TestBuildHealthServiceAllowsWebhookSourceWithoutProviderClients(t *testing.
 	t.Parallel()
 
 	run := SourceRun{
-		Source: appconfig.Source{
+		Source: mustWebhookSource(t, appconfig.Source{
 			Name:   "incoming",
 			Driver: "webhook",
 			Mode:   "push",
-			Webhook: &appconfig.WebhookSource{
-				ListenAddr: "127.0.0.1:8080",
-				Path:       "/mail/incoming",
-				SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-			},
-		},
+		}),
 		Route: appconfig.Route{
 			Name: "default",
 			Targets: []appconfig.RouteTarget{
@@ -200,13 +196,70 @@ func TestBuildRunnerRejectsPushModeSource(t *testing.T) {
 	t.Parallel()
 
 	_, err := BuildRunner(context.Background(), SourceRun{
-		Source: appconfig.Source{
+		Source: mustWebhookSource(t, appconfig.Source{
 			Name:   "incoming",
 			Driver: "webhook",
 			Mode:   "push",
-		},
+		}),
 	})
 	if err == nil || !strings.Contains(err.Error(), "mode=push") {
 		t.Fatalf("BuildRunner() error = %v, want push mode rejection", err)
+	}
+}
+
+func TestBuildSourceExecutorBuildsPollingExecutor(t *testing.T) {
+	t.Parallel()
+
+	run := SourceRun{
+		Source: appconfig.Source{
+			Name:            "archive",
+			Driver:          "imap",
+			Mode:            "poll",
+			Folder:          "INBOX",
+			StatePath:       "/tmp/flow-sync.json",
+			IncludeExisting: true,
+			PollInterval:    time.Minute,
+			CycleTimeout:    2 * time.Minute,
+		},
+		Route: appconfig.Route{
+			Name:     "default",
+			StateDir: t.TempDir(),
+			Targets: []appconfig.RouteTarget{
+				{Name: "discard", SinkRef: "discard", Required: true},
+			},
+		},
+		Config: appconfig.Config{
+			Auth: appconfig.AuthConfig{
+				ClientID:         "client-id",
+				Tenant:           "organizations",
+				AuthorityBaseURL: "https://login.microsoftonline.com",
+				IMAPScopes:       []string{"scope-imap"},
+				StateDir:         t.TempDir(),
+				TokenStore:       "file",
+			},
+			Mail: appconfig.MailConfig{
+				Client: appconfig.MailClientConfig{
+					IMAPAddr:     "imap.example.com:993",
+					IMAPUsername: "user@example.com",
+				},
+				Pipeline: appconfig.MailPipelineConfig{
+					AuditLogPath: filepath.Join(t.TempDir(), "audit.jsonl"),
+				},
+			},
+		},
+		Sinks: map[string]SinkPlan{
+			"discard": {Sink: appconfig.Sink{Name: "discard", Driver: "discard"}},
+		},
+	}
+
+	executor, err := BuildSourceExecutor(context.Background(), run)
+	if err != nil {
+		t.Fatalf("BuildSourceExecutor() error = %v", err)
+	}
+	if executor == nil || executor.Runner == nil {
+		t.Fatalf("BuildSourceExecutor() returned incomplete executor: %+v", executor)
+	}
+	if executor.IsPush() {
+		t.Fatalf("executor.IsPush() = true, want false")
 	}
 }

@@ -151,7 +151,24 @@ func loadRuntimeTopology(cfg appconfig.Config) (appconfig.Topology, error) {
 	if err := topology.ValidateStructure(); err != nil {
 		return appconfig.Topology{}, err
 	}
+	if err := validateConfiguredDrivers(topology); err != nil {
+		return appconfig.Topology{}, err
+	}
 	return topology, nil
+}
+
+func validateConfiguredDrivers(topology appconfig.Topology) error {
+	for _, source := range topology.Sources {
+		if err := providers.ValidateSourceConfig(source); err != nil {
+			return err
+		}
+	}
+	for _, sink := range topology.Sinks {
+		if err := providers.ValidateSinkConfig(sink); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func selectRouteSources(topology appconfig.Topology, route appconfig.Route, sourceName string, mode RoutePlanMode) ([]string, error) {

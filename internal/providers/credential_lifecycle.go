@@ -34,14 +34,14 @@ type CredentialRuntime struct {
 	Config        appconfig.Config
 	Session       CredentialSession
 	IdentityProbe func(context.Context) (provider.User, error)
-	Drivers       []string
+	AuthHints     []string
 	RuntimeName   string
 }
 
 type LoginRuntime = CredentialRuntime
 
-func BuildLoginRuntime(cfg appconfig.Config, drivers ...string) (LoginRuntime, error) {
-	resolvedHints := effectiveCredentialAuthHints(drivers...)
+func BuildLoginRuntime(cfg appconfig.Config, hints ...string) (LoginRuntime, error) {
+	resolvedHints := effectiveCredentialAuthHints(hints...)
 	loginConfig, runtimeName, err := resolveCredentialRuntimeConfigForConfig(appconfig.CredentialKindOAuth, "")
 	if err != nil {
 		return LoginRuntime{}, err
@@ -70,13 +70,13 @@ func BuildLoginRuntime(cfg appconfig.Config, drivers ...string) (LoginRuntime, e
 		Config:        effectiveCfg,
 		Session:       session,
 		IdentityProbe: identityProbe,
-		Drivers:       resolvedHints,
+		AuthHints:     resolvedHints,
 		RuntimeName:   runtimeName,
 	}, nil
 }
 
-func BuildCredentialRuntime(name, kind, runtimeName string, cfg appconfig.Config, drivers ...string) (CredentialRuntime, error) {
-	resolvedHints := effectiveCredentialAuthHints(drivers...)
+func BuildCredentialRuntime(name, kind, runtimeName string, cfg appconfig.Config, hints ...string) (CredentialRuntime, error) {
+	resolvedHints := effectiveCredentialAuthHints(hints...)
 	loginConfig, runtimeName, err := resolveCredentialRuntimeConfig(kind, runtimeName)
 	if err != nil {
 		return CredentialRuntime{}, err
@@ -106,12 +106,12 @@ func BuildCredentialRuntime(name, kind, runtimeName string, cfg appconfig.Config
 		Config:        effectiveCfg,
 		Session:       session,
 		IdentityProbe: identityProbe,
-		Drivers:       resolvedHints,
+		AuthHints:     resolvedHints,
 		RuntimeName:   runtimeName,
 	}, nil
 }
 
-func ConfigureLoginLocalConfig(kind string, cfg appconfig.Config, localCfg appconfig.LocalConfig, in io.Reader, out io.Writer, drivers ...string) (appconfig.LocalConfig, appconfig.Config, []string, error) {
+func ConfigureLoginLocalConfig(kind string, cfg appconfig.Config, localCfg appconfig.LocalConfig, in io.Reader, out io.Writer, hints ...string) (appconfig.LocalConfig, appconfig.Config, []string, error) {
 	if in == nil {
 		in = strings.NewReader("")
 	}
@@ -124,34 +124,35 @@ func ConfigureLoginLocalConfig(kind string, cfg appconfig.Config, localCfg appco
 		reader = bufio.NewReader(in)
 	}
 
-	resolvedHints := effectiveCredentialAuthHints(drivers...)
+	resolvedHints := effectiveCredentialAuthHints(hints...)
+	storedRuntimeName := localCfg.EffectiveRuntimeName()
+	storedHints := localCfg.AuthHintNames()
 	if len(resolvedHints) == 0 {
-		if strings.TrimSpace(localCfg.LoginConfig) != "" {
-			resolvedHints = effectiveCredentialAuthHints(localCfg.Drivers...)
+		if storedRuntimeName != "" {
+			resolvedHints = effectiveCredentialAuthHints(storedHints...)
 		} else {
 			_, _ = fmt.Fprintln(out, "请选择 credential 需要启用的认证提示，用于补全最小 scopes 和协议参数，输入 q 可退出。")
 			var err error
-			resolvedHints, err = promptCredentialAuthHintSelection(reader, out, localCfg.Drivers)
+			resolvedHints, err = promptCredentialAuthHintSelection(reader, out, storedHints)
 			if err != nil {
 				return appconfig.LocalConfig{}, appconfig.Config{}, nil, err
 			}
 		}
 	}
 
-	loginConfig, runtimeName, err := resolveCredentialRuntimeConfigForConfig(kind, localCfg.LoginConfig)
+	loginConfig, runtimeName, err := resolveCredentialRuntimeConfigForConfig(kind, storedRuntimeName)
 	if err != nil {
 		return appconfig.LocalConfig{}, appconfig.Config{}, nil, err
 	}
 
-	updated := localCfg
-	updated.Drivers = append([]string(nil), resolvedHints...)
-	updated.LoginConfig = runtimeName
+	updated := localCfg.WithRuntimeName(runtimeName).WithAuthHintNames(resolvedHints)
 	if loginConfig.ConfigureLocal != nil {
 		updated, err = loginConfig.ConfigureLocal(cfg, updated, resolvedHints, reader, out)
 		if err != nil {
 			return appconfig.LocalConfig{}, appconfig.Config{}, nil, err
 		}
 	}
+	updated = updated.WithRuntimeName(runtimeName).WithAuthHintNames(resolvedHints)
 
 	effectiveCfg := cfg.WithLocalConfig(updated)
 	if loginConfig.ApplyConfig != nil {
@@ -254,9 +255,7 @@ func configureOAuthDeviceLocalConfig(cfg appconfig.Config, localCfg appconfig.Lo
 	}
 
 	localCfg.Microsoft = microsoft
-	localCfg.LoginConfig = oauthDeviceRuntimeName
-	localCfg.Drivers = append([]string(nil), hints...)
-	return localCfg, nil
+	return localCfg.WithRuntimeName(oauthDeviceRuntimeName).WithAuthHintNames(hints), nil
 }
 
 func effectiveCredentialAuthHints(hints ...string) []string {

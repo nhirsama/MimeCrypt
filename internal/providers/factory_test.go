@@ -13,6 +13,7 @@ import (
 	"mimecrypt/internal/appconfig"
 	"mimecrypt/internal/auth"
 	"mimecrypt/internal/provider"
+	webhookdevice "mimecrypt/internal/providers/webhook"
 )
 
 func TestSessionAuthConfigForDriversUsesLeastPrivilegeUnion(t *testing.T) {
@@ -69,16 +70,20 @@ func TestBuildSourceClientsRejectsIngressOnlySourceDriver(t *testing.T) {
 func TestBuildSourceRuntimeBuildsWebhookIngress(t *testing.T) {
 	t.Setenv("MIMECRYPT_WEBHOOK_SECRET", "top-secret")
 
-	runtime, err := BuildSourceRuntime(appconfig.Config{}, appconfig.Source{
+	source, err := webhookdevice.WithSourceConfig(appconfig.Source{
 		Name:   "incoming",
 		Driver: "webhook",
 		Mode:   "push",
-		Webhook: &appconfig.WebhookSource{
-			ListenAddr: "127.0.0.1:0",
-			Path:       "/mail/incoming",
-			SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-		},
-	}, nil, provider.SourceRuntimeOptions{
+	}, webhookdevice.SourceConfig{
+		ListenAddr: "127.0.0.1:0",
+		Path:       "/mail/incoming",
+		SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+	})
+	if err != nil {
+		t.Fatalf("WithSourceConfig() error = %v", err)
+	}
+
+	runtime, err := BuildSourceRuntime(appconfig.Config{}, source, nil, provider.SourceRuntimeOptions{
 		Route: appconfig.Route{Name: "default"},
 		EnqueuePushMessage: func(provider.PushMessage, io.Reader) (bool, error) {
 			return false, nil

@@ -17,6 +17,28 @@ const (
 	defaultConfigSecretEnv  = "MIMECRYPT_WEBHOOK_SECRET"
 )
 
+type SourceConfig struct {
+	ListenAddr         string        `json:"listen_addr,omitempty"`
+	Path               string        `json:"path,omitempty"`
+	SecretEnv          string        `json:"secret_env,omitempty"`
+	MaxBodyBytes       int64         `json:"max_body_bytes,omitempty"`
+	TimestampTolerance time.Duration `json:"timestamp_tolerance,omitempty"`
+}
+
+func DecodeSourceConfig(source appconfig.Source) (SourceConfig, error) {
+	var cfg SourceConfig
+	if err := source.DecodeDriverConfig(&cfg); err != nil {
+		return SourceConfig{}, err
+	}
+	return cfg, nil
+}
+
+func WithSourceConfig(source appconfig.Source, cfg SourceConfig) (appconfig.Source, error) {
+	source.Driver = "webhook"
+	source.Mode = "push"
+	return source.WithDriverConfig(cfg)
+}
+
 func ConfigureSource(source appconfig.Source, in io.Reader, out io.Writer) (appconfig.Source, error) {
 	if in == nil {
 		in = strings.NewReader("")
@@ -29,9 +51,13 @@ func ConfigureSource(source appconfig.Source, in io.Reader, out io.Writer) (appc
 		reader = bufio.NewReader(in)
 	}
 
-	webhook := source.Webhook
-	if webhook == nil {
-		webhook = &appconfig.WebhookSource{}
+	webhook := SourceConfig{}
+	if len(source.DriverConfig) > 0 {
+		var err error
+		webhook, err = DecodeSourceConfig(source)
+		if err != nil {
+			return appconfig.Source{}, err
+		}
 	}
 
 	_, _ = fmt.Fprintln(out, "配置 webhook source（输入 q 可退出）")
@@ -57,31 +83,29 @@ func ConfigureSource(source appconfig.Source, in io.Reader, out io.Writer) (appc
 		return appconfig.Source{}, err
 	}
 
-	source.Driver = "webhook"
-	source.Mode = "push"
-	source.Webhook = &appconfig.WebhookSource{
+	return WithSourceConfig(source, SourceConfig{
 		ListenAddr:         listenAddr,
 		Path:               path,
 		SecretEnv:          secretEnv,
 		MaxBodyBytes:       maxBodyBytes,
 		TimestampTolerance: timestampTolerance,
-	}
-	return source, nil
+	})
 }
 
 func DescribeSource(source appconfig.Source) []string {
 	lines := []string{
 		fmt.Sprintf("source=%s driver=webhook mode=push", strings.TrimSpace(source.Name)),
 	}
-	if source.Webhook == nil {
+	webhook, err := DecodeSourceConfig(source)
+	if err != nil {
 		return lines
 	}
 	lines = append(lines,
-		fmt.Sprintf("listen_addr=%s", strings.TrimSpace(source.Webhook.ListenAddr)),
-		fmt.Sprintf("path=%s", strings.TrimSpace(source.Webhook.Path)),
-		fmt.Sprintf("secret_env=%s", strings.TrimSpace(source.Webhook.SecretEnv)),
-		fmt.Sprintf("max_body_bytes=%d", source.Webhook.MaxBodyBytes),
-		fmt.Sprintf("timestamp_tolerance=%s", source.Webhook.TimestampTolerance),
+		fmt.Sprintf("listen_addr=%s", strings.TrimSpace(webhook.ListenAddr)),
+		fmt.Sprintf("path=%s", strings.TrimSpace(webhook.Path)),
+		fmt.Sprintf("secret_env=%s", strings.TrimSpace(webhook.SecretEnv)),
+		fmt.Sprintf("max_body_bytes=%d", webhook.MaxBodyBytes),
+		fmt.Sprintf("timestamp_tolerance=%s", webhook.TimestampTolerance),
 	)
 	return lines
 }

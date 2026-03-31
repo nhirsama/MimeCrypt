@@ -119,16 +119,11 @@ func TestTopologyValidateStructureRejectsUnknownCredentialKind(t *testing.T) {
 			"default": {Name: "default", Kind: "mystery"},
 		},
 		Sources: map[string]Source{
-			"incoming": {
+			"incoming": mustWebhookSource(t, Source{
 				Name:   "incoming",
 				Driver: "webhook",
 				Mode:   "push",
-				Webhook: &WebhookSource{
-					ListenAddr: "127.0.0.1:8080",
-					Path:       "/mail/incoming",
-					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-				},
-			},
+			}),
 		},
 		Sinks: map[string]Sink{
 			"discard": {Name: "discard", Driver: "discard"},
@@ -343,16 +338,11 @@ func TestTopologyValidateStructureAllowsWebhookPushSource(t *testing.T) {
 
 	topology := Topology{
 		Sources: map[string]Source{
-			"incoming": {
+			"incoming": mustWebhookSource(t, Source{
 				Name:   "incoming",
 				Driver: "webhook",
 				Mode:   "push",
-				Webhook: &WebhookSource{
-					ListenAddr: "127.0.0.1:8080",
-					Path:       "/mail/incoming",
-					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-				},
-			},
+			}),
 		},
 		Sinks: map[string]Sink{
 			"discard": {Name: "discard", Driver: "discard"},
@@ -378,16 +368,11 @@ func TestTopologyValidateStructureRejectsRouteWithoutRequiredTarget(t *testing.T
 
 	topology := Topology{
 		Sources: map[string]Source{
-			"incoming": {
+			"incoming": mustWebhookSource(t, Source{
 				Name:   "incoming",
 				Driver: "webhook",
 				Mode:   "push",
-				Webhook: &WebhookSource{
-					ListenAddr: "127.0.0.1:8080",
-					Path:       "/mail/incoming",
-					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-				},
-			},
+			}),
 		},
 		Sinks: map[string]Sink{
 			"discard": {Name: "discard", Driver: "discard"},
@@ -414,18 +399,13 @@ func TestTopologyValidateStructureAllowsWebhookDriverNonPushModeForRuntimeValida
 
 	topology := Topology{
 		Sources: map[string]Source{
-			"incoming": {
-				Name:   "incoming",
-				Driver: "webhook",
-				Mode:   "poll",
-				Webhook: &WebhookSource{
-					ListenAddr: "127.0.0.1:8080",
-					Path:       "/mail/incoming",
-					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-				},
+			"incoming": mustWebhookSource(t, Source{
+				Name:         "incoming",
+				Driver:       "webhook",
+				Mode:         "poll",
 				PollInterval: time.Minute,
 				CycleTimeout: 2 * time.Minute,
-			},
+			}),
 		},
 		Sinks: map[string]Sink{
 			"discard": {Name: "discard", Driver: "discard"},
@@ -452,18 +432,13 @@ func TestTopologyValidateStructureAllowsWebhookConfigOnNonWebhookDriverForRuntim
 
 	topology := Topology{
 		Sources: map[string]Source{
-			"archive": {
+			"archive": mustWebhookSource(t, Source{
 				Name:         "archive",
 				Driver:       "imap",
 				Mode:         "poll",
 				PollInterval: time.Minute,
 				CycleTimeout: 2 * time.Minute,
-				Webhook: &WebhookSource{
-					ListenAddr: "127.0.0.1:8080",
-					Path:       "/mail/incoming",
-					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-				},
-			},
+			}),
 		},
 		Sinks: map[string]Sink{
 			"discard": {Name: "discard", Driver: "discard"},

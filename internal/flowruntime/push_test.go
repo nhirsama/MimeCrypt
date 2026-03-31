@@ -12,23 +12,23 @@ import (
 	"mimecrypt/internal/mailflow/adapters"
 	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers"
+	webhookdevice "mimecrypt/internal/providers/webhook"
 )
 
 func TestBuildPushRuntimeBuildsWebhookIngressAndProducer(t *testing.T) {
 	t.Setenv("MIMECRYPT_WEBHOOK_SECRET", "top-secret")
 
 	run := SourceRun{
-		Source: appconfig.Source{
+		Source: mustWebhookSourceWithConfig(t, appconfig.Source{
 			Name:   "incoming",
 			Driver: "webhook",
 			Mode:   "push",
-			Webhook: &appconfig.WebhookSource{
-				ListenAddr:         "127.0.0.1:0",
-				Path:               "/mail/incoming",
-				SecretEnv:          "MIMECRYPT_WEBHOOK_SECRET",
-				TimestampTolerance: time.Minute,
-			},
-		},
+		}, webhookdevice.SourceConfig{
+			ListenAddr:         "127.0.0.1:0",
+			Path:               "/mail/incoming",
+			SecretEnv:          "MIMECRYPT_WEBHOOK_SECRET",
+			TimestampTolerance: time.Minute,
+		}),
 		Route: appconfig.Route{
 			Name:     "default",
 			StateDir: t.TempDir(),
@@ -75,6 +75,50 @@ func TestBuildPushRuntimeBuildsWebhookIngressAndProducer(t *testing.T) {
 	}
 }
 
+func TestBuildSourceExecutorBuildsPushExecutor(t *testing.T) {
+	t.Setenv("MIMECRYPT_WEBHOOK_SECRET", "top-secret")
+
+	run := SourceRun{
+		Source: mustWebhookSourceWithConfig(t, appconfig.Source{
+			Name:   "incoming",
+			Driver: "webhook",
+			Mode:   "push",
+		}, webhookdevice.SourceConfig{
+			ListenAddr: "127.0.0.1:0",
+			Path:       "/mail/incoming",
+			SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+		}),
+		Route: appconfig.Route{
+			Name:     "default",
+			StateDir: t.TempDir(),
+			Targets: []appconfig.RouteTarget{
+				{Name: "discard", SinkRef: "discard", Required: true},
+			},
+		},
+		Config: appconfig.Config{
+			Mail: appconfig.MailConfig{
+				Pipeline: appconfig.MailPipelineConfig{
+					AuditLogPath: filepath.Join(t.TempDir(), "audit.jsonl"),
+				},
+			},
+		},
+		Sinks: map[string]SinkPlan{
+			"discard": {Sink: appconfig.Sink{Name: "discard", Driver: "discard"}},
+		},
+	}
+
+	executor, err := BuildSourceExecutor(context.Background(), run)
+	if err != nil {
+		t.Fatalf("BuildSourceExecutor() error = %v", err)
+	}
+	if executor == nil || executor.Runner == nil || executor.Ingress == nil {
+		t.Fatalf("BuildSourceExecutor() returned incomplete executor: %+v", executor)
+	}
+	if !executor.IsPush() {
+		t.Fatalf("executor.IsPush() = false, want true")
+	}
+}
+
 func TestBuildPushRuntimeRejectsNonPushMode(t *testing.T) {
 	t.Parallel()
 
@@ -96,16 +140,15 @@ func TestBuildPushRuntimeUsesSourceScopedSpoolDirWhenStateDirShared(t *testing.T
 	sharedStateDir := t.TempDir()
 	newRun := func(sourceName string) SourceRun {
 		return SourceRun{
-			Source: appconfig.Source{
+			Source: mustWebhookSourceWithConfig(t, appconfig.Source{
 				Name:   sourceName,
 				Driver: "webhook",
 				Mode:   "push",
-				Webhook: &appconfig.WebhookSource{
-					ListenAddr: "127.0.0.1:0",
-					Path:       "/mail/incoming",
-					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-				},
-			},
+			}, webhookdevice.SourceConfig{
+				ListenAddr: "127.0.0.1:0",
+				Path:       "/mail/incoming",
+				SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
+			}),
 			Route: appconfig.Route{
 				Name:     "default",
 				StateDir: sharedStateDir,
@@ -158,11 +201,11 @@ func TestPushCapableDriversHaveSourceRuntimeBuilders(t *testing.T) {
 			Mode:   "push",
 		}
 		if spec.Name == "webhook" {
-			source.Webhook = &appconfig.WebhookSource{
+			source = mustWebhookSourceWithConfig(t, source, webhookdevice.SourceConfig{
 				ListenAddr: "127.0.0.1:0",
 				Path:       "/mail/incoming",
 				SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-			}
+			})
 		}
 		runtime, err := providers.BuildSourceRuntime(appconfig.Config{}, source, nil, provider.SourceRuntimeOptions{
 			Route: appconfig.Route{Name: "default"},

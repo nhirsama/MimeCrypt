@@ -28,7 +28,7 @@ func BuildLoginService(plan CredentialPlan) (*login.Service, error) {
 		Credential:  runtime.Name,
 		Kind:        runtime.Kind,
 		Runtime:     runtime.RuntimeName,
-		AuthProfile: appconfig.CredentialAuthProfileForHints(runtime.Drivers),
+		AuthProfile: appconfig.CredentialAuthProfileForHints(runtime.AuthHints),
 		StateDir:    runtime.Config.Auth.StateDir,
 	}
 	service.IdentityProbe = runtime.IdentityProbe
@@ -121,7 +121,7 @@ func BuildTokenStateService(plan CredentialPlan) (*tokenstate.Service, error) {
 		Credential:     runtime.Name,
 		CredentialKind: runtime.Kind,
 		Runtime:        runtime.RuntimeName,
-		AuthProfile:    appconfig.CredentialAuthProfileForHints(runtime.Drivers),
+		AuthProfile:    appconfig.CredentialAuthProfileForHints(runtime.AuthHints),
 		Session:        runtime.Session,
 		StateDir:       runtime.Config.Auth.StateDir,
 		TokenStore:     runtime.Config.Auth.TokenStoreMode(),

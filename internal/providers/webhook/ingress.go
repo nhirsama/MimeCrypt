@@ -42,33 +42,34 @@ type Ingress struct {
 }
 
 func BuildIngress(_ appconfig.Config, _ appconfig.Route, source appconfig.Source, enqueuePushMessage provider.EnqueuePushMessageFunc) (*Ingress, error) {
-	if err := ValidateSourceConfig(source); err != nil {
+	config, err := ValidateSourceConfig(source)
+	if err != nil {
 		return nil, err
 	}
 	if enqueuePushMessage == nil {
 		return nil, fmt.Errorf("source %s 缺少 push message sink", source.Name)
 	}
 
-	secretEnv := strings.TrimSpace(source.Webhook.SecretEnv)
+	secretEnv := strings.TrimSpace(config.SecretEnv)
 	secret := []byte(os.Getenv(secretEnv))
 	if len(secret) == 0 {
 		return nil, fmt.Errorf("source %s webhook secret_env 未设置: %s", source.Name, secretEnv)
 	}
 
-	maxBodyBytes := source.Webhook.MaxBodyBytes
+	maxBodyBytes := config.MaxBodyBytes
 	if maxBodyBytes <= 0 {
 		maxBodyBytes = defaultMaxBodyBytes
 	}
 
-	timestampTolerance := source.Webhook.TimestampTolerance
+	timestampTolerance := config.TimestampTolerance
 	if timestampTolerance <= 0 {
 		timestampTolerance = defaultTimestampTolerance
 	}
 
 	return &Ingress{
 		sourceName:         firstNonEmpty(strings.TrimSpace(source.Name), "webhook"),
-		listenAddr:         strings.TrimSpace(source.Webhook.ListenAddr),
-		path:               strings.TrimSpace(source.Webhook.Path),
+		listenAddr:         strings.TrimSpace(config.ListenAddr),
+		path:               strings.TrimSpace(config.Path),
 		secret:             secret,
 		maxBodyBytes:       maxBodyBytes,
 		timestampTolerance: timestampTolerance,
@@ -76,26 +77,27 @@ func BuildIngress(_ appconfig.Config, _ appconfig.Route, source appconfig.Source
 	}, nil
 }
 
-func ValidateSourceConfig(source appconfig.Source) error {
-	if source.Webhook == nil {
-		return fmt.Errorf("source %s 缺少 webhook 配置", source.Name)
+func ValidateSourceConfig(source appconfig.Source) (SourceConfig, error) {
+	config, err := DecodeSourceConfig(source)
+	if err != nil {
+		return SourceConfig{}, fmt.Errorf("source %s 缺少有效 webhook 配置: %w", source.Name, err)
 	}
-	if strings.TrimSpace(source.Webhook.ListenAddr) == "" {
-		return fmt.Errorf("source %s webhook listen addr 不能为空", source.Name)
+	if strings.TrimSpace(config.ListenAddr) == "" {
+		return SourceConfig{}, fmt.Errorf("source %s webhook listen addr 不能为空", source.Name)
 	}
-	if path := strings.TrimSpace(source.Webhook.Path); path == "" || !strings.HasPrefix(path, "/") {
-		return fmt.Errorf("source %s webhook path 必须以 / 开头", source.Name)
+	if path := strings.TrimSpace(config.Path); path == "" || !strings.HasPrefix(path, "/") {
+		return SourceConfig{}, fmt.Errorf("source %s webhook path 必须以 / 开头", source.Name)
 	}
-	if strings.TrimSpace(source.Webhook.SecretEnv) == "" {
-		return fmt.Errorf("source %s webhook secret_env 不能为空", source.Name)
+	if strings.TrimSpace(config.SecretEnv) == "" {
+		return SourceConfig{}, fmt.Errorf("source %s webhook secret_env 不能为空", source.Name)
 	}
-	if source.Webhook.MaxBodyBytes < 0 {
-		return fmt.Errorf("source %s webhook max_body_bytes 不能小于 0", source.Name)
+	if config.MaxBodyBytes < 0 {
+		return SourceConfig{}, fmt.Errorf("source %s webhook max_body_bytes 不能小于 0", source.Name)
 	}
-	if source.Webhook.TimestampTolerance < 0 {
-		return fmt.Errorf("source %s webhook timestamp_tolerance 不能小于 0", source.Name)
+	if config.TimestampTolerance < 0 {
+		return SourceConfig{}, fmt.Errorf("source %s webhook timestamp_tolerance 不能小于 0", source.Name)
 	}
-	return nil
+	return config, nil
 }
 
 func (w *Ingress) Run(ctx context.Context) error {

@@ -454,16 +454,11 @@ func TestResolveRoutePlanLeavesPushSourceStatePathEmpty(t *testing.T) {
 	topologyPath := filepath.Join(stateDir, "topology.json")
 	topology := appconfig.Topology{
 		Sources: map[string]appconfig.Source{
-			"incoming": {
+			"incoming": mustWebhookSource(t, appconfig.Source{
 				Name:   "incoming",
 				Driver: "webhook",
 				Mode:   "push",
-				Webhook: &appconfig.WebhookSource{
-					ListenAddr: "127.0.0.1:8080",
-					Path:       "/mail/incoming",
-					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-				},
-			},
+			}),
 		},
 		Sinks: map[string]appconfig.Sink{
 			"discard": {Name: "discard", Driver: "discard"},
@@ -655,16 +650,11 @@ func TestResolveRoutePlanDoesNotPopulateStatePathForPushWebhookSource(t *testing
 	topology := appconfig.Topology{
 		DefaultRoute: "default",
 		Sources: map[string]appconfig.Source{
-			"incoming": {
+			"incoming": mustWebhookSource(t, appconfig.Source{
 				Name:   "incoming",
 				Driver: "webhook",
 				Mode:   "push",
-				Webhook: &appconfig.WebhookSource{
-					ListenAddr: "127.0.0.1:8080",
-					Path:       "/mail/incoming",
-					SecretEnv:  "MIMECRYPT_WEBHOOK_SECRET",
-				},
-			},
+			}),
 		},
 		Sinks: map[string]appconfig.Sink{
 			"discard": {Name: "discard", Driver: "discard"},
@@ -701,6 +691,53 @@ func TestResolveRoutePlanDoesNotPopulateStatePathForPushWebhookSource(t *testing
 	}
 	if got := plan.Topology.Routes["default"].StateDir; got != "" {
 		t.Fatalf("topology Route.StateDir = %q, want empty declarative value", got)
+	}
+}
+
+func TestResolveRoutePlanRejectsUnknownNestedWebhookConfigField(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	topologyPath := filepath.Join(stateDir, "topology.json")
+	content := `{
+  "sources": {
+    "incoming": {
+      "name": "incoming",
+      "driver": "webhook",
+      "mode": "push",
+      "config": {
+        "listen_addr": "127.0.0.1:8080",
+        "path": "/mail/incoming",
+        "secret_env": "MIMECRYPT_WEBHOOK_SECRET",
+        "unexpected": true
+      }
+    }
+  },
+  "sinks": {
+    "discard": {
+      "name": "discard",
+      "driver": "discard"
+    }
+  },
+  "routes": {
+    "default": {
+      "name": "default",
+      "source_refs": ["incoming"],
+      "targets": [
+        {"name": "discard", "sink_ref": "discard", "required": true}
+      ]
+    }
+  },
+  "default_source": "incoming",
+  "default_route": "default"
+}`
+	if err := os.WriteFile(topologyPath, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	_, err := ResolveRoutePlan(testRuntimeConfig(stateDir, topologyPath), Selector{}, RoutePlanSingleSource)
+	if err == nil || !strings.Contains(err.Error(), "unexpected") {
+		t.Fatalf("ResolveRoutePlan() error = %v, want nested config unknown field rejection", err)
 	}
 }
 

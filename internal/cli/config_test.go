@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mimecrypt/internal/appconfig"
+	webhookdevice "mimecrypt/internal/providers/webhook"
 )
 
 func TestConfigWebhookCommandWritesTopology(t *testing.T) {
@@ -43,11 +44,15 @@ func TestConfigWebhookCommandWritesTopology(t *testing.T) {
 	if source.Driver != "webhook" || source.Mode != "push" {
 		t.Fatalf("source = %+v", source)
 	}
-	if source.Webhook == nil || source.Webhook.Path != "/mail/incoming" || source.Webhook.SecretEnv != "MIMECRYPT_WEBHOOK_SECRET" {
-		t.Fatalf("webhook source config = %+v", source.Webhook)
+	webhook, err := webhookdevice.DecodeSourceConfig(source)
+	if err != nil {
+		t.Fatalf("DecodeSourceConfig() error = %v", err)
 	}
-	if source.Webhook.TimestampTolerance != 5*time.Minute {
-		t.Fatalf("TimestampTolerance = %s, want 5m", source.Webhook.TimestampTolerance)
+	if webhook.Path != "/mail/incoming" || webhook.SecretEnv != "MIMECRYPT_WEBHOOK_SECRET" {
+		t.Fatalf("webhook source config = %+v", webhook)
+	}
+	if webhook.TimestampTolerance != 5*time.Minute {
+		t.Fatalf("TimestampTolerance = %s, want 5m", webhook.TimestampTolerance)
 	}
 	route, ok := topology.Routes["default"]
 	if !ok {

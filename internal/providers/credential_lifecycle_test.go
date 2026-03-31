@@ -66,8 +66,8 @@ func TestBuildCredentialRuntimeUsesConfiguredRuntimeWithoutDriverHints(t *testin
 	if runtime.RuntimeName != oauthDeviceRuntimeName {
 		t.Fatalf("RuntimeName = %q, want %q", runtime.RuntimeName, oauthDeviceRuntimeName)
 	}
-	if len(runtime.Drivers) != 0 {
-		t.Fatalf("Drivers = %#v, want empty without hints", runtime.Drivers)
+	if len(runtime.AuthHints) != 0 {
+		t.Fatalf("AuthHints = %#v, want empty without hints", runtime.AuthHints)
 	}
 }
 
@@ -121,7 +121,7 @@ func TestConfigureLoginLocalConfigUsesExplicitAuthHintsAndPersistsMicrosoftOverr
 
 	cfg := testProviderConfig(t)
 	var out strings.Builder
-	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
+	localCfg, resolvedCfg, resolvedHints, err := ConfigureLoginLocalConfig(
 		appconfig.CredentialKindOAuth,
 		cfg,
 		appconfig.LocalConfig{},
@@ -132,14 +132,14 @@ func TestConfigureLoginLocalConfigUsesExplicitAuthHintsAndPersistsMicrosoftOverr
 	if err != nil {
 		t.Fatalf("ConfigureLoginLocalConfig() error = %v", err)
 	}
-	if !reflect.DeepEqual(resolvedDrivers, []string{"imap"}) {
-		t.Fatalf("resolved drivers = %#v, want [imap]", resolvedDrivers)
+	if !reflect.DeepEqual(resolvedHints, []string{"imap"}) {
+		t.Fatalf("resolved hints = %#v, want [imap]", resolvedHints)
 	}
-	if !reflect.DeepEqual(localCfg.Drivers, []string{"imap"}) {
-		t.Fatalf("LocalConfig.Drivers = %#v, want [imap]", localCfg.Drivers)
+	if !reflect.DeepEqual(localCfg.AuthHintNames(), []string{"imap"}) {
+		t.Fatalf("LocalConfig.AuthHintNames = %#v, want [imap]", localCfg.AuthHintNames())
 	}
-	if localCfg.LoginConfig != "oauth-device" {
-		t.Fatalf("LoginConfig = %q, want oauth-device", localCfg.LoginConfig)
+	if localCfg.EffectiveRuntimeName() != "oauth-device" {
+		t.Fatalf("RuntimeName = %q, want oauth-device", localCfg.EffectiveRuntimeName())
 	}
 	if localCfg.IMAPUsername != "mailbox@example.com" {
 		t.Fatalf("IMAPUsername = %q, want mailbox@example.com", localCfg.IMAPUsername)
@@ -166,7 +166,7 @@ func TestConfigureLoginLocalConfigPromptsForAuthHintsInsteadOfMailDrivers(t *tes
 
 	cfg := testProviderConfig(t)
 	var out strings.Builder
-	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
+	localCfg, resolvedCfg, resolvedHints, err := ConfigureLoginLocalConfig(
 		appconfig.CredentialKindOAuth,
 		cfg,
 		appconfig.LocalConfig{},
@@ -176,14 +176,14 @@ func TestConfigureLoginLocalConfigPromptsForAuthHintsInsteadOfMailDrivers(t *tes
 	if err != nil {
 		t.Fatalf("ConfigureLoginLocalConfig() error = %v", err)
 	}
-	if !reflect.DeepEqual(resolvedDrivers, []string{"imap"}) {
-		t.Fatalf("resolved drivers = %#v, want [imap]", resolvedDrivers)
+	if !reflect.DeepEqual(resolvedHints, []string{"imap"}) {
+		t.Fatalf("resolved hints = %#v, want [imap]", resolvedHints)
 	}
-	if !reflect.DeepEqual(localCfg.Drivers, []string{"imap"}) {
-		t.Fatalf("LocalConfig.Drivers = %#v, want [imap]", localCfg.Drivers)
+	if !reflect.DeepEqual(localCfg.AuthHintNames(), []string{"imap"}) {
+		t.Fatalf("LocalConfig.AuthHintNames = %#v, want [imap]", localCfg.AuthHintNames())
 	}
-	if localCfg.LoginConfig != oauthDeviceRuntimeName {
-		t.Fatalf("LoginConfig = %q, want %q", localCfg.LoginConfig, oauthDeviceRuntimeName)
+	if localCfg.EffectiveRuntimeName() != oauthDeviceRuntimeName {
+		t.Fatalf("RuntimeName = %q, want %q", localCfg.EffectiveRuntimeName(), oauthDeviceRuntimeName)
 	}
 	if localCfg.IMAPUsername != "mailbox@example.com" {
 		t.Fatalf("LocalConfig.IMAPUsername = %q, want mailbox@example.com", localCfg.IMAPUsername)
@@ -239,12 +239,12 @@ func TestConfigureLoginLocalConfigClearsStoredIMAPOverrideWhenDriverDropsIMAP(t 
 	t.Parallel()
 
 	cfg := testProviderConfig(t)
-	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
+	localCfg, resolvedCfg, resolvedHints, err := ConfigureLoginLocalConfig(
 		appconfig.CredentialKindOAuth,
 		cfg,
 		appconfig.LocalConfig{
-			Drivers:      []string{"imap"},
-			LoginConfig:  oauthDeviceRuntimeName,
+			RuntimeName:  oauthDeviceRuntimeName,
+			AuthProfile:  "imap",
 			IMAPUsername: "stored@example.com",
 			Microsoft: &appconfig.MicrosoftLocalConfig{
 				ClientID:         "client-id",
@@ -260,8 +260,8 @@ func TestConfigureLoginLocalConfigClearsStoredIMAPOverrideWhenDriverDropsIMAP(t 
 	if err != nil {
 		t.Fatalf("ConfigureLoginLocalConfig() error = %v", err)
 	}
-	if !reflect.DeepEqual(resolvedDrivers, []string{"graph"}) {
-		t.Fatalf("resolved drivers = %#v, want [graph]", resolvedDrivers)
+	if !reflect.DeepEqual(resolvedHints, []string{"graph"}) {
+		t.Fatalf("resolved hints = %#v, want [graph]", resolvedHints)
 	}
 	if localCfg.IMAPUsername != "" {
 		t.Fatalf("LocalConfig.IMAPUsername = %q, want empty", localCfg.IMAPUsername)
@@ -281,12 +281,12 @@ func TestConfigureLoginLocalConfigNormalizesLegacyStoredRuntimeName(t *testing.T
 	t.Parallel()
 
 	cfg := testProviderConfig(t)
-	localCfg, resolvedCfg, resolvedDrivers, err := ConfigureLoginLocalConfig(
+	localCfg, resolvedCfg, resolvedHints, err := ConfigureLoginLocalConfig(
 		appconfig.CredentialKindOAuth,
 		cfg,
 		appconfig.LocalConfig{
-			Drivers:     []string{"graph"},
-			LoginConfig: legacyMicrosoftOAuthRuntime,
+			RuntimeName: legacyMicrosoftOAuthRuntime,
+			AuthProfile: "graph",
 			Microsoft: &appconfig.MicrosoftLocalConfig{
 				ClientID:         "stored-client",
 				Tenant:           "stored-tenant",
@@ -299,11 +299,11 @@ func TestConfigureLoginLocalConfigNormalizesLegacyStoredRuntimeName(t *testing.T
 	if err != nil {
 		t.Fatalf("ConfigureLoginLocalConfig() error = %v", err)
 	}
-	if localCfg.LoginConfig != oauthDeviceRuntimeName {
-		t.Fatalf("LoginConfig = %q, want %q", localCfg.LoginConfig, oauthDeviceRuntimeName)
+	if localCfg.EffectiveRuntimeName() != oauthDeviceRuntimeName {
+		t.Fatalf("RuntimeName = %q, want %q", localCfg.EffectiveRuntimeName(), oauthDeviceRuntimeName)
 	}
-	if !reflect.DeepEqual(resolvedDrivers, []string{"graph"}) {
-		t.Fatalf("resolved drivers = %#v, want [graph]", resolvedDrivers)
+	if !reflect.DeepEqual(resolvedHints, []string{"graph"}) {
+		t.Fatalf("resolved hints = %#v, want [graph]", resolvedHints)
 	}
 	if resolvedCfg.Auth.ClientID != "stored-client" {
 		t.Fatalf("resolved ClientID = %q, want stored-client", resolvedCfg.Auth.ClientID)

@@ -61,9 +61,6 @@ func TestLoadLocalConfigNormalizesDriversAndMicrosoftFields(t *testing.T) {
 	if got.RuntimeName != "oauth-device" {
 		t.Fatalf("RuntimeName = %q, want oauth-device", got.RuntimeName)
 	}
-	if got.LoginConfig != "oauth-device" {
-		t.Fatalf("LoginConfig = %q, want oauth-device alias", got.LoginConfig)
-	}
 	if got.AuthProfile != "graph+imap" {
 		t.Fatalf("AuthProfile = %q, want graph+imap", got.AuthProfile)
 	}
@@ -103,11 +100,40 @@ func TestLoadLocalConfigAcceptsLegacyLoginConfigAndDrivers(t *testing.T) {
 	if got.AuthProfile != "graph+imap" {
 		t.Fatalf("AuthProfile = %q, want graph+imap", got.AuthProfile)
 	}
-	if !reflect.DeepEqual(got.Drivers, []string{"graph", "imap"}) {
-		t.Fatalf("Drivers = %#v, want [graph imap]", got.Drivers)
+	if !reflect.DeepEqual(got.AuthHintNames(), []string{"graph", "imap"}) {
+		t.Fatalf("AuthHintNames = %#v, want [graph imap]", got.AuthHintNames())
 	}
 	if got.IMAPUsername != "legacy@example.com" {
 		t.Fatalf("IMAPUsername = %q, want legacy@example.com", got.IMAPUsername)
+	}
+}
+
+func TestLoadLocalConfigPrefersRuntimeAndAuthProfileOverLegacyFields(t *testing.T) {
+	t.Parallel()
+
+	stateDir := t.TempDir()
+	content := `{
+  "runtime": "oauth-device",
+  "authProfile": "graph",
+  "loginConfig": "microsoft-oauth",
+  "drivers": ["imap"]
+}`
+	if err := os.WriteFile(LocalConfigPath(stateDir), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	got, err := LoadLocalConfig(stateDir)
+	if err != nil {
+		t.Fatalf("LoadLocalConfig() error = %v", err)
+	}
+	if got.RuntimeName != "oauth-device" {
+		t.Fatalf("RuntimeName = %q, want oauth-device", got.RuntimeName)
+	}
+	if got.AuthProfile != "graph" {
+		t.Fatalf("AuthProfile = %q, want graph", got.AuthProfile)
+	}
+	if !reflect.DeepEqual(got.AuthHintNames(), []string{"graph"}) {
+		t.Fatalf("AuthHintNames = %#v, want [graph]", got.AuthHintNames())
 	}
 }
 

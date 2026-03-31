@@ -88,11 +88,7 @@ func newRunCmd() *cobra.Command {
 }
 
 type configuredSourceRun struct {
-	Run    flowruntime.SourceRun
-	Runner interface {
-		RunOnce(context.Context) (mailflow.Result, bool, error)
-	}
-	Push *flowruntime.PushRuntime
+	Executor *flowruntime.SourceExecutor
 }
 
 func runMailflowCycle(ctx context.Context, cycleTimeout time.Duration, runner interface {
@@ -132,26 +128,12 @@ func runMailflowCycle(ctx context.Context, cycleTimeout time.Duration, runner in
 func buildConfiguredRuns(ctx context.Context, runs []flowruntime.SourceRun) ([]configuredSourceRun, error) {
 	configured := make([]configuredSourceRun, 0, len(runs))
 	for _, run := range runs {
-		if strings.EqualFold(strings.TrimSpace(run.Source.Mode), "push") {
-			pushRuntime, err := flowruntime.BuildPushRuntime(ctx, run)
-			if err != nil {
-				return nil, err
-			}
-			configured = append(configured, configuredSourceRun{
-				Run:    run,
-				Runner: pushRuntime.Runner,
-				Push:   pushRuntime,
-			})
-			continue
-		}
-
-		runner, err := flowruntime.BuildRunner(ctx, run)
+		executor, err := flowruntime.BuildSourceExecutor(ctx, run)
 		if err != nil {
 			return nil, err
 		}
 		configured = append(configured, configuredSourceRun{
-			Run:    run,
-			Runner: runner,
+			Executor: executor,
 		})
 	}
 	return configured, nil
@@ -170,7 +152,7 @@ func runAllSourcesOnce(ctx context.Context, runs []configuredSourceRun) error {
 func runStartupSources(ctx context.Context, runs []configuredSourceRun) error {
 	includeSourcePrefix := len(runs) > 1
 	for _, run := range runs {
-		if run.Push != nil {
+		if run.Executor != nil && run.Executor.IsPush() {
 			continue
 		}
 		if err := runConfiguredSourceOnce(ctx, run, includeSourcePrefix); err != nil {
@@ -193,10 +175,10 @@ func runRouteLoops(ctx context.Context, runs []configuredSourceRun) error {
 		go func() {
 			defer wg.Done()
 
-			if run.Push != nil {
-				if err := run.Push.Run(loopCtx); err != nil && !errors.Is(err, context.Canceled) {
+			if run.Executor != nil && run.Executor.IsPush() {
+				if err := run.Executor.Run(loopCtx); err != nil && !errors.Is(err, context.Canceled) {
 					select {
-					case errCh <- fmt.Errorf("source=%s: %w", run.Run.Source.Name, err):
+					case errCh <- fmt.Errorf("source=%s: %w", run.Executor.Spec.Source.Name, err):
 					default:
 					}
 					cancel()
@@ -204,7 +186,7 @@ func runRouteLoops(ctx context.Context, runs []configuredSourceRun) error {
 				return
 			}
 
-			ticker := time.NewTicker(run.Run.Source.PollInterval)
+			ticker := time.NewTicker(run.Executor.Spec.Source.PollInterval)
 			defer ticker.Stop()
 
 			for {
@@ -213,7 +195,7 @@ func runRouteLoops(ctx context.Context, runs []configuredSourceRun) error {
 					return
 				case <-ticker.C:
 					if err := runConfiguredSourceOnce(loopCtx, run, includeSourcePrefix); err != nil {
-						fmt.Printf("source=%s 本轮同步失败，下个周期继续重试: %v\n", run.Run.Source.Name, err)
+						fmt.Printf("source=%s 本轮同步失败，下个周期继续重试: %v\n", run.Executor.Spec.Source.Name, err)
 					}
 				}
 			}
@@ -244,23 +226,23 @@ func runRouteLoops(ctx context.Context, runs []configuredSourceRun) error {
 }
 
 func runConfiguredSourceOnce(ctx context.Context, run configuredSourceRun, includeSourcePrefix bool) error {
-	processedCount, skippedCount, deletedCount, err := runMailflowCycle(ctx, run.Run.Source.CycleTimeout, run.Runner)
+	processedCount, skippedCount, deletedCount, err := run.Executor.RunCycle(ctx)
 	if err != nil {
-		return fmt.Errorf("source=%s: %w", run.Run.Source.Name, err)
+		return fmt.Errorf("source=%s: %w", run.Executor.Spec.Source.Name, err)
 	}
 	if processedCount == 0 && skippedCount == 0 {
-		if !includeSourcePrefix || strings.TrimSpace(run.Run.Source.Name) == "" {
+		if !includeSourcePrefix || strings.TrimSpace(run.Executor.Spec.Source.Name) == "" {
 			fmt.Printf("本轮无待处理邮件\n")
 		} else {
-			fmt.Printf("source=%s 本轮无待处理邮件\n", run.Run.Source.Name)
+			fmt.Printf("source=%s 本轮无待处理邮件\n", run.Executor.Spec.Source.Name)
 		}
 		return nil
 	}
-	if !includeSourcePrefix || strings.TrimSpace(run.Run.Source.Name) == "" {
+	if !includeSourcePrefix || strings.TrimSpace(run.Executor.Spec.Source.Name) == "" {
 		fmt.Printf("同步完成，本轮处理 %d 封邮件，跳过 %d 封，删除源邮件 %d 封\n", processedCount, skippedCount, deletedCount)
 		return nil
 	}
-	fmt.Printf("source=%s 同步完成，本轮处理 %d 封邮件，跳过 %d 封，删除源邮件 %d 封\n", run.Run.Source.Name, processedCount, skippedCount, deletedCount)
+	fmt.Printf("source=%s 同步完成，本轮处理 %d 封邮件，跳过 %d 封，删除源邮件 %d 封\n", run.Executor.Spec.Source.Name, processedCount, skippedCount, deletedCount)
 	return nil
 }
 

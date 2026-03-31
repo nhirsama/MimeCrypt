@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mimecrypt/internal/appconfig"
+	webhookdevice "mimecrypt/internal/providers/webhook"
 )
 
 func TestConfigurableSourceDriversOnlyIncludesInteractiveDrivers(t *testing.T) {
@@ -35,41 +36,45 @@ func TestConfigureSourceConfigWebhookForcesPushMode(t *testing.T) {
 	if source.StatePath != "" {
 		t.Fatalf("StatePath = %q, want empty", source.StatePath)
 	}
-	if source.Webhook == nil {
-		t.Fatalf("Webhook = nil")
+	webhook, err := webhookdevice.DecodeSourceConfig(source)
+	if err != nil {
+		t.Fatalf("DecodeSourceConfig() error = %v", err)
 	}
-	if source.Webhook.ListenAddr != "127.0.0.1:8080" {
-		t.Fatalf("ListenAddr = %q, want 127.0.0.1:8080", source.Webhook.ListenAddr)
+	if webhook.ListenAddr != "127.0.0.1:8080" {
+		t.Fatalf("ListenAddr = %q, want 127.0.0.1:8080", webhook.ListenAddr)
 	}
-	if source.Webhook.Path != "/mail/incoming" {
-		t.Fatalf("Path = %q, want /mail/incoming", source.Webhook.Path)
+	if webhook.Path != "/mail/incoming" {
+		t.Fatalf("Path = %q, want /mail/incoming", webhook.Path)
 	}
-	if source.Webhook.SecretEnv != "MIMECRYPT_WEBHOOK_SECRET" {
-		t.Fatalf("SecretEnv = %q, want MIMECRYPT_WEBHOOK_SECRET", source.Webhook.SecretEnv)
+	if webhook.SecretEnv != "MIMECRYPT_WEBHOOK_SECRET" {
+		t.Fatalf("SecretEnv = %q, want MIMECRYPT_WEBHOOK_SECRET", webhook.SecretEnv)
 	}
-	if source.Webhook.MaxBodyBytes != 2048 {
-		t.Fatalf("MaxBodyBytes = %d, want 2048", source.Webhook.MaxBodyBytes)
+	if webhook.MaxBodyBytes != 2048 {
+		t.Fatalf("MaxBodyBytes = %d, want 2048", webhook.MaxBodyBytes)
 	}
-	if source.Webhook.TimestampTolerance != 2*time.Minute {
-		t.Fatalf("TimestampTolerance = %s, want 2m", source.Webhook.TimestampTolerance)
+	if webhook.TimestampTolerance != 2*time.Minute {
+		t.Fatalf("TimestampTolerance = %s, want 2m", webhook.TimestampTolerance)
 	}
 }
 
 func TestDescribeSourceConfigUsesDriverSpecificAndFallbackDescriptions(t *testing.T) {
 	t.Parallel()
 
-	webhookLines := DescribeSourceConfig(appconfig.Source{
+	source, err := webhookdevice.WithSourceConfig(appconfig.Source{
 		Name:   "incoming",
 		Driver: "webhook",
 		Mode:   "push",
-		Webhook: &appconfig.WebhookSource{
-			ListenAddr:         "127.0.0.1:8080",
-			Path:               "/mail/incoming",
-			SecretEnv:          "MIMECRYPT_WEBHOOK_SECRET",
-			MaxBodyBytes:       2048,
-			TimestampTolerance: 2 * time.Minute,
-		},
+	}, webhookdevice.SourceConfig{
+		ListenAddr:         "127.0.0.1:8080",
+		Path:               "/mail/incoming",
+		SecretEnv:          "MIMECRYPT_WEBHOOK_SECRET",
+		MaxBodyBytes:       2048,
+		TimestampTolerance: 2 * time.Minute,
 	})
+	if err != nil {
+		t.Fatalf("WithSourceConfig() error = %v", err)
+	}
+	webhookLines := DescribeSourceConfig(source)
 	if len(webhookLines) < 2 {
 		t.Fatalf("DescribeSourceConfig(webhook) = %#v, want driver-specific lines", webhookLines)
 	}

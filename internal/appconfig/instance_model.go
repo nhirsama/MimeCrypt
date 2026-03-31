@@ -59,6 +59,7 @@ func (r Route) Summary() ConfiguredInstanceSummary {
 
 func (s Source) Configured() Source {
 	s.StatePath = ""
+	s.DriverConfig = cloneRawMessage(s.DriverConfig)
 	return s
 }
 

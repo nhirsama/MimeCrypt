@@ -15,10 +15,6 @@ type LocalConfig struct {
 	AuthProfile  string                `json:"authProfile,omitempty"`
 	IMAPUsername string                `json:"imapUsername,omitempty"`
 	Microsoft    *MicrosoftLocalConfig `json:"microsoft,omitempty"`
-
-	// Drivers/LoginConfig 仅保留内存兼容，便于 provider runtime 迁移期继续读取。
-	Drivers     []string `json:"-"`
-	LoginConfig string   `json:"-"`
 }
 
 type MicrosoftLocalConfig struct {
@@ -44,10 +40,11 @@ func (c *LocalConfig) UnmarshalJSON(data []byte) error {
 	}
 
 	*c = LocalConfig{
-		RuntimeName:  decoded.RuntimeName,
-		AuthProfile:  decoded.AuthProfile,
-		Drivers:      append([]string(nil), decoded.Drivers...),
-		LoginConfig:  decoded.LoginConfig,
+		RuntimeName: strings.TrimSpace(firstNonEmptyString(decoded.RuntimeName, decoded.LoginConfig)),
+		AuthProfile: CredentialAuthProfileForHints(firstNonEmptyStrings(
+			CredentialAuthHintsForProfile(decoded.AuthProfile),
+			decoded.Drivers,
+		)),
 		IMAPUsername: decoded.IMAPUsername,
 		Microsoft:    decoded.Microsoft,
 	}
@@ -109,11 +106,9 @@ func LocalConfigPath(stateDir string) string {
 }
 
 func normalizeLocalConfig(cfg LocalConfig) LocalConfig {
-	cfg.RuntimeName = strings.TrimSpace(firstNonEmptyString(cfg.RuntimeName, cfg.LoginConfig))
-	cfg.LoginConfig = cfg.RuntimeName
-	cfg.AuthProfile = CredentialAuthProfileForHints(firstNonEmptyStrings(CredentialAuthHintsForProfile(cfg.AuthProfile), cfg.Drivers))
+	cfg.RuntimeName = strings.TrimSpace(cfg.RuntimeName)
+	cfg.AuthProfile = CredentialAuthProfileForHints(CredentialAuthHintsForProfile(cfg.AuthProfile))
 	cfg.IMAPUsername = strings.TrimSpace(cfg.IMAPUsername)
-	cfg.Drivers = CredentialAuthHintsForProfile(cfg.AuthProfile)
 
 	if cfg.Microsoft != nil {
 		cfg.Microsoft.ClientID = strings.TrimSpace(cfg.Microsoft.ClientID)
@@ -147,18 +142,16 @@ func (c LocalConfig) EffectiveAuthProfile() string {
 }
 
 func (c LocalConfig) AuthHintNames() []string {
-	return append([]string(nil), normalizeLocalConfig(c).Drivers...)
+	return append([]string(nil), CredentialAuthHintsForProfile(normalizeLocalConfig(c).AuthProfile)...)
 }
 
 func (c LocalConfig) WithRuntimeName(runtimeName string) LocalConfig {
 	c.RuntimeName = strings.TrimSpace(runtimeName)
-	c.LoginConfig = c.RuntimeName
 	return normalizeLocalConfig(c)
 }
 
 func (c LocalConfig) WithAuthHintNames(hints []string) LocalConfig {
 	c.AuthProfile = CredentialAuthProfileForHints(hints)
-	c.Drivers = append([]string(nil), hints...)
 	return normalizeLocalConfig(c)
 }
 

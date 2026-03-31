@@ -2,7 +2,6 @@ package flowruntime
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -12,6 +11,7 @@ import (
 	"mimecrypt/internal/mailflow/adapters"
 	"mimecrypt/internal/provider"
 	"mimecrypt/internal/providers"
+	webhookdevice "mimecrypt/internal/providers/webhook"
 )
 
 const defaultPushIdlePollInterval = time.Second
@@ -73,66 +73,20 @@ func BuildPushRuntime(ctx context.Context, run SourceRun) (*PushRuntime, error) 
 }
 
 func (r *PushRuntime) Run(ctx context.Context) error {
-	if r == nil || r.Runner == nil || r.Ingress == nil {
-		return fmt.Errorf("push runtime 未初始化")
+	executor := &SourceExecutor{
+		Runner:           r.Runner,
+		Ingress:          r.Ingress,
+		IdlePollInterval: r.IdlePollInterval,
 	}
-
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	errCh := make(chan error, 2)
-	go func() {
-		errCh <- r.Ingress.Run(runCtx)
-	}()
-	go func() {
-		errCh <- r.runWorker(runCtx)
-	}()
-
-	for remaining := 2; remaining > 0; {
-		select {
-		case <-ctx.Done():
-			cancel()
-			return ctx.Err()
-		case err := <-errCh:
-			remaining--
-			if err == nil || errors.Is(err, context.Canceled) {
-				continue
-			}
-			cancel()
-			return err
-		}
-	}
-	return nil
-}
-
-func (r *PushRuntime) runWorker(ctx context.Context) error {
-	idlePollInterval := r.IdlePollInterval
-	if idlePollInterval <= 0 {
-		idlePollInterval = defaultPushIdlePollInterval
-	}
-
-	for {
-		_, processed, err := r.Runner.RunOnce(ctx)
-		if err != nil {
-			if errors.Is(err, context.Canceled) {
-				return ctx.Err()
-			}
-			return err
-		}
-		if processed {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(idlePollInterval):
-		}
-	}
+	return executor.Run(ctx)
 }
 
 func replayRetentionForSource(source appconfig.Source) time.Duration {
-	if source.Webhook != nil && source.Webhook.TimestampTolerance > 0 {
-		return source.Webhook.TimestampTolerance
+	if strings.EqualFold(strings.TrimSpace(source.Driver), "webhook") && len(source.DriverConfig) > 0 {
+		config, err := webhookdevice.DecodeSourceConfig(source)
+		if err == nil && config.TimestampTolerance > 0 {
+			return config.TimestampTolerance
+		}
 	}
 	return 5 * time.Minute
 }
